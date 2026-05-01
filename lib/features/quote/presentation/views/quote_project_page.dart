@@ -1,0 +1,2295 @@
+// Matrix4 translate/scale cascades still use stable APIs flagged as deprecated in latest SDK.
+// ignore_for_file: deprecated_member_use
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dotted_border/dotted_border.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:pdfx/pdfx.dart';
+import 'package:go_router/go_router.dart';
+import 'package:red5/core/network/dio_multipart_transfer.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/theme/app_bar_styles.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_layout.dart';
+import 'package:red5/core/widgets/app_button.dart';
+import 'package:red5/core/widgets/app_screen_stack.dart';
+import 'package:red5/core/widgets/update_block_name_dialog.dart';
+import 'package:red5/features/quote/data/quote_selection_options.dart';
+import 'package:red5/features/quote/data/quotations_by_block_store.dart';
+import 'package:red5/features/quote/presentation/widgets/initialize_level_dialog.dart';
+import 'package:red5/features/quote/presentation/widgets/manage_plot_area_dialog.dart';
+import 'package:red5/features/quote/presentation/widgets/new_plot_name_dialog.dart';
+import 'package:red5/features/quote/presentation/widgets/pin_detail_sheet.dart';
+import 'package:red5/features/quote/presentation/widgets/quote_canvas_markup.dart';
+
+class _UploadedDoc {
+  const _UploadedDoc({
+    required this.path,
+    required this.displayName,
+    required this.isPdf,
+    this.levelName = '',
+    this.remoteUri,
+  });
+
+  final String path;
+  final String displayName;
+  final bool isPdf;
+  final String? remoteUri;
+
+  /// User-defined label from the Initialize Level dialog (per file).
+  final String levelName;
+
+  String get identityKey => remoteUri != null && remoteUri!.trim().isNotEmpty
+      ? 'uri:${remoteUri!.trim()}'
+      : 'file:$path';
+
+  Map<String, dynamic> toJson() => {
+    'path': path,
+    'displayName': displayName,
+    'isPdf': isPdf,
+    'levelName': levelName,
+    if (remoteUri != null && remoteUri!.trim().isNotEmpty)
+      'remoteUri': remoteUri,
+  };
+
+  static _UploadedDoc? fromMap(Map<String, dynamic> m) {
+    final path = m['path'] as String?;
+    if (path == null) return null;
+    return _UploadedDoc(
+      path: path,
+      displayName:
+          m['displayName'] as String? ??
+          path.split(Platform.pathSeparator).last,
+      isPdf: m['isPdf'] as bool? ?? path.toLowerCase().endsWith('.pdf'),
+      levelName: (m['levelName'] as String?)?.trim() ?? '',
+      remoteUri: (m['remoteUri'] as String?)?.trim(),
+    );
+  }
+}
+
+class QuoteProjectPage extends ConsumerStatefulWidget {
+  const QuoteProjectPage({
+    super.key,
+    this.initialBlockName,
+    this.initialPdfUrl,
+    this.initialPdfName,
+    this.initialProducts,
+  });
+
+  /// When set (e.g. opened from dashboard), loads that block and skips the new-block dialog.
+  final String? initialBlockName;
+  final String? initialPdfUrl;
+  final String? initialPdfName;
+  final List<Map<String, dynamic>>? initialProducts;
+
+  static const path = '/quote-project';
+  static const name = 'quote-project';
+
+  @override
+  ConsumerState<QuoteProjectPage> createState() => _QuoteProjectPageState();
+}
+
+class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
+  static const String _pdfLoadLogTag = '[QuoteProjectPDF]';
+  bool _showSearchField = false;
+  final TextEditingController _searchController = TextEditingController();
+
+  final GlobalKey _canvasKey = GlobalKey();
+  final ScrollController _carouselScroll = ScrollController();
+
+  final List<_UploadedDoc> _documents = [];
+  int _selectedIndex = 0;
+
+  String? _blockName;
+  bool _didBootstrap = false;
+
+  PdfControllerPinch? _pdfController;
+
+  final TransformationController _imageTransform = TransformationController();
+
+  int _zoomPercent = 100;
+
+  static const double _carouselCardSize = 72;
+  static const double _carouselGap = 10;
+
+  QuoteCanvasTool _canvasTool = QuoteCanvasTool.pan;
+
+  /// Picked from bottom-bar selectors; persisted with the block quotation.
+  String? _selectedGroup;
+  String? _selectedProduct;
+
+  /// Keyed by file path so marks stay tied to the file when the carousel changes.
+  final Map<String, QuoteDocMarkup> _markupByPath = {};
+
+  QuoteDocMarkup get _markupForCurrentDoc {
+    final p = _selectedDoc?.identityKey;
+    if (p == null) return QuoteDocMarkup();
+    return _markupByPath.putIfAbsent(p, () => QuoteDocMarkup());
+  }
+
+  /// Pins are shown and can be placed only after GROUP + Place Pin (product) are chosen.
+  bool get _pinContextReady {
+    final g = (_selectedGroup ?? '').trim();
+    final p = (_selectedProduct ?? '').trim();
+    return g.isNotEmpty && p.isNotEmpty;
+  }
+
+  String? _sourceBlockName;
+  bool _didSeedInitialPdf = false;
+  bool _isOpeningInitialPdf = false;
+
+  void _onMarkupChanged() {
+    setState(() {});
+  }
+
+  void _onPinPlacementRejected(QuotePinPlacementRejection reason) {
+    if (!mounted) return;
+    final msg = switch (reason) {
+      QuotePinPlacementRejection.noAreaSelected =>
+        'Please select an area with Box or Polygon before placing a pin.',
+      QuotePinPlacementRejection.outsideSelectedArea =>
+        'Please place the pin inside a highlighted area.',
+      QuotePinPlacementRejection.missingGroupOrProduct =>
+        'Select a group and a product under “Place Pin” before placing or viewing pins.',
+      QuotePinPlacementRejection.overlapsExistingPin =>
+        'A pin already exists here. Move it or drop this pin at a different spot.',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  void _openPinDetail(int index) {
+    final pins = _markupForCurrentDoc.pins;
+    if (index < 0 || index >= pins.length) return;
+    final pin = pins[index];
+    unawaited(
+      showPinDetailSheet(
+        context: context,
+        pinIndex: index,
+        pin: pin,
+        onRemoved: () {
+          if (!mounted) return;
+          setState(() {
+            _markupForCurrentDoc.pins.removeAt(index);
+          });
+          _onMarkupChanged();
+          unawaited(_persistBlockQuotation());
+        },
+        onPinChanged: (updatedPin) {
+          if (!mounted) return;
+          setState(() {
+            if (index < _markupForCurrentDoc.pins.length) {
+              _markupForCurrentDoc.pins[index] = updatedPin;
+            }
+          });
+          _logUpdatedPinPayload(updatedPin: updatedPin, pinIndex: index);
+          _onMarkupChanged();
+          unawaited(_persistBlockQuotation());
+        },
+      ),
+    );
+  }
+
+  void _logUpdatedPinPayload({
+    required PinEntry updatedPin,
+    required int pinIndex,
+  }) {
+    final payload = <String, dynamic>{
+      'pin_index': pinIndex,
+      'doc_identity': _selectedDoc?.identityKey,
+      'page': updatedPin.page,
+      // Keep both normalized and percentage coordinates for API mapping.
+      'nx': updatedPin.nx,
+      'ny': updatedPin.ny,
+      'x_coordinate': updatedPin.nx * 100,
+      'y_coordinate': updatedPin.ny * 100,
+      'product_name': updatedPin.productName,
+      'group_name': updatedPin.groupName,
+      'block_name': updatedPin.blockName,
+      'level_name': updatedPin.levelName,
+      'plot_name': updatedPin.zoneLabel,
+      'description': updatedPin.description,
+      'quantity': updatedPin.quantity,
+      'status': updatedPin.status,
+      'variation': updatedPin.variation,
+      'dropped_at': updatedPin.droppedAt?.toUtc().toIso8601String(),
+    };
+    final logLine = '[PinPayload] ${jsonEncode(payload)}';
+    // ignore: avoid_print
+    print(logLine);
+    debugPrint(logLine);
+  }
+
+  PinEntry _pinWithMetadata(PinEntry geo, String? plotName) {
+    final doc = _selectedDoc;
+    final level = (doc?.levelName ?? '').trim();
+    return PinEntry(
+      nx: geo.nx,
+      ny: geo.ny,
+      page: geo.page,
+      productName: _selectedProduct?.trim(),
+      groupName: _selectedGroup?.trim(),
+      blockName: _blockName?.trim(),
+      levelName: level.isEmpty ? null : level,
+      zoneLabel: (plotName ?? '').trim().isEmpty ? null : plotName!.trim(),
+      droppedAt: DateTime.now(),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _imageTransform.addListener(_syncZoomFromImage);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_bootstrap());
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposePdfViewer();
+    _imageTransform.removeListener(_syncZoomFromImage);
+    _imageTransform.dispose();
+    _searchController.dispose();
+    _carouselScroll.dispose();
+    super.dispose();
+  }
+
+  void _disposePdfViewer() {
+    _pdfController?.removeListener(_syncZoomFromPdf);
+    _pdfController?.dispose();
+    _pdfController = null;
+  }
+
+  _UploadedDoc? get _selectedDoc =>
+      _documents.isEmpty ? null : _documents[_selectedIndex];
+
+  bool get _selectedIsPdf => _selectedDoc?.isPdf ?? false;
+
+  void _syncZoomFromImage() {
+    if (_selectedIsPdf || _selectedDoc == null) return;
+    _applyZoomPercent(_imageTransform.value.getMaxScaleOnAxis());
+  }
+
+  void _syncZoomFromPdf() {
+    if (!_selectedIsPdf || _pdfController == null) return;
+    _applyZoomPercent(_pdfController!.zoomRatio);
+  }
+
+  void _applyZoomPercent(double scale) {
+    final p = (scale * 100).round().clamp(25, 500);
+    if (p != _zoomPercent && mounted) {
+      setState(() => _zoomPercent = p);
+    }
+  }
+
+  Offset _viewportCenter() {
+    final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return Offset.zero;
+    return box.size.center(Offset.zero);
+  }
+
+  void _zoomImageBy(double multiplier) {
+    if (_selectedDoc == null || _selectedIsPdf) return;
+
+    final viewportCenter = _viewportCenter();
+    final scenePoint = MatrixUtils.transformPoint(
+      Matrix4.inverted(_imageTransform.value),
+      viewportCenter,
+    );
+
+    const minScale = 0.25;
+    const maxScale = 10.0;
+    final current = _imageTransform.value.getMaxScaleOnAxis();
+    final target = (current * multiplier).clamp(minScale, maxScale);
+    final actualMult = target / current;
+    if ((actualMult - 1).abs() < 0.001) return;
+
+    final next = Matrix4.identity()
+      ..translate(scenePoint.dx, scenePoint.dy)
+      ..scale(actualMult)
+      ..translate(-scenePoint.dx, -scenePoint.dy)
+      ..multiply(_imageTransform.value);
+
+    _imageTransform.value = next;
+  }
+
+  void _zoomPdfBy(double multiplier) {
+    final ctrl = _pdfController;
+    if (ctrl == null || !_selectedIsPdf) return;
+
+    final viewportCenter = _viewportCenter();
+    final scenePoint = MatrixUtils.transformPoint(
+      Matrix4.inverted(ctrl.value),
+      viewportCenter,
+    );
+
+    final current = ctrl.zoomRatio;
+    final target = (current * multiplier).clamp(0.5, 8.0);
+    final actualMult = target / current;
+    if ((actualMult - 1).abs() < 0.001) return;
+
+    final next = Matrix4.identity()
+      ..translate(scenePoint.dx, scenePoint.dy)
+      ..scale(actualMult)
+      ..translate(-scenePoint.dx, -scenePoint.dy)
+      ..multiply(ctrl.value);
+
+    ctrl.goTo(destination: next, duration: const Duration(milliseconds: 160));
+  }
+
+  void _zoomIn() {
+    if (_selectedDoc == null) return;
+    if (_selectedIsPdf) {
+      _zoomPdfBy(1.15);
+    } else {
+      _zoomImageBy(1.15);
+    }
+  }
+
+  void _zoomOut() {
+    if (_selectedDoc == null) return;
+    if (_selectedIsPdf) {
+      _zoomPdfBy(1 / 1.15);
+    } else {
+      _zoomImageBy(1 / 1.15);
+    }
+  }
+
+  Future<void> _removeAllPinsForCurrentDoc() async {
+    final markup = _markupForCurrentDoc;
+    if (markup.pins.isEmpty) return;
+    final n = markup.pins.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove all pins?'),
+        content: Text(
+          n == 1
+              ? 'This will delete the pin on this document. This cannot be undone.'
+              : 'This will delete all $n pins on this document. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB42318),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Remove all'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      markup.pins.clear();
+    });
+    _onMarkupChanged();
+  }
+
+  void _reorderDocuments({required int fromIndex, required int toIndex}) {
+    if (fromIndex == toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= _documents.length ||
+        toIndex >= _documents.length) {
+      return;
+    }
+
+    setState(() {
+      final moved = _documents.removeAt(fromIndex);
+      _documents.insert(toIndex, moved);
+
+      if (_selectedIndex == fromIndex) {
+        _selectedIndex = toIndex;
+      } else if (fromIndex < _selectedIndex && toIndex >= _selectedIndex) {
+        _selectedIndex -= 1;
+      } else if (fromIndex > _selectedIndex && toIndex <= _selectedIndex) {
+        _selectedIndex += 1;
+      }
+    });
+
+    _attachViewerForSelection();
+    _scrollCarouselToIndex(_selectedIndex);
+  }
+
+  void _attachViewerForSelection() {
+    _disposePdfViewer();
+    _imageTransform.value = Matrix4.identity();
+
+    final doc = _selectedDoc;
+    if (doc == null) {
+      setState(() => _zoomPercent = 100);
+      return;
+    }
+
+    if (doc.isPdf) {
+      final ctrl = PdfControllerPinch(document: PdfDocument.openFile(doc.path));
+      ctrl.addListener(_syncZoomFromPdf);
+      setState(() {
+        _pdfController = ctrl;
+        _zoomPercent = 100;
+      });
+    } else {
+      setState(() => _zoomPercent = 100);
+    }
+  }
+
+  void _selectDocument(int index) {
+    if (index < 0 || index >= _documents.length || index == _selectedIndex) {
+      return;
+    }
+    setState(() => _selectedIndex = index);
+    _attachViewerForSelection();
+    _scrollCarouselToIndex(index);
+  }
+
+  void _scrollCarouselToIndex(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_carouselScroll.hasClients) return;
+      final step = _carouselCardSize + _carouselGap;
+      final target = (index * step) - 24;
+      _carouselScroll.animateTo(
+        target.clamp(0.0, _carouselScroll.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  void _carouselPrev() {
+    if (_selectedIndex > 0) {
+      _selectDocument(_selectedIndex - 1);
+    }
+  }
+
+  Future<void> _bootstrap() async {
+    if (!mounted || _didBootstrap) return;
+    _didBootstrap = true;
+
+    try {
+      // Wait until this route is committed so dialogs stack above GoRouter’s page
+      // transition (showing the block dialog during the transition can fail silently).
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+
+      final storage = ref.read(localStorageProvider);
+      final map = await QuotationsByBlockStore.readWithLegacyMigration(storage);
+
+      if (widget.initialBlockName != null) {
+        final name = widget.initialBlockName!.trim();
+        if (name.isEmpty) {
+          if (mounted && context.canPop()) context.pop();
+          return;
+        }
+        if (!mounted) return;
+        setState(() => _blockName = name);
+        _restoreFromBlockMap(map);
+        await _seedInitialPdfIfNeeded();
+        return;
+      }
+
+      if (!mounted) return;
+      final chosen = await showBlockNameDialog(
+        context,
+        title: 'New block',
+        subtitle: 'Name this block before adding quotation files.',
+        initialValue: '',
+        confirmLabel: 'Continue',
+      );
+      if (!mounted) return;
+      if (chosen == null) {
+        if (mounted && context.canPop()) context.pop();
+        return;
+      }
+      setState(() => _blockName = chosen);
+      _restoreFromBlockMap(map);
+      await _seedInitialPdfIfNeeded();
+    } catch (e, st) {
+      debugPrint('[QuoteProject] bootstrap error: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not open Create Quote: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      if (mounted && context.canPop()) context.pop();
+    }
+  }
+
+  Future<void> _seedInitialPdfIfNeeded() async {
+    if (_didSeedInitialPdf || !mounted) return;
+    _didSeedInitialPdf = true;
+    final raw = widget.initialPdfUrl?.trim();
+    if (raw == null || raw.isEmpty) return;
+    final uri = Uri.tryParse(raw);
+    if (uri == null) return;
+    if (_documents.isNotEmpty) return;
+
+    debugPrint('$_pdfLoadLogTag starting load from Get/Open button, url=$raw');
+    setState(() => _isOpeningInitialPdf = true);
+    try {
+      final fallbackName = widget.initialPdfName?.trim().isNotEmpty == true
+          ? widget.initialPdfName!.trim()
+          : 'quote_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final fileName = fallbackName.toLowerCase().endsWith('.pdf')
+          ? fallbackName
+          : '$fallbackName.pdf';
+      debugPrint('$_pdfLoadLogTag resolved filename=$fileName');
+      final downloadedPath = await downloadFile(uri, fileName: fileName);
+      if (downloadedPath == null) {
+        debugPrint(
+          '$_pdfLoadLogTag download failed: no valid PDF file for url=$raw',
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not fetch a direct PDF from this link. Please upload the PDF manually.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      final file = File(downloadedPath);
+      debugPrint(
+        '$_pdfLoadLogTag downloaded file bytes=${await file.length()}, tempPath=${file.path}',
+      );
+      if (!mounted) return;
+      final seededPins = _buildSeedPins(page: 1);
+      final seededAreas = _buildSeedPlotAreas(page: 1);
+      debugPrint(
+        '$_pdfLoadLogTag seededPins=${seededPins.length}, seededAreas=${seededAreas.length}',
+      );
+
+      setState(() {
+        final seededDoc = _UploadedDoc(
+          path: file.path,
+          displayName: fileName,
+          isPdf: true,
+          levelName: 'Level 1',
+        );
+        _documents.add(seededDoc);
+        if (seededPins.isNotEmpty || seededAreas.isNotEmpty) {
+          _markupByPath[seededDoc.identityKey] = QuoteDocMarkup()
+            ..polygons.addAll(seededAreas)
+            ..pins.addAll(seededPins);
+        }
+        _selectedIndex = _documents.length - 1;
+      });
+      _attachViewerForSelection();
+      _scrollCarouselToIndex(_selectedIndex);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            seededPins.isEmpty
+                ? 'PDF opened in Create Quote. You can now add pins/levels.'
+                : 'PDF opened with ${seededPins.length} auto pins.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      debugPrint('$_pdfLoadLogTag load success for fileName=$fileName');
+    } catch (_) {
+      debugPrint('$_pdfLoadLogTag load exception for url=$raw');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not load PDF into Create Quote.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isOpeningInitialPdf = false);
+      }
+    }
+  }
+
+  Future<String?> downloadFile(
+    Uri originalUri, {
+    required String fileName,
+  }) async {
+    final transfer = ref.read(dioMultipartTransferProvider);
+    const fetchHeaders = {
+      'Accept': 'application/pdf,text/html,application/xhtml+xml,*/*',
+      'User-Agent': 'Mozilla/5.0 (Flutter App)',
+    };
+
+    final candidates = <Uri>[
+      originalUri,
+      originalUri.replace(path: '${originalUri.path}/download'),
+      originalUri.replace(
+        queryParameters: <String, String>{
+          ...originalUri.queryParameters,
+          'download': '1',
+        },
+      ),
+      if (originalUri.path.contains('/file/'))
+        originalUri.replace(
+          path: originalUri.path.replaceFirst('/file/', '/download/'),
+        ),
+    ];
+    final visited = <String>{};
+
+    for (var i = 0; i < candidates.length; i++) {
+      final uri = candidates[i];
+      if (!visited.add(uri.toString())) continue;
+      debugPrint('$_pdfLoadLogTag trying candidate[$i]=$uri');
+      try {
+        final res = await transfer.fetchBytes(uri, headers: fetchHeaders);
+        final status = res.statusCode;
+        if (status < 200 || status >= 300) continue;
+        final bytes = res.bodyBytes;
+        if (bytes == null || bytes.isEmpty) continue;
+        if (_looksLikePdf(bytes)) {
+          final tempPath =
+              await transfer.writeBytesToTempFile(bytes, fileName);
+          debugPrint(
+            '$_pdfLoadLogTag candidate[$i] valid PDF, status=$status, bytes=${bytes.length}',
+          );
+          return tempPath;
+        }
+        debugPrint(
+          '$_pdfLoadLogTag candidate[$i] non-PDF response, status=$status, bytes=${bytes.length}',
+        );
+        final extracted = _extractPdfUriFromHtml(bytes, baseUri: uri);
+        if (extracted != null && !visited.contains(extracted.toString())) {
+          debugPrint(
+            '$_pdfLoadLogTag extracted follow-up URL from HTML: $extracted',
+          );
+          candidates.add(extracted);
+          if (extracted.path.contains('/file/')) {
+            final asDownload = extracted.replace(
+              path: extracted.path.replaceFirst('/file/', '/download/'),
+            );
+            if (!visited.contains(asDownload.toString())) {
+              debugPrint(
+                '$_pdfLoadLogTag added transformed /download URL: $asDownload',
+              );
+              candidates.add(asDownload);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('$_pdfLoadLogTag candidate[$i] threw: $e');
+        // Try next candidate URL.
+      }
+    }
+
+    debugPrint('$_pdfLoadLogTag all candidates exhausted without PDF');
+    return null;
+  }
+
+  Uri? _extractPdfUriFromHtml(List<int> bytes, {required Uri baseUri}) {
+    final html = utf8
+        .decode(bytes, allowMalformed: true)
+        .replaceAll(r'\/', '/');
+    if (html.isEmpty) return null;
+
+    final discovered = <Uri>[];
+
+    void addCandidate(String raw) {
+      final cleaned = raw.trim();
+      if (cleaned.isEmpty) return;
+      final parsed = Uri.tryParse(cleaned);
+      if (parsed == null) return;
+      final resolved = parsed.hasScheme ? parsed : baseUri.resolveUri(parsed);
+      if (resolved.scheme != 'http' && resolved.scheme != 'https') return;
+      discovered.add(resolved);
+    }
+
+    final attrMatches = RegExp(
+      r'''(?:href|src|data-url|data-download-url)\s*=\s*["']([^"']+)["']''',
+      caseSensitive: false,
+    ).allMatches(html);
+    for (final m in attrMatches) {
+      addCandidate(m.group(1) ?? '');
+    }
+
+    final absoluteMatches = RegExp(
+      r'''https?:\/\/[^\s"'<>\\]+''',
+      caseSensitive: false,
+    ).allMatches(html);
+    for (final m in absoluteMatches) {
+      addCandidate(m.group(0) ?? '');
+    }
+
+    for (final uri in discovered) {
+      final lower = uri.toString().toLowerCase();
+      if (lower.endsWith('.pdf') || lower.contains('/download/')) {
+        return uri;
+      }
+    }
+    return discovered.isEmpty ? null : discovered.first;
+  }
+
+  bool _looksLikePdf(List<int> bytes) {
+    if (bytes.length < 5) return false;
+    return bytes[0] == 0x25 && // %
+        bytes[1] == 0x50 && // P
+        bytes[2] == 0x44 && // D
+        bytes[3] == 0x46 && // F
+        bytes[4] == 0x2D; // -
+  }
+
+  int? _parseHexColorToArgb(String? raw) {
+    if (raw == null) return null;
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    var hex = text.startsWith('#') ? text.substring(1) : text;
+    if (hex.length == 3) {
+      hex = '${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}';
+    }
+    if (hex.length == 6) {
+      hex = 'FF$hex';
+    }
+    if (hex.length != 8) return null;
+    final value = int.tryParse(hex, radix: 16);
+    return value;
+  }
+
+  List<PinEntry> _buildSeedPins({required int page}) {
+    final rows = widget.initialProducts;
+    if (rows == null || rows.isEmpty) return const [];
+    final out = <PinEntry>[];
+    for (final row in rows) {
+      final xRaw = row['x_coordinate'];
+      final yRaw = row['y_coordinate'];
+      final x = xRaw is num ? xRaw.toDouble() : double.tryParse('$xRaw');
+      final y = yRaw is num ? yRaw.toDouble() : double.tryParse('$yRaw');
+      if (x == null || y == null) continue;
+
+      // API sends coordinates as percentages in most payloads.
+      final nx = (x > 1 ? x / 100.0 : x).clamp(0.0, 1.0);
+      final ny = (y > 1 ? y / 100.0 : y).clamp(0.0, 1.0);
+
+      final productName = (row['product_name'] as String?)?.trim();
+      final levelName = (row['levels'] as String?)?.trim();
+      final plotName = (row['plots'] as String?)?.trim();
+      final qtyRaw = row['quantity'];
+      final qty = qtyRaw is num ? qtyRaw.toInt() : int.tryParse('$qtyRaw') ?? 1;
+
+      out.add(
+        PinEntry(
+          nx: nx,
+          ny: ny,
+          page: page,
+          productName: productName,
+          blockName: _blockName?.trim(),
+          levelName: levelName?.isEmpty ?? true ? null : levelName,
+          zoneLabel: plotName?.isEmpty ?? true ? null : plotName,
+          quantity: qty < 1 ? 1 : qty,
+          droppedAt: DateTime.now(),
+        ),
+      );
+    }
+    return out;
+  }
+
+  List<PolyEntry> _buildSeedPlotAreas({required int page}) {
+    final rows = widget.initialProducts;
+    if (rows == null || rows.isEmpty) return const [];
+    final out = <PolyEntry>[];
+    final seen = <String>{};
+
+    for (final row in rows) {
+      final rawPoints =
+          row['plot_points'] ??
+          row['Plot_points'] ??
+          row['Plot_Points'] ??
+          row['plot_x_coordinate'] ??
+          row['Plot_X_Coordinate'];
+      final points = _parsePlotPolygonPoints(rawPoints == null ? null : '$rawPoints');
+      if (points == null || points.length < 3) continue;
+
+      final plotColorRaw = row['plot_color'] ?? row['Plot_Color'];
+      final colorValue = _parseHexColorToArgb(
+        plotColorRaw == null ? null : '$plotColorRaw',
+      );
+      final plotNameRaw =
+          row['Plot_name'] ??
+          row['plot_name'] ??
+          row['plots'] ??
+          row['Location'] ??
+          row['location'];
+      final plotName = (plotNameRaw == null ? '' : '$plotNameRaw').trim();
+      final key = '${points.map((e) => '${e.dx},${e.dy}').join('|')}|$plotName|$colorValue';
+      if (!seen.add(key)) continue;
+
+      out.add(
+        PolyEntry(
+          points: points,
+          page: page,
+          plotName: plotName,
+          colorValue: colorValue,
+        ),
+      );
+    }
+    return out;
+  }
+
+  List<Offset>? _parsePlotPolygonPoints(String? raw) {
+    if (raw == null) return null;
+    final input = raw.trim();
+    if (input.isEmpty) return null;
+    final matches = RegExp(
+      r'\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]',
+    ).allMatches(input);
+    final points = <Offset>[];
+    for (final m in matches) {
+      final x = double.tryParse(m.group(1)!);
+      final y = double.tryParse(m.group(2)!);
+      if (x == null || y == null) continue;
+      final nx = (x > 1 ? x / 100.0 : x).clamp(0.0, 1.0);
+      final ny = (y > 1 ? y / 100.0 : y).clamp(0.0, 1.0);
+      points.add(Offset(nx, ny));
+    }
+    return points.length < 3 ? null : points;
+  }
+
+  void _restoreFromBlockMap(QuotationsByBlock map) {
+    final name = _blockName;
+    if (name == null) return;
+
+    final block = map[name];
+    if (block == null) return;
+    _sourceBlockName = name;
+
+    final docsJson = block['documents'] as List<dynamic>?;
+    if (docsJson == null) return;
+
+    final restored = <_UploadedDoc>[];
+    for (final e in docsJson) {
+      if (e is! Map) continue;
+      final doc = _UploadedDoc.fromMap(Map<String, dynamic>.from(e));
+      if (doc == null) continue;
+      final hasRemote = (doc.remoteUri ?? '').trim().isNotEmpty;
+      if (!hasRemote && !File(doc.path).existsSync()) continue;
+      restored.add(doc);
+    }
+    if (restored.isEmpty) return;
+
+    final idxRaw = block['selectedIndex'];
+    var idx = 0;
+    if (idxRaw is int) {
+      idx = idxRaw.clamp(0, restored.length - 1);
+    }
+
+    _markupByPath.clear();
+    final rawMarkup = block['markupByPath'];
+    if (rawMarkup is Map) {
+      for (final e in rawMarkup.entries) {
+        final pathKey = e.key.toString();
+        final v = e.value;
+        if (v is Map<String, dynamic>) {
+          _markupByPath[pathKey] = QuoteDocMarkup.fromJson(v);
+        } else if (v is Map) {
+          _markupByPath[pathKey] = QuoteDocMarkup.fromJson(
+            Map<String, dynamic>.from(v),
+          );
+        }
+      }
+    }
+
+    final sg = block['selectedGroup'];
+    final sp = block['selectedProduct'];
+
+    setState(() {
+      _documents
+        ..clear()
+        ..addAll(restored);
+      _selectedIndex = idx;
+      _selectedGroup = sg is String ? sg : null;
+      _selectedProduct = sp is String ? sp : null;
+    });
+    _attachViewerForSelection();
+    _scrollCarouselToIndex(_selectedIndex);
+  }
+
+  void _carouselNext() {
+    if (_selectedIndex < _documents.length - 1) {
+      _selectDocument(_selectedIndex + 1);
+    }
+  }
+
+  Future<void> _removeDocument(int index) async {
+    if (index < 0 || index >= _documents.length) return;
+
+    final removedPath = _documents[index].identityKey;
+
+    setState(() {
+      _documents.removeAt(index);
+      _markupByPath.remove(removedPath);
+      final len = _documents.length;
+      if (len == 0) {
+        _selectedIndex = 0;
+        _disposePdfViewer();
+        _imageTransform.value = Matrix4.identity();
+        _zoomPercent = 100;
+      } else {
+        if (index < _selectedIndex) {
+          _selectedIndex--;
+        } else if (index == _selectedIndex) {
+          _selectedIndex = index.clamp(0, len - 1);
+        }
+        _disposePdfViewer();
+        _imageTransform.value = Matrix4.identity();
+      }
+    });
+
+    if (_documents.isNotEmpty) {
+      _attachViewerForSelection();
+    }
+  }
+
+  Future<_UploadedDoc?> _materializePickedFile(PlatformFile file) async {
+    final displayName = file.name.isNotEmpty
+        ? file.name
+        : (file.path?.split(Platform.pathSeparator).last ?? 'uploaded_file');
+    final sanitizedName = displayName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final localPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        '${DateTime.now().microsecondsSinceEpoch}_$sanitizedName';
+    final out = File(localPath);
+
+    try {
+      final sourcePath = file.path;
+      if (sourcePath != null && sourcePath.trim().isNotEmpty) {
+        final src = File(sourcePath);
+        if (await src.exists()) {
+          await src.copy(out.path);
+        } else {
+          final bytes = file.bytes;
+          if (bytes == null || bytes.isEmpty) return null;
+          await out.writeAsBytes(bytes, flush: true);
+        }
+      } else {
+        final bytes = file.bytes;
+        if (bytes == null || bytes.isEmpty) return null;
+        await out.writeAsBytes(bytes, flush: true);
+      }
+    } catch (_) {
+      return null;
+    }
+
+    final lowerName = displayName.toLowerCase();
+    final isPdf = lowerName.endsWith('.pdf');
+    return _UploadedDoc(path: out.path, displayName: displayName, isPdf: isPdf);
+  }
+
+  Future<void> _pickDocument() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
+      allowMultiple: true,
+      withData: true,
+    );
+
+    if (!mounted) return;
+    if (result == null || result.files.isEmpty) return;
+
+    final picked = <_UploadedDoc>[];
+    for (final f in result.files) {
+      final localDoc = await _materializePickedFile(f);
+      if (localDoc != null) {
+        picked.add(localDoc);
+      }
+    }
+    if (picked.isEmpty) return;
+
+    if (!mounted) return;
+    final withLevels = <_UploadedDoc>[];
+    for (final doc in picked) {
+      if (!mounted) return;
+      final levelName = await showInitializeLevelDialog(
+        context,
+        fileName: doc.displayName,
+      );
+      if (!mounted) return;
+      if (levelName == null || levelName.isEmpty) {
+        continue;
+      }
+      withLevels.add(
+        _UploadedDoc(
+          path: doc.path,
+          displayName: doc.displayName,
+          isPdf: doc.isPdf,
+          levelName: levelName,
+        ),
+      );
+    }
+    if (withLevels.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Enter a level name for each file to add it to this quote.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _documents.addAll(withLevels);
+      _selectedIndex = _documents.length - 1;
+    });
+    _attachViewerForSelection();
+    _scrollCarouselToIndex(_selectedIndex);
+  }
+
+  Future<void> _replaceDocumentAt(int index) async {
+    if (index < 0 || index >= _documents.length) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
+      allowMultiple: false,
+      withData: true,
+    );
+    if (!mounted || result == null || result.files.isEmpty) return;
+
+    final replacementBase = await _materializePickedFile(result.files.first);
+    if (!mounted || replacementBase == null) return;
+    final displayName = replacementBase.displayName;
+    final levelName = await showInitializeLevelDialog(
+      context,
+      fileName: displayName,
+    );
+    if (!mounted || levelName == null || levelName.isEmpty) return;
+
+    final oldPath = _documents[index].identityKey;
+    final replacement = _UploadedDoc(
+      path: replacementBase.path,
+      displayName: displayName,
+      isPdf: replacementBase.isPdf,
+      levelName: levelName,
+    );
+
+    setState(() {
+      _documents[index] = replacement;
+      _markupByPath.remove(oldPath);
+      _selectedIndex = index;
+    });
+    _attachViewerForSelection();
+    _scrollCarouselToIndex(index);
+  }
+
+  Future<void> _persistBlockQuotation({bool recordSubmitTime = false}) async {
+    final name = _blockName;
+    if (name == null) return;
+
+    final storage = ref.read(localStorageProvider);
+    var map = QuotationsByBlockStore.read(storage);
+
+    if (_documents.isEmpty) {
+      map.remove(name);
+      await QuotationsByBlockStore.write(storage, map);
+      return;
+    }
+
+    final markupByPath = <String, dynamic>{};
+    for (final d in _documents) {
+      final key = d.identityKey;
+      final m = _markupByPath[key];
+      if (m != null && !m.isEmpty) {
+        markupByPath[key] = m.toJson();
+      }
+    }
+
+    final entry = <String, dynamic>{
+      'documents': _documents.map((e) => e.toJson()).toList(),
+      'selectedIndex': _selectedIndex,
+    };
+    if (_selectedGroup != null && _selectedGroup!.trim().isNotEmpty) {
+      entry['selectedGroup'] = _selectedGroup!.trim();
+    }
+    if (_selectedProduct != null && _selectedProduct!.trim().isNotEmpty) {
+      entry['selectedProduct'] = _selectedProduct!.trim();
+    }
+    if (markupByPath.isNotEmpty) {
+      entry['markupByPath'] = markupByPath;
+    }
+    if (recordSubmitTime) {
+      entry['submittedAt'] = DateTime.now().toUtc().toIso8601String();
+    }
+    final sourceName = _sourceBlockName?.trim();
+    if (sourceName != null && sourceName.isNotEmpty && sourceName != name) {
+      map.remove(sourceName);
+    }
+    map[name] = entry;
+    await QuotationsByBlockStore.write(storage, map);
+    _sourceBlockName = name;
+  }
+
+  Future<void> _submitQuotation() async {
+    final name = _blockName?.trim();
+    if (name == null || name.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Set a block name before submitting.')),
+      );
+      return;
+    }
+    if (_documents.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Add at least one file before submitting.'),
+        ),
+      );
+      return;
+    }
+
+    await _persistBlockQuotation(recordSubmitTime: true);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Quotation saved under block “$name”.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    context.pop();
+  }
+
+  Widget _canvasToolButton({
+    required QuoteCanvasTool tool,
+    required IconData icon,
+    required String tip,
+  }) {
+    final enabled = _documents.isNotEmpty;
+    final active = _canvasTool == tool;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: tip,
+        child: _ToolIcon(
+          icon: icon,
+          isActive: active,
+          onTap: enabled ? () => setState(() => _canvasTool = tool) : null,
+        ),
+      ),
+    );
+  }
+
+  Widget _removeAllPinsButton() {
+    final enabled =
+        _documents.isNotEmpty && _markupForCurrentDoc.pins.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: enabled ? 'Remove all pins' : 'No pins to remove',
+        child: _ToolIcon(
+          icon: Icons.delete_sweep_outlined,
+          onTap: enabled
+              ? () => unawaited(_removeAllPinsForCurrentDoc())
+              : null,
+        ),
+      ),
+    );
+  }
+
+  Widget _reorderFilesRow() {
+    if (_documents.isEmpty) return const SizedBox.shrink();
+
+    String shortTitle(String name) {
+      final base = name.replaceAll(RegExp(r'\.[^.]+$'), '');
+      if (base.length <= 14) return base;
+      return '${base.substring(0, 12)}..';
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: List<Widget>.generate(_documents.length, (index) {
+          final selected = index == _selectedIndex;
+          final chip = AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF111827) : Colors.white,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: selected
+                    ? const Color(0xFF111827)
+                    : const Color(0xFFD1D5DB),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.drag_indicator,
+                  size: 14,
+                  color: Color(0xFF9CA3AF),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '${index + 1}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: selected ? Colors.white : const Color(0xFF6B7280),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  shortTitle(_documents[index].displayName),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : const Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          );
+
+          return Padding(
+            padding: EdgeInsets.only(
+              right: index == _documents.length - 1 ? 0 : 6,
+            ),
+            child: DragTarget<int>(
+              onWillAcceptWithDetails: (details) => details.data != index,
+              onAcceptWithDetails: (details) {
+                _reorderDocuments(fromIndex: details.data, toIndex: index);
+              },
+              builder: (context, candidateData, rejectedData) {
+                final highlighted = candidateData.isNotEmpty;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: highlighted
+                      ? const EdgeInsets.all(2)
+                      : EdgeInsets.zero,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    color: highlighted
+                        ? const Color(0x1434D399)
+                        : Colors.transparent,
+                  ),
+                  child: GestureDetector(
+                    onTap: () => _selectDocument(index),
+                    child: LongPressDraggable<int>(
+                      data: index,
+                      feedback: Material(
+                        color: Colors.transparent,
+                        child: Opacity(opacity: 0.9, child: chip),
+                      ),
+                      childWhenDragging: Opacity(opacity: 0.4, child: chip),
+                      child: chip,
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bodyTopPad = AppLayout.quoteProjectBodyTop(context);
+    return Scaffold(
+      backgroundColor: AppColors.transparent,
+      extendBodyBehindAppBar: true,
+      appBar: AppBarStyles.transparent(
+        automaticallyImplyLeading: false,
+        leading: IconButton(
+          tooltip: 'Back',
+          icon: const Icon(Icons.arrow_back_rounded, color: AppColors.inkStrong),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/dashboard');
+            }
+          },
+        ),
+        titleSpacing: 8,
+        title: const Text(
+          'Create quote to project',
+          style: TextStyle(
+            fontSize: 18,
+            color: AppColors.ink,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        actions: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: _showSearchField ? 170 : 44,
+            margin: const EdgeInsets.only(right: 8),
+            child: _showSearchField
+                ? TextField(
+                    controller: _searchController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'Search records',
+                      hintStyle: const TextStyle(fontSize: 12),
+                      prefixIcon: const Icon(Icons.search, size: 16),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      filled: true,
+                      fillColor: const Color(0xFFEFF0F5),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  )
+                : IconButton(
+                    onPressed: () {
+                      setState(() {
+                        _showSearchField = true;
+                      });
+                    },
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFFD1D5DB)),
+                    ),
+                    icon: const Icon(Icons.search, color: Color(0xFF1F2937)),
+                  ),
+          ),
+          IconButton(
+            onPressed: () async {
+              if (_showSearchField) {
+                setState(() {
+                  _showSearchField = false;
+                  _searchController.clear();
+                });
+                return;
+              }
+
+              final current = _blockName;
+              if (current == null) return;
+              final next = await showBlockNameDialog(
+                context,
+                title: 'Update block name',
+                subtitle: 'Rename this quotation block.',
+                initialValue: current,
+                confirmLabel: 'Save',
+              );
+              if (!mounted || next == null || next == current) return;
+
+              setState(() => _blockName = next);
+            },
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white,
+              side: const BorderSide(color: Color(0xFFD1D5DB)),
+            ),
+            icon: Icon(
+              _showSearchField ? Icons.close : Icons.edit_outlined,
+              color: const Color(0xFF1F2937),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: AppScreenStack(
+        child: Padding(
+        padding: EdgeInsets.fromLTRB(10, bodyTopPad, 10, 90),
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.topCenter,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x12000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      _canvasToolButton(
+                        tool: QuoteCanvasTool.select,
+                        icon: Icons.near_me_outlined,
+                        tip: 'Select',
+                      ),
+                      _canvasToolButton(
+                        tool: QuoteCanvasTool.pan,
+                        icon: Icons.pan_tool_alt_outlined,
+                        tip: 'Pan & move',
+                      ),
+                      _canvasToolButton(
+                        tool: QuoteCanvasTool.box,
+                        icon: Icons.crop_square_outlined,
+                        tip: 'Box highlight',
+                      ),
+                      _canvasToolButton(
+                        tool: QuoteCanvasTool.polygon,
+                        icon: Icons.polyline,
+                        tip: 'Polygon — double-tap to finish',
+                      ),
+                      _canvasToolButton(
+                        tool: QuoteCanvasTool.placePin,
+                        icon: Icons.location_on_outlined,
+                        tip: 'Place pin',
+                      ),
+                      _removeAllPinsButton(),
+                      const SizedBox(width: 10),
+                      _ToolIcon(
+                        icon: Icons.zoom_in_outlined,
+                        onTap: _documents.isEmpty ? null : _zoomIn,
+                      ),
+                      _ZoomText(text: '$_zoomPercent%'),
+                      _ToolIcon(
+                        icon: Icons.zoom_out_outlined,
+                        onTap: _documents.isEmpty ? null : _zoomOut,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (_documents.isNotEmpty) ...[
+              _reorderFilesRow(),
+              const SizedBox(height: 10),
+            ],
+            Expanded(
+              child: DottedBorder(
+                options: RoundedRectDottedBorderOptions(
+                  radius: const Radius.circular(16),
+                  strokeWidth: 2,
+                  color: const Color(0xFFD1D5DB),
+                  dashPattern: const [8, 4],
+                  stackFit: StackFit.expand,
+                ),
+                child: Container(
+                  key: _canvasKey,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: const Color(0xFFE5E7EB),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: _buildGround(),
+                ),
+              ),
+            ),
+          ],
+        ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.white.withValues(alpha: 0.93),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_documents.isNotEmpty) ...[
+                  _DocumentCarousel(
+                    documents: _documents,
+                    selectedIndex: _selectedIndex,
+                    scrollController: _carouselScroll,
+                    onSelect: _selectDocument,
+                    onRemove: _removeDocument,
+                    onReplace: _replaceDocumentAt,
+                    onPrev: _carouselPrev,
+                    onNext: _carouselNext,
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Builder(
+                  builder: (context) {
+                    final canSubmit =
+                        (_blockName ?? '').trim().isNotEmpty &&
+                        _documents.isNotEmpty;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: AppButton(
+                            label: 'Upload PDF',
+                            icon: Icons.upload_file_outlined,
+                            onPressed: _pickDocument,
+                            height: 44,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: AppButton(
+                            label: 'Submit (${_documents.length})',
+                            icon: Icons.send_outlined,
+                            onPressed: canSubmit
+                                ? () => unawaited(_submitQuotation())
+                                : null,
+                            height: 44,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _BottomTag(
+                      label: 'BLOCK',
+                      value: (_blockName ?? '').trim().isNotEmpty
+                          ? _blockName!.trim()
+                          : 'N/A',
+                    ),
+                    const SizedBox(width: 6),
+                    _BottomTag(
+                      label: 'LEVEL',
+                      value:
+                          _selectedDoc != null &&
+                              _selectedDoc!.levelName.isNotEmpty
+                          ? _selectedDoc!.levelName
+                          : 'N/A',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    _BottomSelectTag(
+                      label: 'GROUP',
+                      placeholder: '— Select Group —',
+                      options: QuoteSelectionOptions.groups,
+                      selected: _selectedGroup,
+                      onChanged: (v) {
+                        setState(() => _selectedGroup = v);
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    _BottomSelectTag(
+                      label: 'PRODUCT',
+                      placeholder: '— Select Product —',
+                      options: QuoteSelectionOptions.products,
+                      selected: _selectedProduct,
+                      onChanged: (v) {
+                        setState(() => _selectedProduct = v);
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGround() {
+    final doc = _selectedDoc;
+    if (_isOpeningInitialPdf && doc == null) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            SizedBox(height: 14),
+            Text(
+              'Opening PDF from URL...',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF111827),
+              ),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'Please wait while we load it in Create Quote.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (doc == null) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 28,
+              backgroundColor: Color(0xFFE5E7EB),
+              child: Icon(
+                Icons.description_outlined,
+                color: Color(0xFF374151),
+                size: 30,
+              ),
+            ),
+            SizedBox(height: 18),
+            Text(
+              'No Documents Added',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF111827),
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Upload PDFs (multiple) to begin mapping\nplots and placing equipment pins.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF6B7280),
+                height: 1.25,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_selectedIsPdf && _pdfController != null) {
+      return Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.hardEdge,
+        children: [
+          PdfViewPinch(
+            controller: _pdfController!,
+            minScale: 0.5,
+            maxScale: 8,
+            scrollDirection: Axis.vertical,
+            padding: 8,
+            backgroundDecoration: const BoxDecoration(color: Color(0xFFF3F4F6)),
+          ),
+          Positioned.fill(
+            child: QuoteCanvasMarkupLayer(
+              tool: _canvasTool,
+              markup: _markupForCurrentDoc,
+              onMarkupChanged: _onMarkupChanged,
+              onPinPlacementRejected: _onPinPlacementRejected,
+              onPlotAreaNamed: () => showNewPlotNameDialog(context),
+              onManagePlotArea:
+                  ({
+                    required bool isBox,
+                    required int index,
+                    required String initialName,
+                  }) => showManagePlotAreaDialog(
+                    context,
+                    initialName: initialName,
+                  ),
+              pdfController: _pdfController,
+              isPdf: true,
+              showPinsOnCanvas: true,
+              pinPrerequisitesMet: _pinContextReady,
+              pinMetadataBuilder: _pinWithMetadata,
+              onPinTapped: _openPinDetail,
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return InteractiveViewer(
+      transformationController: _imageTransform,
+      panEnabled: _canvasTool == QuoteCanvasTool.pan,
+      scaleEnabled: true,
+      minScale: 0.25,
+      maxScale: 10,
+      constrained: true,
+      clipBehavior: Clip.hardEdge,
+      boundaryMargin: const EdgeInsets.all(48),
+      child: QuoteCanvasMarkupLayer(
+        tool: _canvasTool,
+        markup: _markupForCurrentDoc,
+        onMarkupChanged: _onMarkupChanged,
+        onPinPlacementRejected: _onPinPlacementRejected,
+        onPlotAreaNamed: () => showNewPlotNameDialog(context),
+        onManagePlotArea:
+            ({
+              required bool isBox,
+              required int index,
+              required String initialName,
+            }) => showManagePlotAreaDialog(context, initialName: initialName),
+        isPdf: false,
+        showPinsOnCanvas: true,
+        pinPrerequisitesMet: _pinContextReady,
+        pinMetadataBuilder: _pinWithMetadata,
+        onPinTapped: _openPinDetail,
+        child: Center(
+          child: Image.file(
+            File(doc.path),
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (context, error, stackTrace) {
+              return const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'Could not load this file.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF6B7280)),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DocumentCarousel extends StatelessWidget {
+  const _DocumentCarousel({
+    required this.documents,
+    required this.selectedIndex,
+    required this.scrollController,
+    required this.onSelect,
+    required this.onRemove,
+    required this.onReplace,
+    required this.onPrev,
+    required this.onNext,
+  });
+
+  final List<_UploadedDoc> documents;
+  final int selectedIndex;
+  final ScrollController scrollController;
+  final void Function(int index) onSelect;
+  final void Function(int index) onRemove;
+  final void Function(int index) onReplace;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+
+  static const double _card = 72;
+  static const double _gap = 10;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = documents.length;
+    final canPrev = selectedIndex > 0;
+    final canNext = selectedIndex < n - 1;
+
+    return Row(
+      children: [
+        _CarouselArrow(
+          icon: Icons.chevron_left,
+          isDark: false,
+          enabled: canPrev,
+          onTap: onPrev,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: SizedBox(
+            height: _card + 6,
+            child: ListView.separated(
+              controller: scrollController,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              itemCount: n,
+              separatorBuilder: (_, _) => const SizedBox(width: _gap),
+              itemBuilder: (context, index) {
+                final d = documents[index];
+                final selected = index == selectedIndex;
+                return GestureDetector(
+                  onTap: () => onSelect(index),
+                  child: _DocThumbCard(
+                    doc: d,
+                    selected: selected,
+                    size: _card,
+                    onRemove: selected ? () => onRemove(index) : null,
+                    onReplace: selected ? () => onReplace(index) : null,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        _CarouselArrow(
+          icon: Icons.chevron_right,
+          isDark: true,
+          enabled: canNext,
+          onTap: onNext,
+        ),
+        const SizedBox(width: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF111827),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            '${selectedIndex + 1} / $n',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CarouselArrow extends StatelessWidget {
+  const _CarouselArrow({
+    required this.icon,
+    required this.isDark,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool isDark;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xFF111827) : const Color(0xFFE5E7EB);
+    final fg = isDark ? Colors.white : const Color(0xFF6B7280);
+
+    return Opacity(
+      opacity: enabled ? 1 : 0.35,
+      child: Material(
+        color: bg,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: enabled ? onTap : null,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(icon, color: fg, size: 22),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DocThumbCard extends StatelessWidget {
+  const _DocThumbCard({
+    required this.doc,
+    required this.selected,
+    required this.size,
+    this.onRemove,
+    this.onReplace,
+  });
+
+  final _UploadedDoc doc;
+  final bool selected;
+  final double size;
+  final VoidCallback? onRemove;
+  final VoidCallback? onReplace;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFD1D5DB), Color(0xFF1F2937)],
+        ),
+        border: Border.all(
+          color: selected ? Colors.white : Colors.transparent,
+          width: selected ? 3 : 0,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 8,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selected) ...[
+                  Text(
+                    'Active',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.65),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+                if (selected) const SizedBox(height: 2),
+                Text(
+                  doc.levelName.isNotEmpty ? doc.levelName : 'No level',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.78),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 9,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (selected && onReplace != null)
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Material(
+                color: const Color(0xCC111827),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onReplace,
+                  child: const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Icon(
+                      Icons.swap_horiz,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (selected && onRemove != null)
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Material(
+                color: const Color(0xCC111827),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onRemove,
+                  child: const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Icon(Icons.close, color: Colors.white, size: 14),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolIcon extends StatelessWidget {
+  const _ToolIcon({required this.icon, this.isActive = false, this.onTap});
+
+  final IconData icon;
+  final bool isActive;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Container(
+      width: 30,
+      height: 30,
+      margin: const EdgeInsets.symmetric(vertical: 3, horizontal: 7),
+      decoration: BoxDecoration(
+        color: isActive ? const Color(0xFF0F172A) : Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Icon(
+        icon,
+        color: isActive ? Colors.white : const Color(0xFF6B7280),
+        size: 16,
+      ),
+    );
+
+    if (onTap == null) {
+      return child;
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(9),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _ZoomText extends StatelessWidget {
+  const _ZoomText({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 10,
+          color: Color(0xFF374151),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+/// Tappable field that opens a dark scrollable sheet (matches group/product pickers).
+class _BottomSelectTag extends StatelessWidget {
+  const _BottomSelectTag({
+    required this.label,
+    required this.placeholder,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String placeholder;
+  final List<String> options;
+  final String? selected;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = selected?.trim();
+    final hasSelection = sel != null && sel.isNotEmpty;
+    final display = hasSelection ? sel : placeholder;
+
+    return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () {
+            final h = MediaQuery.sizeOf(context).height;
+            showModalBottomSheet<void>(
+              context: context,
+              backgroundColor: const Color(0xFF1F2937),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              builder: (ctx) => SafeArea(
+                child: SizedBox(
+                  height: h * 0.62,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.check,
+                              color: Color(0xFF9CA3AF),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                placeholder,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1, color: Color(0xFF374151)),
+                      Expanded(
+                        child: ListView.separated(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          itemCount: options.length,
+                          separatorBuilder: (_, _) => const Divider(
+                            height: 1,
+                            color: Color(0xFF374151),
+                          ),
+                          itemBuilder: (context, i) {
+                            final o = options[i];
+                            final isSel = hasSelection && o == sel;
+                            return ListTile(
+                              title: Text(
+                                o,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: isSel
+                                      ? FontWeight.w800
+                                      : FontWeight.w500,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              trailing: isSel
+                                  ? const Icon(
+                                      Icons.check,
+                                      color: Color(0xFF34D399),
+                                      size: 20,
+                                    )
+                                  : null,
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                onChanged(o);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  '$label ',
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    display,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                    style: TextStyle(
+                      color: hasSelection
+                          ? const Color(0xFF111827)
+                          : const Color(0xFF9CA3AF),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_drop_down,
+                  size: 18,
+                  color: Color(0xFF6B7280),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomTag extends StatelessWidget {
+  const _BottomTag({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Row(
+          children: [
+            Text(
+              '$label ',
+              style: const TextStyle(
+                color: Color(0xFF6B7280),
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF111827),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
