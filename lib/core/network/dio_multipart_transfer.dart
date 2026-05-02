@@ -15,7 +15,7 @@ final class HttpBytesResult {
 
 /// Dio-backed transfer for binary GETs and `multipart/form-data` POSTs.
 ///
-/// Separate from [DioAppHttpClient] so large payloads and upload progress stay isolated.
+/// Dedicated Dio instance so large payloads and upload progress stay isolated.
 final class DioMultipartTransfer {
   DioMultipartTransfer({Dio? dio}) : _dio = dio ?? Dio(_baseOptions);
 

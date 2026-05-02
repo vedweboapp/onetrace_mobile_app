@@ -37,42 +37,6 @@ class QuoteCompositeItem {
       description: (json['description'] as String?)?.trim(),
     );
   }
-
-  static QuoteCompositeItem? fromZohoLineMap(Map<String, dynamic> m) {
-    String? productName;
-    final productNameField = m['Product_Name'];
-    if (productNameField is Map) {
-      final n = productNameField['name'];
-      if (n is String && n.trim().isNotEmpty) {
-        productName = n.trim();
-      }
-    }
-    productName ??= _readString(m, ['name', 'Name', 'Item_Name', 'item_name', 'product_name']);
-    if (productName == null || productName.isEmpty) return null;
-
-    num? readNum(List<String> keys) {
-      for (final key in keys) {
-        final value = m[key];
-        if (value is num) return value;
-        if (value is String) {
-          final parsed = num.tryParse(value.trim());
-          if (parsed != null) return parsed;
-        }
-      }
-      return null;
-    }
-
-    final qty = readNum(['quantity', 'Quantity']);
-    final tot = readNum(['total', 'Total', 'net_total', 'Net_Total']);
-
-    return QuoteCompositeItem(
-      name: productName,
-      quantity: qty?.toInt(),
-      total: tot?.toDouble(),
-      sku: _readString(m, ['sku', 'SKU', 'Product_Code', 'product_code']),
-      description: _readString(m, ['product_description', 'description', 'Description']),
-    );
-  }
 }
 
 class QuoteCompositeItemGroup {
@@ -104,14 +68,6 @@ class QuoteCompositeItemGroup {
       items: items,
     );
   }
-}
-
-String? _readString(Map<String, dynamic> m, List<String> keys) {
-  for (final key in keys) {
-    final value = m[key];
-    if (value is String && value.trim().isNotEmpty) return value.trim();
-  }
-  return null;
 }
 
 List<QuoteCompositeItemGroup> compositeGroupsFromJson(dynamic raw) {

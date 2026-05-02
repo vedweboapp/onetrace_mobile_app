@@ -1,6 +1,6 @@
 import 'package:red5/features/dashboard/data/quote_list_page_result.dart';
 
-/// Remote quotes source (CRM). Implementations may call Zoho, a custom backend, etc.
+/// Remote quotes source (CRM). Implementations may call a backend API, use fixtures, etc.
 abstract class CrmQuotesApi {
   Future<QuoteListPageResult> fetchQuotesPage(int page);
 
