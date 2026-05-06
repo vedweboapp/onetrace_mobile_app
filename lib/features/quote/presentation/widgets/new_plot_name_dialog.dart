@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
 
 /// Shown after committing a box or polygon highlight. Returns trimmed name, or
 /// `null` if cancelled.
@@ -54,73 +57,42 @@ class _NewPlotNameDialogBodyState extends State<_NewPlotNameDialogBody> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'New Plot Name',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF0F172A),
-              ),
+              style: AppFonts.headlineSmall(
+                color: AppColors.navInactive,
+              ).copyWith(fontSize: 18, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Assign a label to this mapped area.',
-              style: TextStyle(
+              style: AppFonts.titleMedium(color: AppColors.muted).copyWith(
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF6B7280),
                 height: 1.35,
               ),
             ),
             const SizedBox(height: 16),
-            TextField(
+            AppTextField(
               controller: _controller,
               autofocus: true,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => canCreate ? _create() : null,
-              decoration: InputDecoration(
-                hintText: 'e.g. Living Room, Plot A...',
-                hintStyle: const TextStyle(
-                  color: Color(0xFF9CA3AF),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                filled: true,
-                fillColor: const Color(0xFFF9FAFB),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 14,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF111827),
-                    width: 1.5,
-                  ),
-                ),
-              ),
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF111827),
-              ),
+              hintText: 'e.g. Living Room, Plot A...',
+              textStyle: AppFonts.titleMedium(
+                color: AppColors.textFieldForeground,
+              ).copyWith(fontSize: 15, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 20),
             Row(
               children: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
+                  child: Text(
                     'Cancel',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF6B7280),
-                    ),
+                    style: AppFonts.titleMedium(
+                      color: AppColors.muted,
+                    ).copyWith(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                 ),
                 const Spacer(),
@@ -138,7 +110,7 @@ class _NewPlotNameDialogBodyState extends State<_NewPlotNameDialogBody> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    textStyle: const TextStyle(
+                    textStyle: AppFonts.titleMedium().copyWith(
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
                     ),

@@ -11,14 +11,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/network/dio_multipart_transfer.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/theme/app_bar_styles.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_layout.dart';
+import 'package:red5/core/theme/app_screen_size.dart';
 import 'package:red5/core/widgets/app_button.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/update_block_name_dialog.dart';
+import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/quote/data/quote_selection_options.dart';
 import 'package:red5/features/quote/data/quotations_by_block_store.dart';
 import 'package:red5/features/quote/presentation/widgets/initialize_level_dialog.dart';
@@ -33,6 +43,7 @@ class _UploadedDoc {
     required this.displayName,
     required this.isPdf,
     this.levelName = '',
+    this.levelId,
     this.remoteUri,
   });
 
@@ -43,6 +54,7 @@ class _UploadedDoc {
 
   /// User-defined label from the Initialize Level dialog (per file).
   final String levelName;
+  final String? levelId;
 
   String get identityKey => remoteUri != null && remoteUri!.trim().isNotEmpty
       ? 'uri:${remoteUri!.trim()}'
@@ -53,6 +65,7 @@ class _UploadedDoc {
     'displayName': displayName,
     'isPdf': isPdf,
     'levelName': levelName,
+    if (levelId != null && levelId!.trim().isNotEmpty) 'levelId': levelId,
     if (remoteUri != null && remoteUri!.trim().isNotEmpty)
       'remoteUri': remoteUri,
   };
@@ -67,6 +80,7 @@ class _UploadedDoc {
           path.split(Platform.pathSeparator).last,
       isPdf: m['isPdf'] as bool? ?? path.toLowerCase().endsWith('.pdf'),
       levelName: (m['levelName'] as String?)?.trim() ?? '',
+      levelId: (m['levelId'] as String?)?.trim(),
       remoteUri: (m['remoteUri'] as String?)?.trim(),
     );
   }
@@ -76,6 +90,12 @@ class QuoteProjectPage extends ConsumerStatefulWidget {
   const QuoteProjectPage({
     super.key,
     this.initialBlockName,
+    this.initialProjectId,
+    this.initialOrganizationId,
+    this.initialClientId,
+    this.initialProjectDescription,
+    this.initialStartDate,
+    this.initialEndDate,
     this.initialPdfUrl,
     this.initialPdfName,
     this.initialProducts,
@@ -83,6 +103,12 @@ class QuoteProjectPage extends ConsumerStatefulWidget {
 
   /// When set (e.g. opened from dashboard), loads that block and skips the new-block dialog.
   final String? initialBlockName;
+  final String? initialProjectId;
+  final int? initialOrganizationId;
+  final int? initialClientId;
+  final String? initialProjectDescription;
+  final String? initialStartDate;
+  final String? initialEndDate;
   final String? initialPdfUrl;
   final String? initialPdfName;
   final List<Map<String, dynamic>>? initialProducts;
@@ -140,8 +166,15 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
   }
 
   String? _sourceBlockName;
+  String? _projectId;
+  int? _organizationId;
+  int? _clientId;
+  String? _projectDescription;
+  String? _startDate;
+  String? _endDate;
   bool _didSeedInitialPdf = false;
   bool _isOpeningInitialPdf = false;
+  bool _isSubmitting = false;
 
   void _onMarkupChanged() {
     setState(() {});
@@ -479,6 +512,12 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
   Future<void> _bootstrap() async {
     if (!mounted || _didBootstrap) return;
     _didBootstrap = true;
+    _projectId = widget.initialProjectId?.trim();
+    _organizationId = widget.initialOrganizationId;
+    _clientId = widget.initialClientId;
+    _projectDescription = widget.initialProjectDescription?.trim();
+    _startDate = widget.initialStartDate?.trim();
+    _endDate = widget.initialEndDate?.trim();
 
     try {
       // Wait until this route is committed so dialogs stack above GoRouter’s page
@@ -498,6 +537,8 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
         if (!mounted) return;
         setState(() => _blockName = name);
         _restoreFromBlockMap(map);
+        await _ensureProjectExistsForNewBlock(name);
+        await _loadProjectLevelsFromBackendIfNeeded();
         await _seedInitialPdfIfNeeded();
         return;
       }
@@ -517,18 +558,312 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       }
       setState(() => _blockName = chosen);
       _restoreFromBlockMap(map);
+      await _ensureProjectExistsForNewBlock(chosen);
+      await _loadProjectLevelsFromBackendIfNeeded();
       await _seedInitialPdfIfNeeded();
     } catch (e, st) {
       debugPrint('[QuoteProject] bootstrap error: $e\n$st');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Could not open Create Quote: $e'),
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: AppStrings.apiErrorOpenCreateQuote,
+            ),
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
-      if (mounted && context.canPop()) context.pop();
     }
+  }
+
+  Future<void> _loadProjectLevelsFromBackendIfNeeded() async {
+    if (_documents.isNotEmpty) return;
+    final projectId = (_projectId ?? '').trim();
+    if (projectId.isEmpty) return;
+    try {
+      final api = ref.read(quoteProjectApiClientProvider);
+      final levels = await api.fetchProjectLevels(projectId: projectId);
+      if (!mounted || levels.isEmpty) return;
+
+      final loadedDocs = <_UploadedDoc>[];
+      final loadedMarkup = <String, QuoteDocMarkup>{};
+      for (final level in levels) {
+        final drawingPath = await _downloadRemoteDrawing(level);
+        if (drawingPath == null || drawingPath.isEmpty) {
+          continue;
+        }
+        final lower = drawingPath.toLowerCase();
+        final doc = _UploadedDoc(
+          path: drawingPath,
+          displayName: drawingPath.split(Platform.pathSeparator).last,
+          isPdf: lower.endsWith('.pdf'),
+          levelName: level.name,
+          levelId: level.id,
+          remoteUri: level.drawingFile,
+        );
+        loadedDocs.add(doc);
+        loadedMarkup[doc.identityKey] = _markupFromBackendPlots(
+          levelName: level.name,
+          plots: level.plots,
+        );
+      }
+      if (!mounted || loadedDocs.isEmpty) return;
+      setState(() {
+        _documents
+          ..clear()
+          ..addAll(loadedDocs);
+        _selectedIndex = 0;
+        _markupByPath
+          ..clear()
+          ..addAll(loadedMarkup);
+      });
+      _attachViewerForSelection();
+      _scrollCarouselToIndex(0);
+    } catch (e) {
+      debugPrint('[QuoteProject] level preload failed: $e');
+    }
+  }
+
+  Future<String?> _downloadRemoteDrawing(ProjectLevelItem level) async {
+    final uri = _resolveDrawingUri(level.drawingFile);
+    if (uri == null) return null;
+    try {
+      final transfer = ref.read(dioMultipartTransferProvider);
+      final res = await transfer.fetchBytes(
+        uri,
+        headers: _drawingFetchHeaders(),
+      );
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final bytes = res.bodyBytes;
+      if (bytes == null || bytes.isEmpty) return null;
+      if (!_looksLikeSupportedDrawing(bytes)) return null;
+      final fallbackName = 'level_${level.id}.pdf';
+      final fileName = uri.pathSegments.isEmpty
+          ? fallbackName
+          : uri.pathSegments.last;
+      return transfer.writeBytesToTempFile(bytes, fileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Uri? _resolveDrawingUri(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final direct = Uri.tryParse(text);
+    if (direct != null && direct.hasScheme) return direct;
+    return Uri.parse(AppApiUrls.baseUrl).resolve(text);
+  }
+
+  Future<String> _ensureUploadDrawingPath(_UploadedDoc doc) async {
+    final local = File(doc.path);
+    if (await local.exists()) {
+      return local.path;
+    }
+    final remote = (doc.remoteUri ?? '').trim();
+    if (remote.isEmpty) {
+      throw StateError(
+        'Drawing file is missing locally for ${doc.displayName}. Please replace this file before submit.',
+      );
+    }
+    final uri = _resolveDrawingUri(remote);
+    if (uri == null) {
+      throw StateError(
+        'Invalid drawing URL for ${doc.displayName}. Please replace this file before submit.',
+      );
+    }
+    final transfer = ref.read(dioMultipartTransferProvider);
+    final res = await transfer.fetchBytes(uri, headers: _drawingFetchHeaders());
+    if (res.statusCode < 200 || res.statusCode >= 300 || res.bodyBytes == null) {
+      throw StateError(
+        'Could not fetch drawing for ${doc.displayName}. Please replace this file before submit.',
+      );
+    }
+    final bytes = res.bodyBytes!;
+    if (bytes.isEmpty) {
+      throw StateError(
+        'Empty drawing file for ${doc.displayName}. Please replace this file before submit.',
+      );
+    }
+    if (!_looksLikeSupportedDrawing(bytes)) {
+      throw StateError(
+        'Downloaded drawing is not a valid image/pdf for ${doc.displayName}. Please replace this file before submit.',
+      );
+    }
+    final fileName = uri.pathSegments.isNotEmpty
+        ? uri.pathSegments.last
+        : doc.displayName;
+    return transfer.writeBytesToTempFile(bytes, fileName);
+  }
+
+  Map<String, String> _drawingFetchHeaders() {
+    final storage = ref.read(localStorageProvider);
+    final token = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
+    if (token == null || token.isEmpty) {
+      return const <String, String>{};
+    }
+    return <String, String>{'Authorization': 'Bearer $token'};
+  }
+
+  bool _looksLikeSupportedDrawing(List<int> bytes) {
+    if (bytes.length < 4) return false;
+    final isPdf =
+        bytes.length >= 5 &&
+        bytes[0] == 0x25 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x44 &&
+        bytes[3] == 0x46 &&
+        bytes[4] == 0x2D;
+    if (isPdf) return true;
+    final isPng =
+        bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47;
+    if (isPng) return true;
+    final isJpg =
+        bytes.length >= 3 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF;
+    if (isJpg) return true;
+    final isGif =
+        bytes.length >= 4 &&
+        bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38;
+    if (isGif) return true;
+    final isWebp =
+        bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50;
+    return isWebp;
+  }
+
+  QuoteDocMarkup _markupFromBackendPlots({
+    required String levelName,
+    required List<Map<String, dynamic>> plots,
+  }) {
+    final markup = QuoteDocMarkup();
+    for (final plot in plots) {
+      final plotName = (plot['name'] as String?)?.trim() ?? '';
+      final coordinatesRaw = plot['coordinates'];
+      final points = _parseCoordinatesToOffsets(coordinatesRaw);
+      if (points.length >= 3) {
+        markup.polygons.add(
+          PolyEntry(points: points, page: 1, plotName: plotName),
+        );
+      } else if (points.length == 2) {
+        final a = points.first;
+        final b = points.last;
+        final rect = Rect.fromPoints(a, b);
+        markup.boxHighlights.add(
+          BoxEntry(n: rect, page: 1, plotName: plotName),
+        );
+      }
+      final pinsRaw = plot['pins'];
+      if (pinsRaw is! List) continue;
+      for (final pinRaw in pinsRaw) {
+        if (pinRaw is! Map) continue;
+        final x = _asDouble(pinRaw['x_coordinate']);
+        final y = _asDouble(pinRaw['y_coordinate']);
+        if (x == null || y == null) continue;
+        final nx = (x > 1 ? x / 100.0 : x).clamp(0.0, 1.0);
+        final ny = (y > 1 ? y / 100.0 : y).clamp(0.0, 1.0);
+        markup.pins.add(
+          PinEntry(
+            nx: nx,
+            ny: ny,
+            page: 1,
+            status: _statusFromId(pinRaw['status']),
+            groupName: _groupFromId(pinRaw['group']),
+            productName: _productFromId(pinRaw['composite_item']),
+            quantity: (_asDouble(pinRaw['quantity']) ?? 1).round().clamp(1, 9999),
+            variation: (pinRaw['variation'] as bool?) == true ? 'Yes' : '',
+            blockName: _blockName?.trim(),
+            levelName: levelName,
+            zoneLabel: plotName.isEmpty ? null : plotName,
+            droppedAt: DateTime.now(),
+          ),
+        );
+      }
+    }
+    return markup;
+  }
+
+  List<Offset> _parseCoordinatesToOffsets(dynamic coordinatesRaw) {
+    if (coordinatesRaw is! List) return const <Offset>[];
+    final out = <Offset>[];
+    for (final point in coordinatesRaw) {
+      if (point is! List || point.length < 2) continue;
+      final x = _asDouble(point[0]);
+      final y = _asDouble(point[1]);
+      if (x == null || y == null) continue;
+      out.add(
+        Offset(
+          (x > 1 ? x / 100.0 : x).clamp(0.0, 1.0),
+          (y > 1 ? y / 100.0 : y).clamp(0.0, 1.0),
+        ),
+      );
+    }
+    return out;
+  }
+
+  double? _asDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
+  }
+
+  String _statusFromId(dynamic idRaw) {
+    final id = _asDouble(idRaw)?.round() ?? 1;
+    if (id == 2) return 'In Progress';
+    if (id == 3) return 'Done';
+    return 'Pending';
+  }
+
+  String _groupFromId(dynamic idRaw) {
+    final id = _asDouble(idRaw)?.round();
+    if (id == null || id < 1 || id > QuoteSelectionOptions.groups.length) {
+      return idRaw?.toString() ?? '1';
+    }
+    return QuoteSelectionOptions.groups[id - 1];
+  }
+
+  String _productFromId(dynamic idRaw) {
+    final id = _asDouble(idRaw)?.round();
+    if (id == null || id < 1 || id > QuoteSelectionOptions.products.length) {
+      return idRaw?.toString() ?? '1';
+    }
+    return QuoteSelectionOptions.products[id - 1];
+  }
+
+  Future<void> _ensureProjectExistsForNewBlock(String blockName) async {
+    if ((_projectId ?? '').trim().isNotEmpty) return;
+    final api = ref.read(quoteProjectApiClientProvider);
+    final projectId = await api.createProject(
+      name: blockName,
+      organizationId: _organizationId,
+      clientId: _clientId,
+      description: (_projectDescription ?? '').trim().isEmpty
+          ? null
+          : _projectDescription!.trim(),
+      startDate: (_startDate ?? '').trim().isEmpty ? null : _startDate!.trim(),
+      endDate: (_endDate ?? '').trim().isEmpty ? null : _endDate!.trim(),
+    );
+    if (!mounted) return;
+    setState(() => _projectId = projectId);
+    await _persistBlockQuotation();
   }
 
   Future<void> _seedInitialPdfIfNeeded() async {
@@ -545,21 +880,19 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     try {
       final fallbackName = widget.initialPdfName?.trim().isNotEmpty == true
           ? widget.initialPdfName!.trim()
-          : 'quote_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final fileName = fallbackName.toLowerCase().endsWith('.pdf')
-          ? fallbackName
-          : '$fallbackName.pdf';
+          : 'quote_${DateTime.now().millisecondsSinceEpoch}';
+      final fileName = fallbackName;
       debugPrint('$_pdfLoadLogTag resolved filename=$fileName');
       final downloadedPath = await downloadFile(uri, fileName: fileName);
       if (downloadedPath == null) {
         debugPrint(
-          '$_pdfLoadLogTag download failed: no valid PDF file for url=$raw',
+          '$_pdfLoadLogTag download failed: no valid drawing file for url=$raw',
         );
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Could not fetch a direct PDF from this link. Please upload the PDF manually.',
+              'Could not fetch drawing file from this link. Please upload file manually.',
             ),
             behavior: SnackBarBehavior.floating,
           ),
@@ -578,11 +911,13 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       );
 
       setState(() {
+        final lower = file.path.toLowerCase();
         final seededDoc = _UploadedDoc(
           path: file.path,
-          displayName: fileName,
-          isPdf: true,
+          displayName: file.path.split(Platform.pathSeparator).last,
+          isPdf: lower.endsWith('.pdf'),
           levelName: 'Level 1',
+          remoteUri: raw,
         );
         _documents.add(seededDoc);
         if (seededPins.isNotEmpty || seededAreas.isNotEmpty) {
@@ -598,8 +933,8 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
         SnackBar(
           content: Text(
             seededPins.isEmpty
-                ? 'PDF opened in Create Quote. You can now add pins/levels.'
-                : 'PDF opened with ${seededPins.length} auto pins.',
+                ? 'Drawing opened in Create Quote. You can now add pins/levels.'
+                : 'Drawing opened with ${seededPins.length} auto pins.',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -610,7 +945,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Could not load PDF into Create Quote.'),
+          content: Text('Could not load drawing into Create Quote.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -626,8 +961,9 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     required String fileName,
   }) async {
     final transfer = ref.read(dioMultipartTransferProvider);
-    const fetchHeaders = {
-      'Accept': 'application/pdf,text/html,application/xhtml+xml,*/*',
+    final fetchHeaders = <String, String>{
+      ..._drawingFetchHeaders(),
+      'Accept': 'application/pdf,image/*,text/html,application/xhtml+xml,*/*',
       'User-Agent': 'Mozilla/5.0 (Flutter App)',
     };
 
@@ -657,16 +993,16 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
         if (status < 200 || status >= 300) continue;
         final bytes = res.bodyBytes;
         if (bytes == null || bytes.isEmpty) continue;
-        if (_looksLikePdf(bytes)) {
+        if (_looksLikeSupportedDrawing(bytes)) {
           final tempPath =
               await transfer.writeBytesToTempFile(bytes, fileName);
           debugPrint(
-            '$_pdfLoadLogTag candidate[$i] valid PDF, status=$status, bytes=${bytes.length}',
+            '$_pdfLoadLogTag candidate[$i] valid drawing, status=$status, bytes=${bytes.length}',
           );
           return tempPath;
         }
         debugPrint(
-          '$_pdfLoadLogTag candidate[$i] non-PDF response, status=$status, bytes=${bytes.length}',
+          '$_pdfLoadLogTag candidate[$i] non-drawing response, status=$status, bytes=${bytes.length}',
         );
         final extracted = _extractPdfUriFromHtml(bytes, baseUri: uri);
         if (extracted != null && !visited.contains(extracted.toString())) {
@@ -692,7 +1028,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       }
     }
 
-    debugPrint('$_pdfLoadLogTag all candidates exhausted without PDF');
+    debugPrint('$_pdfLoadLogTag all candidates exhausted without drawing');
     return null;
   }
 
@@ -732,20 +1068,17 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
 
     for (final uri in discovered) {
       final lower = uri.toString().toLowerCase();
-      if (lower.endsWith('.pdf') || lower.contains('/download/')) {
+      if (lower.endsWith('.pdf') ||
+          lower.endsWith('.png') ||
+          lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.webp') ||
+          lower.endsWith('.gif') ||
+          lower.contains('/download/')) {
         return uri;
       }
     }
     return discovered.isEmpty ? null : discovered.first;
-  }
-
-  bool _looksLikePdf(List<int> bytes) {
-    if (bytes.length < 5) return false;
-    return bytes[0] == 0x25 && // %
-        bytes[1] == 0x50 && // P
-        bytes[2] == 0x44 && // D
-        bytes[3] == 0x46 && // F
-        bytes[4] == 0x2D; // -
   }
 
   int? _parseHexColorToArgb(String? raw) {
@@ -870,6 +1203,13 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     final block = map[name];
     if (block == null) return;
     _sourceBlockName = name;
+    _projectId = (block['projectId'] as String?)?.trim() ?? _projectId;
+    _organizationId = block['organizationId'] as int? ?? _organizationId;
+    _clientId = block['clientId'] as int? ?? _clientId;
+    _projectDescription =
+        (block['projectDescription'] as String?)?.trim() ?? _projectDescription;
+    _startDate = (block['startDate'] as String?)?.trim() ?? _startDate;
+    _endDate = (block['endDate'] as String?)?.trim() ?? _endDate;
 
     final docsJson = block['documents'] as List<dynamic>?;
     if (docsJson == null) return;
@@ -1025,12 +1365,21 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       if (levelName == null || levelName.isEmpty) {
         continue;
       }
+      final levelId = await _syncLevelOnInitialize(
+        levelName: levelName,
+        drawingFilePath: doc.path,
+      );
+      if (!mounted) return;
+      if (levelId == null) {
+        continue;
+      }
       withLevels.add(
         _UploadedDoc(
           path: doc.path,
           displayName: doc.displayName,
           isPdf: doc.isPdf,
           levelName: levelName,
+          levelId: levelId,
         ),
       );
     }
@@ -1075,6 +1424,13 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       fileName: displayName,
     );
     if (!mounted || levelName == null || levelName.isEmpty) return;
+    final existing = _documents[index];
+    final updatedLevelId = await _syncLevelOnInitialize(
+      levelName: levelName,
+      drawingFilePath: replacementBase.path,
+      levelId: existing.levelId,
+    );
+    if (!mounted || updatedLevelId == null) return;
 
     final oldPath = _documents[index].identityKey;
     final replacement = _UploadedDoc(
@@ -1082,6 +1438,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       displayName: displayName,
       isPdf: replacementBase.isPdf,
       levelName: levelName,
+      levelId: updatedLevelId,
     );
 
     setState(() {
@@ -1091,6 +1448,58 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     });
     _attachViewerForSelection();
     _scrollCarouselToIndex(index);
+  }
+
+  Future<String?> _syncLevelOnInitialize({
+    required String levelName,
+    required String drawingFilePath,
+    String? levelId,
+  }) async {
+    var projectId = (_projectId ?? '').trim();
+    if (projectId.isEmpty) {
+      final blockName = (_blockName ?? '').trim();
+      if (blockName.isNotEmpty) {
+        await _ensureProjectExistsForNewBlock(blockName);
+      }
+      projectId = (_projectId ?? '').trim();
+    }
+    if (projectId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Project is not ready yet. Try again in a moment.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return null;
+    }
+
+    try {
+      final api = ref.read(quoteProjectApiClientProvider);
+      final levelResult = await api.upsertLevel(
+        projectId: projectId,
+        levelId: levelId,
+        levelName: levelName.trim().isEmpty ? 'Level' : levelName.trim(),
+        drawingFilePath: drawingFilePath,
+      );
+      return levelResult.levelId;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ApiResponseMessage.fromAnyError(
+                e,
+                genericFallback: 'Could not create level for this file.',
+              ),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return null;
+    }
   }
 
   Future<void> _persistBlockQuotation({bool recordSubmitTime = false}) async {
@@ -1119,6 +1528,24 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       'documents': _documents.map((e) => e.toJson()).toList(),
       'selectedIndex': _selectedIndex,
     };
+    if ((_projectId ?? '').trim().isNotEmpty) {
+      entry['projectId'] = _projectId!.trim();
+    }
+    if (_organizationId != null) {
+      entry['organizationId'] = _organizationId;
+    }
+    if (_clientId != null) {
+      entry['clientId'] = _clientId;
+    }
+    if ((_projectDescription ?? '').trim().isNotEmpty) {
+      entry['projectDescription'] = _projectDescription!.trim();
+    }
+    if ((_startDate ?? '').trim().isNotEmpty) {
+      entry['startDate'] = _startDate!.trim();
+    }
+    if ((_endDate ?? '').trim().isNotEmpty) {
+      entry['endDate'] = _endDate!.trim();
+    }
     if (_selectedGroup != null && _selectedGroup!.trim().isNotEmpty) {
       entry['selectedGroup'] = _selectedGroup!.trim();
     }
@@ -1140,7 +1567,120 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     _sourceBlockName = name;
   }
 
+  int _statusToId(String? status) {
+    final s = (status ?? '').trim().toLowerCase();
+    if (s.contains('progress')) return 2;
+    if (s.contains('done') || s.contains('complete')) return 3;
+    return 1;
+  }
+
+  int _groupToId(String? groupName) {
+    final value = (groupName ?? '').trim();
+    final parsed = int.tryParse(value);
+    if (parsed != null) return parsed;
+    final idx = QuoteSelectionOptions.groups.indexWhere(
+      (e) => e.toLowerCase() == value.toLowerCase(),
+    );
+    return idx >= 0 ? idx + 1 : 1;
+  }
+
+  int _compositeItemToId(String? productName) {
+    final value = (productName ?? '').trim();
+    final parsed = int.tryParse(value);
+    if (parsed != null) return parsed;
+    final idx = QuoteSelectionOptions.products.indexWhere(
+      (e) => e.toLowerCase() == value.toLowerCase(),
+    );
+    return idx >= 0 ? idx + 1 : 1;
+  }
+
+  bool? _variationToBool(String? variation) {
+    final value = (variation ?? '').trim().toLowerCase();
+    if (value.isEmpty || value == 'no') return null;
+    if (value == 'yes' || value == 'true') return true;
+    if (value == 'false') return false;
+    return null;
+  }
+
+  List<Map<String, dynamic>> _plotsPayloadForDoc(_UploadedDoc doc) {
+    final markup = _markupByPath[doc.identityKey];
+    if (markup == null) return const <Map<String, dynamic>>[];
+
+    final namedPlots = <String, List<List<int>>>{};
+    final namedPlotColors = <String, String>{};
+    for (final box in markup.boxHighlights) {
+      final name = box.plotName.trim();
+      if (name.isEmpty) continue;
+      final rect = box.n;
+      namedPlots[name] = <List<int>>[
+        [(rect.left * 100).round(), (rect.top * 100).round()],
+        [(rect.right * 100).round(), (rect.bottom * 100).round()],
+      ];
+      if (box.colorValue != null) {
+        final hex = box.colorValue!.toRadixString(16).padLeft(8, '0').substring(2);
+        namedPlotColors[name] = '#$hex'.toUpperCase();
+      }
+    }
+    for (final poly in markup.polygons) {
+      final name = poly.plotName.trim();
+      if (name.isEmpty) continue;
+      namedPlots[name] = poly.points
+          .map(
+            (p) => <int>[
+              (p.dx * 100).round(),
+              (p.dy * 100).round(),
+            ],
+          )
+          .toList();
+      if (poly.colorValue != null) {
+        final hex = poly.colorValue!.toRadixString(16).padLeft(8, '0').substring(2);
+        namedPlotColors[name] = '#$hex'.toUpperCase();
+      }
+    }
+
+    final pinsByPlot = <String, List<PinEntry>>{};
+    for (final pin in markup.pins) {
+      final plot = (pin.zoneLabel ?? '').trim();
+      if (plot.isEmpty) continue;
+      pinsByPlot.putIfAbsent(plot, () => <PinEntry>[]).add(pin);
+    }
+
+    final keys = <String>{...namedPlots.keys, ...pinsByPlot.keys}.toList()
+      ..sort();
+    final plots = <Map<String, dynamic>>[];
+    for (final plotName in keys) {
+      final pins = pinsByPlot[plotName] ?? const <PinEntry>[];
+        final pinPayload = <Map<String, dynamic>>[];
+      for (var p = 0; p < pins.length; p++) {
+        final pin = pins[p];
+        final payload = <String, dynamic>{
+          'x_coordinate': (pin.nx * 100).round(),
+          'y_coordinate': (pin.ny * 100).round(),
+          'status': _statusToId(pin.status),
+          'group': _groupToId(pin.groupName),
+          'composite_item': _compositeItemToId(pin.productName),
+          'quantity': pin.quantity < 1 ? 1 : pin.quantity,
+        };
+        final variation = _variationToBool(pin.variation);
+        if (variation != null) {
+          payload['variation'] = variation;
+        }
+        pinPayload.add(payload);
+      }
+
+      plots.add(<String, dynamic>{
+        'name': plotName,
+        'coordinates': namedPlots[plotName] ?? const <List<int>>[],
+        if (namedPlotColors.containsKey(plotName))
+          'plot_color': namedPlotColors[plotName],
+        'pins': pinPayload,
+      });
+    }
+    return plots;
+  }
+
   Future<void> _submitQuotation() async {
+    if (_isSubmitting) return;
     final name = _blockName?.trim();
     if (name == null || name.isEmpty) {
       if (!mounted) return;
@@ -1159,16 +1699,97 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       return;
     }
 
-    await _persistBlockQuotation(recordSubmitTime: true);
-    if (!mounted) return;
+    setState(() => _isSubmitting = true);
+    try {
+      final api = ref.read(quoteProjectApiClientProvider);
+      var projectId = (_projectId ?? widget.initialProjectId ?? '').trim();
+      if (projectId.isEmpty) {
+        projectId = await api.createProject(
+          name: name,
+          organizationId: _organizationId,
+          clientId: _clientId,
+          description: (_projectDescription ?? '').trim().isEmpty
+              ? null
+              : _projectDescription!.trim(),
+          startDate: (_startDate ?? '').trim().isEmpty ? null : _startDate!.trim(),
+          endDate: (_endDate ?? '').trim().isEmpty ? null : _endDate!.trim(),
+        );
+      } else {
+        await api.updateProject(projectId: projectId, name: name);
+      }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Quotation saved under block “$name”.'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-    context.pop();
+      final synced = <_UploadedDoc>[];
+      for (final doc in _documents) {
+        final drawingPath = await _ensureUploadDrawingPath(doc);
+        var levelId = (doc.levelId ?? '').trim();
+        if (levelId.isEmpty) {
+          final levelResult = await api.upsertLevel(
+            projectId: projectId,
+            levelId: doc.levelId,
+            levelName: doc.levelName.trim().isEmpty
+                ? doc.displayName
+                : doc.levelName,
+            drawingFilePath: drawingPath,
+          );
+          levelId = (levelResult.levelId ?? '').trim();
+        }
+        if (levelId.isEmpty) {
+          throw StateError('Level id missing for ${doc.displayName}.');
+        }
+        final plotsPayload = _plotsPayloadForDoc(doc);
+        await api.updateLevelPlots(
+          projectId: projectId,
+          levelId: levelId,
+          plots: plotsPayload,
+        );
+        synced.add(
+          _UploadedDoc(
+            path: drawingPath,
+            displayName: doc.displayName,
+            isPdf: doc.isPdf,
+            levelName: doc.levelName,
+            levelId: levelId,
+            remoteUri: doc.remoteUri,
+          ),
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _projectId = projectId;
+        _documents
+          ..clear()
+          ..addAll(synced);
+      });
+
+      await _persistBlockQuotation(recordSubmitTime: true);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Quote saved to levels successfully.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      context.go(DashboardPage.path);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: 'Could not sync project/levels right now.',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   Widget _canvasToolButton({
@@ -1208,7 +1829,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     );
   }
 
-  Widget _reorderFilesRow() {
+  Widget _reorderFilesRow(BuildContext context) {
     if (_documents.isEmpty) return const SizedBox.shrink();
 
     String shortTitle(String name) {
@@ -1245,20 +1866,22 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
                 const SizedBox(width: 4),
                 Text(
                   '${index + 1}',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: selected ? Colors.white : const Color(0xFF6B7280),
-                  ),
+                  style: AppFonts.labelSmall(
+                        color: selected ? Colors.white : AppColors.muted,
+                      ).copyWith(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
                 ),
                 const SizedBox(width: 6),
                 Text(
                   shortTitle(_documents[index].displayName),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: selected ? Colors.white : const Color(0xFF111827),
-                  ),
+                  style: AppFonts.labelSmall(
+                        color: selected ? Colors.white : AppColors.ink,
+                      ).copyWith(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
               ],
             ),
@@ -1327,13 +1950,12 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
           },
         ),
         titleSpacing: 8,
-        title: const Text(
+        title: Text(
           'Create quote to project',
-          style: TextStyle(
-            fontSize: 18,
-            color: AppColors.ink,
-            fontWeight: FontWeight.w600,
-          ),
+          style: AppFonts.titleMedium(color: AppColors.ink).copyWith(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
         ),
         actions: [
           AnimatedContainer(
@@ -1342,20 +1964,18 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
             width: _showSearchField ? 170 : 44,
             margin: const EdgeInsets.only(right: 8),
             child: _showSearchField
-                ? TextField(
+                ? AppTextField(
                     controller: _searchController,
                     autofocus: true,
-                    decoration: InputDecoration(
-                      hintText: 'Search records',
-                      hintStyle: const TextStyle(fontSize: 12),
-                      prefixIcon: const Icon(Icons.search, size: 16),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                      filled: true,
-                      fillColor: const Color(0xFFEFF0F5),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none,
-                      ),
+                    dense: true,
+                    hintText: 'Search records',
+                    prefixIcon: Icons.search,
+                    hintStyle:
+                        AppFonts.bodySmall(color: AppColors.textFieldHint)
+                            .copyWith(fontSize: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 4,
                     ),
                   )
                 : IconButton(
@@ -1476,7 +2096,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
             ),
             const SizedBox(height: 10),
             if (_documents.isNotEmpty) ...[
-              _reorderFilesRow(),
+              _reorderFilesRow(context),
               const SizedBox(height: 10),
             ],
             Expanded(
@@ -1495,7 +2115,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
                     color: const Color(0xFFE5E7EB),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: _buildGround(),
+                  child: _buildGround(context),
                 ),
               ),
             ),
@@ -1540,7 +2160,8 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
                   builder: (context) {
                     final canSubmit =
                         (_blockName ?? '').trim().isNotEmpty &&
-                        _documents.isNotEmpty;
+                        _documents.isNotEmpty &&
+                        !_isSubmitting;
                     return Row(
                       children: [
                         Expanded(
@@ -1554,7 +2175,9 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: AppButton(
-                            label: 'Submit (${_documents.length})',
+                            label: _isSubmitting
+                                ? 'Syncing...'
+                                : 'Submit (${_documents.length})',
                             icon: Icons.send_outlined,
                             onPressed: canSubmit
                                 ? () => unawaited(_submitQuotation())
@@ -1618,47 +2241,52 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     );
   }
 
-  Widget _buildGround() {
+  Widget _buildGround(BuildContext context) {
     final doc = _selectedDoc;
     if (_isOpeningInitialPdf && doc == null) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 30,
-              height: 30,
-              child: CircularProgressIndicator(strokeWidth: 2.5),
-            ),
-            SizedBox(height: 14),
-            Text(
-              'Opening PDF from URL...',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF111827),
-              ),
-            ),
-            SizedBox(height: 6),
-            Text(
-              'Please wait while we load it in Create Quote.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF6B7280),
-              ),
-            ),
-          ],
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final w =
+                  (constraints.maxWidth * 0.92).clamp(220.0, 340.0).toDouble();
+              final previewH = w * 4 / 3;
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AppSkeletonBox(
+                    width: w,
+                    height: previewH,
+                    borderRadius: 12,
+                  ),
+                  const SizedBox(height: 22),
+                  AppSkeletonLine(height: 18, widthFactor: 0.75),
+                  const SizedBox(height: 10),
+                  AppSkeletonLine(height: 14, widthFactor: 0.55),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Opening PDF from URL…',
+                    textAlign: TextAlign.center,
+                    style:
+                        AppFonts.bodySmall(color: AppColors.muted).copyWith(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       );
     }
     if (doc == null) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
+            const CircleAvatar(
               radius: 28,
               backgroundColor: Color(0xFFE5E7EB),
               child: Icon(
@@ -1667,25 +2295,23 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
                 size: 30,
               ),
             ),
-            SizedBox(height: 18),
+            const SizedBox(height: 18),
             Text(
               'No Documents Added',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF111827),
-              ),
+              style: AppFonts.headlineSmall(color: AppColors.ink).copyWith(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
               'Upload PDFs (multiple) to begin mapping\nplots and placing equipment pins.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF6B7280),
-                height: 1.25,
-              ),
+              style: AppFonts.bodyLarge(color: AppColors.muted).copyWith(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    height: 1.25,
+                  ),
             ),
           ],
         ),
@@ -1766,12 +2392,12 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
             fit: BoxFit.contain,
             filterQuality: FilterQuality.medium,
             errorBuilder: (context, error, stackTrace) {
-              return const Padding(
-                padding: EdgeInsets.all(24),
+              return Padding(
+                padding: const EdgeInsets.all(24),
                 child: Text(
                   'Could not load this file.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF6B7280)),
+                  style: AppFonts.bodyMedium(color: AppColors.muted),
                 ),
               );
             },
@@ -1863,12 +2489,11 @@ class _DocumentCarousel extends StatelessWidget {
           ),
           child: Text(
             '${selectedIndex + 1} / $n',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-              letterSpacing: 0.5,
-            ),
+            style: AppFonts.labelMedium(color: Colors.white).copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                ),
           ),
         ),
       ],
@@ -1968,11 +2593,12 @@ class _DocThumbCard extends StatelessWidget {
                 if (selected) ...[
                   Text(
                     'Active',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.65),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 10,
-                    ),
+                    style: AppFonts.labelSmall(
+                          color: Colors.white.withValues(alpha: 0.65),
+                        ).copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 10,
+                        ),
                   ),
                 ],
                 if (selected) const SizedBox(height: 2),
@@ -1980,11 +2606,12 @@ class _DocThumbCard extends StatelessWidget {
                   doc.levelName.isNotEmpty ? doc.levelName : 'No level',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.78),
-                    fontWeight: FontWeight.w600,
-                    fontSize: 9,
-                  ),
+                  style: AppFonts.labelSmall(
+                        color: Colors.white.withValues(alpha: 0.78),
+                      ).copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 9,
+                      ),
                 ),
               ],
             ),
@@ -2085,11 +2712,10 @@ class _ZoomText extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Text(
         text,
-        style: const TextStyle(
-          fontSize: 10,
-          color: Color(0xFF374151),
-          fontWeight: FontWeight.w700,
-        ),
+        style: AppFonts.labelSmall(color: AppColors.paginationText).copyWith(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
       ),
     );
   }
@@ -2123,7 +2749,7 @@ class _BottomSelectTag extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: () {
-            final h = MediaQuery.sizeOf(context).height;
+            final h = context.appScreenHeight;
             showModalBottomSheet<void>(
               context: context,
               backgroundColor: const Color(0xFF1F2937),
@@ -2149,8 +2775,11 @@ class _BottomSelectTag extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 placeholder,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.9),
+                                style:
+                                    AppFonts.titleMedium(
+                                  color:
+                                      Colors.white.withValues(alpha: 0.9),
+                                ).copyWith(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 15,
                                 ),
@@ -2174,8 +2803,8 @@ class _BottomSelectTag extends StatelessWidget {
                             return ListTile(
                               title: Text(
                                 o,
-                                style: TextStyle(
-                                  color: Colors.white,
+                                style: AppFonts.bodyMedium(color: Colors.white)
+                                    .copyWith(
                                   fontWeight: isSel
                                       ? FontWeight.w800
                                       : FontWeight.w500,
@@ -2214,25 +2843,25 @@ class _BottomSelectTag extends StatelessWidget {
               children: [
                 Text(
                   '$label ',
-                  style: const TextStyle(
-                    color: Color(0xFF6B7280),
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                  ),
+                  style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
                 ),
                 Expanded(
                   child: Text(
                     display,
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
-                    style: TextStyle(
-                      color: hasSelection
-                          ? const Color(0xFF111827)
-                          : const Color(0xFF9CA3AF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: AppFonts.labelSmall(
+                          color: hasSelection
+                              ? AppColors.ink
+                              : AppColors.mutedLight,
+                        ).copyWith(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                   ),
                 ),
                 const Icon(
@@ -2269,22 +2898,20 @@ class _BottomTag extends StatelessWidget {
           children: [
             Text(
               '$label ',
-              style: const TextStyle(
-                color: Color(0xFF6B7280),
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5,
-              ),
+              style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
             ),
             Expanded(
               child: Text(
                 value,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF111827),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: AppFonts.labelSmall(color: AppColors.ink).copyWith(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ),
           ],

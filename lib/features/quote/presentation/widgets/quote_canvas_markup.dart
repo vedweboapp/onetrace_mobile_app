@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/theme/app_screen_size.dart';
 
 import 'manage_plot_area_dialog.dart';
 import 'pdf_markup_geometry.dart';
@@ -230,8 +232,7 @@ class QuoteMarkupPainter extends CustomPainter {
     final tp = TextPainter(
       text: TextSpan(
         text: display,
-        style: const TextStyle(
-          color: AppColors.ink,
+        style: AppFonts.labelMedium(color: AppColors.ink).copyWith(
           fontSize: 12,
           fontWeight: FontWeight.w800,
           letterSpacing: 0.4,
@@ -389,11 +390,11 @@ class QuoteMapPin extends StatelessWidget {
                       ),
                       child: Text(
                         '${index + 1}',
-                        style: const TextStyle(
-                          color: AppColors.brandPrimary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
+                        style: AppFonts.labelSmall(color: AppColors.brandPrimary)
+                            .copyWith(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
                       ),
                     ),
                   ),
@@ -1020,18 +1021,17 @@ class _QuoteCanvasMarkupLayerState extends State<QuoteCanvasMarkupLayer>
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final mq = MediaQuery.sizeOf(context);
+        final screen = AppScreenSize.sizeOf(context);
         var w = constraints.maxWidth;
         var h = constraints.maxHeight;
-        if (!w.isFinite || w <= 0) w = mq.width;
-        if (!h.isFinite || h <= 0) h = mq.height;
+        if (!w.isFinite || w <= 0) w = screen.width;
+        if (!h.isFinite || h <= 0) h = screen.height;
         final overlaySize = Size(w, h);
         _overlaySize = overlaySize;
 
-        /// Let pinch/pan reach [PdfViewPinch] or [InteractiveViewer] under this layer.
-        // Keep pin tap handling active in select mode; only full pan tool should
-        // bypass this overlay entirely.
-        final passPointerToViewer = widget.tool == QuoteCanvasTool.pan;
+        /// Keep overlay interactive so pins can always be edited on tap.
+        /// Non-pin areas still pass through to underlying viewer.
+        const passPointerToViewer = false;
 
         return IgnorePointer(
           ignoring: passPointerToViewer,
@@ -1095,11 +1095,7 @@ class _QuoteCanvasMarkupLayerState extends State<QuoteCanvasMarkupLayer>
                                       ? _pulse.value
                                       : null,
                                 );
-                                final tappable =
-                                    (widget.tool == QuoteCanvasTool.select ||
-                                        widget.tool ==
-                                            QuoteCanvasTool.placePin) &&
-                                    widget.onPinTapped != null;
+                                final tappable = widget.onPinTapped != null;
                                 return Positioned(
                                   left: pinLocal.dx - 18,
                                   top: pinLocal.dy - 40,

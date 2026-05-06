@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_button.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
 
 /// Returns trimmed block name, or `null` if cancelled.
 Future<String?> showBlockNameDialog(
@@ -94,20 +97,20 @@ class _BlockNameDialogBodyState extends State<_BlockNameDialogBody> {
                     children: [
                       Text(
                         widget.title,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style:
+                            AppFonts.headlineSmall(color: AppColors.navInactive)
+                                .copyWith(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                            ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         widget.subtitle,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF111827),
-                        ),
+                        style: AppFonts.bodyLarge(color: AppColors.ink).copyWith(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
                       ),
                     ],
                   ),
@@ -123,48 +126,34 @@ class _BlockNameDialogBodyState extends State<_BlockNameDialogBody> {
               ],
             ),
             const SizedBox(height: 14),
-            const Text(
+            Text(
               'BLOCK NAME',
-              style: TextStyle(
-                fontSize: 14,
-                letterSpacing: 2.2,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF6B7280),
-              ),
+              style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
+                    fontSize: 14,
+                    letterSpacing: 2.2,
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
             const SizedBox(height: 8),
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFF111827), width: 3),
-              ),
-              child: TextField(
-                controller: _blockNameController,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: 'e.g. Block A, Building 1...',
-                  hintStyle: const TextStyle(
-                    color: Color(0xFF9CA3AF),
+            AppTextField(
+              controller: _blockNameController,
+              autofocus: true,
+              hintText: 'e.g. Block A, Building 1...',
+              hintStyle:
+                  AppFonts.headlineSmall(color: AppColors.textFieldHint).copyWith(
                     fontSize: 22,
                     fontWeight: FontWeight.w500,
                   ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 20,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(17),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                style: const TextStyle(
-                  color: Color(0xFF111827),
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 20,
               ),
+              textStyle:
+                  AppFonts.headlineSmall(color: AppColors.textFieldForeground)
+                      .copyWith(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                  ),
             ),
             const SizedBox(height: 20),
             Row(

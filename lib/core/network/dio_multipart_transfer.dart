@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/network/api_dio_log_interceptor.dart';
 
 /// Status + optional raw bytes (file download, multipart response body).
 final class HttpBytesResult {
@@ -17,7 +18,7 @@ final class HttpBytesResult {
 ///
 /// Dedicated Dio instance so large payloads and upload progress stay isolated.
 final class DioMultipartTransfer {
-  DioMultipartTransfer({Dio? dio}) : _dio = dio ?? Dio(_baseOptions);
+  DioMultipartTransfer({Dio? dio}) : _dio = dio ?? _createDefaultDio();
 
   static final BaseOptions _baseOptions = BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -26,6 +27,12 @@ final class DioMultipartTransfer {
     followRedirects: true,
     validateStatus: (_) => true,
   );
+
+  static Dio _createDefaultDio() {
+    final dio = Dio(_baseOptions);
+    dio.interceptors.add(ApiDioLogInterceptor());
+    return dio;
+  }
 
   final Dio _dio;
 

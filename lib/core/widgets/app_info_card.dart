@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 
 class AppInfoCard extends StatelessWidget {
   const AppInfoCard({
@@ -18,7 +19,7 @@ class AppInfoCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            Text(title, style: AppFonts.titleMedium()),
             const SizedBox(height: 12),
             child,
           ],

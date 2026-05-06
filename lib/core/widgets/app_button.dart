@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 
 class AppButton extends StatelessWidget {
   const AppButton({
@@ -24,6 +25,7 @@ class AppButton extends StatelessWidget {
     final foreground = isPrimary ? AppColors.brandOnPrimary : AppColors.iconDark;
     final background = isPrimary ? AppColors.brandPrimary : AppColors.surface;
 
+    final baseLabel = AppFonts.labelLarge();
     final style = FilledButton.styleFrom(
       backgroundColor: background,
       foregroundColor: foreground,
@@ -31,7 +33,7 @@ class AppButton extends StatelessWidget {
       disabledForegroundColor: foreground.withValues(alpha: 0.7),
       minimumSize: Size.fromHeight(height),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      textStyle: TextStyle(
+      textStyle: baseLabel.copyWith(
         fontSize: fontSize,
         fontWeight: FontWeight.w800,
         letterSpacing: 0.2,

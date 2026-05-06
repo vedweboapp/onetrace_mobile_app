@@ -1,12 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/auth/auth_session.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/network/auth_api_client.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_branded_logo_block.dart';
 import 'package:red5/core/widgets/app_frosted_panel.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
+import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 
 class SplashPage extends StatefulWidget {
@@ -37,10 +44,47 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
     )..repeat(reverse: true);
 
     _navigationTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) {
-        context.go(LoginPage.path);
-      }
+      unawaited(_routeAfterSessionCheck());
     });
+  }
+
+  Future<void> _routeAfterSessionCheck() async {
+    if (!mounted) return;
+    final container = ProviderScope.containerOf(context, listen: false);
+    final storage = container.read(localStorageProvider);
+    final authApi = container.read(authApiClientProvider);
+
+    final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
+    if (AuthSession.isJwtValid(access)) {
+      if (!mounted) return;
+      context.go(DashboardPage.path);
+      return;
+    }
+
+    final refresh = storage.getString(LocalStorageKeys.authRefreshToken)?.trim();
+    if (refresh != null && refresh.isNotEmpty) {
+      try {
+        final refreshResponse = await authApi.refreshToken(refreshToken: refresh);
+        final newAccess = AuthSession.readAccessToken(refreshResponse.data);
+        final newRefresh = AuthSession.readRefreshToken(refreshResponse.data);
+        if (newAccess != null && newAccess.isNotEmpty) {
+          await storage.setString(LocalStorageKeys.authAccessToken, newAccess);
+          if (newRefresh != null && newRefresh.isNotEmpty) {
+            await storage.setString(LocalStorageKeys.authRefreshToken, newRefresh);
+          }
+          if (!mounted) return;
+          context.go(DashboardPage.path);
+          return;
+        }
+      } catch (_) {
+        // Fall through to login when refresh fails.
+      }
+    }
+
+    await storage.remove(LocalStorageKeys.authAccessToken);
+    await storage.remove(LocalStorageKeys.authRefreshToken);
+    if (!mounted) return;
+    context.go(LoginPage.path);
   }
 
   @override
@@ -53,8 +97,6 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       backgroundColor: AppColors.transparent,
       body: AppScreenStack(
@@ -69,13 +111,13 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
                   fillAlpha: 0.82,
                   child: AppBrandedLogoBlock(
                     tagline: AppStrings.splashTagline.toUpperCase(),
-                    titleStyle: theme.textTheme.displayLarge?.copyWith(
-                      color: AppColors.brandPrimary,
+                    titleStyle: AppFonts.displayLarge(color: AppColors.brandPrimary)
+                        .copyWith(
                       fontWeight: FontWeight.w900,
                       letterSpacing: -3,
                     ),
-                    taglineStyle: theme.textTheme.labelMedium?.copyWith(
-                      color: AppColors.brown,
+                    taglineStyle:
+                        AppFonts.labelMedium(color: AppColors.brown).copyWith(
                       letterSpacing: 3,
                       fontWeight: FontWeight.w700,
                     ),
@@ -124,8 +166,9 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
                         const SizedBox(width: 8),
                         Text(
                           AppStrings.splashLoadingText.toUpperCase(),
-                          style: theme.textTheme.labelSmall?.copyWith(
+                          style: AppFonts.labelSmall(
                             color: AppColors.ink.withValues(alpha: 0.75),
+                          ).copyWith(
                             letterSpacing: 1.2,
                             fontWeight: FontWeight.w600,
                           ),

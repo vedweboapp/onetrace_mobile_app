@@ -39,7 +39,14 @@ class QuoteHeader {
   QuoteHeader({
     required this.quoteName,
     required this.quoteNumber,
+    this.projectId,
     this.quoteStage,
+    this.projectStatus,
+    this.description,
+    this.startDate,
+    this.endDate,
+    this.organization,
+    this.client,
     this.validTill,
     this.property,
     this.doorSurvey,
@@ -48,12 +55,25 @@ class QuoteHeader {
     this.workdrivePdfDownload,
     this.contactName,
     this.createdBy,
+    this.modifiedBy,
+    this.createdAt,
+    this.modifiedAt,
+    this.deletedAt,
+    this.deletedBy,
+    this.isDeleted,
     this.layout,
   });
 
   final String quoteName;
   final String quoteNumber;
+  final String? projectId;
   final String? quoteStage;
+  final String? projectStatus;
+  final String? description;
+  final String? startDate;
+  final String? endDate;
+  final String? organization;
+  final String? client;
   final String? validTill;
   final String? property;
   final String? doorSurvey;
@@ -62,6 +82,12 @@ class QuoteHeader {
   final String? workdrivePdfDownload;
   final String? contactName;
   final String? createdBy;
+  final String? modifiedBy;
+  final String? createdAt;
+  final String? modifiedAt;
+  final String? deletedAt;
+  final String? deletedBy;
+  final String? isDeleted;
   final String? layout;
 
   factory QuoteHeader.fromJson(Map<String, dynamic> json) {
@@ -80,7 +106,14 @@ class QuoteHeader {
           ? (json['quote_name'] as String).trim()
           : 'Untitled Quote',
       quoteNumber: (json['quote_number'] as String?)?.trim() ?? '—',
+      projectId: readString(['id']),
       quoteStage: json['quote_stage'] as String?,
+      projectStatus: readString(['project_status']),
+      description: readString(['description']),
+      startDate: readString(['start_date']),
+      endDate: readString(['end_date']),
+      organization: readString(['organization']),
+      client: readString(['client']),
       validTill: json['valid_till'] as String?,
       property: json['property'] as String?,
       doorSurvey: json['door_survey'] as String?,
@@ -96,7 +129,13 @@ class QuoteHeader {
         'Download_link',
       ]),
       contactName: json['contact_name'] as String?,
-      createdBy: json['created_by'] as String?,
+      createdBy: readString(['created_by']),
+      modifiedBy: readString(['modified_by']),
+      createdAt: readString(['created_at']),
+      modifiedAt: readString(['modified_at']),
+      deletedAt: readString(['deleted_at']),
+      deletedBy: readString(['deleted_by']),
+      isDeleted: readString(['is_deleted']),
       layout: json['layout'] as String?,
     );
   }

@@ -5,15 +5,40 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:red5/app/app.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/shared_preferences_storage.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+AuthApiClient _fakeAuthApiClient() {
+  final dio = Dio(
+    BaseOptions(
+      validateStatus: (status) =>
+          status != null && status >= 200 && status < 300,
+    ),
+  );
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onRequest: (options, handler) {
+        handler.resolve(
+          Response<Map<String, dynamic>>(
+            requestOptions: options,
+            statusCode: 200,
+            data: const <String, dynamic>{},
+          ),
+        );
+      },
+    ),
+  );
+  return AuthApiClient(dio: dio);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +52,7 @@ void main() {
       ProviderScope(
         overrides: [
           localStorageProvider.overrideWith((ref) => storage),
+          authApiClientProvider.overrideWithValue(_fakeAuthApiClient()),
         ],
         child: const App(),
       ),

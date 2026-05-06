@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
 
 /// Result of [showManagePlotAreaDialog]. `null` means user dismissed without action.
 class PlotManageOutcome {
@@ -101,73 +104,49 @@ class _ManagePlotBodyState extends State<_ManagePlotBody> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
+            Text(
               'Edit Plot',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF0F172A),
-              ),
+              style:
+                  AppFonts.headlineSmall(color: AppColors.navInactive).copyWith(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'Rename or remove this plot.',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF6B7280),
-                height: 1.35,
-              ),
+              style: AppFonts.titleMedium(color: AppColors.muted).copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    height: 1.35,
+                  ),
             ),
             const SizedBox(height: 18),
-            TextField(
+            AppTextField(
               controller: _controller,
               autofocus: true,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => canSave ? _save() : null,
-              decoration: InputDecoration(
-                hintText: 'Plot name',
-                hintStyle: const TextStyle(
-                  color: Color(0xFF9CA3AF),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                filled: true,
-                fillColor: const Color(0xFFF3F4F6),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 14,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF111827),
-                    width: 1.5,
+              hintText: 'Plot name',
+              textStyle:
+                  AppFonts.titleMedium(color: AppColors.textFieldForeground)
+                      .copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                   ),
-                ),
-              ),
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF111827),
-              ),
             ),
             const SizedBox(height: 20),
             Row(
               children: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
+                  child: Text(
                     'Cancel',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF6B7280),
-                    ),
+                    style: AppFonts.titleMedium(color: AppColors.muted)
+                        .copyWith(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
                 ),
                 const Spacer(),
@@ -185,10 +164,10 @@ class _ManagePlotBodyState extends State<_ManagePlotBody> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    textStyle: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    textStyle: AppFonts.titleMedium().copyWith(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
                   ),
                   child: const Text('Save'),
                 ),
@@ -201,16 +180,16 @@ class _ManagePlotBodyState extends State<_ManagePlotBody> {
               child: InkWell(
                 onTap: _confirmDelete,
                 borderRadius: BorderRadius.circular(12),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   child: Center(
                     child: Text(
                       'Delete Plot & Pins',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFFB42318),
-                      ),
+                      style: AppFonts.titleMedium(color: AppColors.danger)
+                          .copyWith(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
                     ),
                   ),
                 ),

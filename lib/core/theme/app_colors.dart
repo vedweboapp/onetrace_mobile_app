@@ -91,6 +91,12 @@ abstract final class AppColors {
 
   static const Color authFieldSurface = Color(0x80E1E3E4);
 
+  /// Universal outlined text fields (login + dialogs + sheets).
+  static const Color textFieldBorder = Color(0xFFE0E0E0);
+  static const Color textFieldFocusBorder = Color(0xFF111111);
+  static const Color textFieldHint = Color(0xFF9E9E9E);
+  static const Color textFieldForeground = Color(0xFF111111);
+
   static const Color disabledButton = Color(0xFFD1D5DB);
   static const Color disabledOnButton = Color(0xFF9CA3AF);
 

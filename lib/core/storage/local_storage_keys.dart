@@ -4,6 +4,8 @@ abstract final class LocalStorageKeys {
 
   static const authRememberMe = 'auth_remember_me';
   static const authSavedEmail = 'auth_saved_email';
+  static const authAccessToken = 'auth_access_token';
+  static const authRefreshToken = 'auth_refresh_token';
 
   /// JSON: `{ "documents": [...], "selectedIndex": int }` (legacy; migrated on read)
   static const quoteSession = 'quote_session_v1';

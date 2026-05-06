@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_bar_styles.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_layout.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
 import 'package:red5/features/dashboard/data/quote_composite_models.dart';
@@ -37,21 +38,20 @@ class QuoteCompositeItemGroupsPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
+            Text(
               'Composite item groups',
-              style: TextStyle(
-                color: AppColors.inkStrong,
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-              ),
+              style:
+                  AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
             ),
             Text(
               quoteTitle,
-              style: const TextStyle(
-                color: AppColors.muted,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
+              style: AppFonts.bodyMedium(color: AppColors.muted).copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
             ),
           ],
         ),
@@ -119,19 +119,18 @@ class QuoteCompositeGroupItemsPage extends StatelessWidget {
           children: [
             Text(
               group.title,
-              style: const TextStyle(
-                color: AppColors.inkStrong,
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-              ),
+              style:
+                  AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
             ),
             Text(
               quoteTitle,
-              style: const TextStyle(
-                color: AppColors.muted,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
+              style: AppFonts.bodyMedium(color: AppColors.muted).copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
             ),
           ],
         ),
@@ -142,11 +141,10 @@ class QuoteCompositeGroupItemsPage extends StatelessWidget {
           children: [
             Text(
               'Composite items (${group.items.length})',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: AppColors.ink,
-              ),
+              style: AppFonts.titleMedium(color: AppColors.ink).copyWith(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
             const SizedBox(height: 12),
             for (final item in group.items)

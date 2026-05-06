@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 
 /// One row on the composite item groups list.
 class CompositeGroupListTile extends StatelessWidget {
@@ -39,19 +40,17 @@ class CompositeGroupListTile extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.ink,
-                      ),
+                      style: AppFonts.titleMedium(color: AppColors.ink)
+                          .copyWith(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: const TextStyle(
-                        color: AppColors.muted,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: AppFonts.bodyMedium(color: AppColors.muted)
+                          .copyWith(fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),

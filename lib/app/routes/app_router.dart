@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/features/dashboard/data/quote_summary.dart';
+import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
+import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
+import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_composite_items_screen.dart';
+import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_details_page.dart';
+import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
+import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
+import 'package:red5/features/login/presentation/views/reset_password_page.dart';
 import 'package:red5/features/quote/presentation/views/quote_project_page.dart';
 import 'package:red5/features/splash/presentation/views/splash_page.dart';
 
@@ -47,6 +55,33 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: ForgotPasswordPage.path,
+        name: ForgotPasswordPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const ForgotPasswordPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: OtpVerifyPage.path,
+        name: OtpVerifyPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: otpVerifyPageBuilder(context, state),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: ResetPasswordPage.path,
+        name: ResetPasswordPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: resetPasswordPageBuilder(context, state),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
         path: DashboardPage.path,
         name: DashboardPage.name,
         pageBuilder: (context, state) => _animatedPage(
@@ -63,6 +98,113 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           child: const DashboardPage(),
           beginOffset: const Offset(0.08, 0),
         ),
+      ),
+      GoRoute(
+        path: CreateProjectPage.path,
+        name: CreateProjectPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const CreateProjectPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: DrawingCanvasPage.path,
+        name: DrawingCanvasPage.name,
+        pageBuilder: (context, state) {
+          var title = 'Ground Floor Plan';
+          String? filePath;
+          String? remoteDrawingUrl;
+          String? levelName;
+          String? projectName;
+          String? projectId;
+          String? levelId;
+          final extra = state.extra;
+          if (extra is Map) {
+            final map = Map<String, dynamic>.from(extra);
+            final rawTitle = map['title'];
+            if (rawTitle is String && rawTitle.trim().isNotEmpty) {
+              title = rawTitle.trim();
+            }
+            final rawFilePath = map['filePath'];
+            if (rawFilePath is String && rawFilePath.trim().isNotEmpty) {
+              filePath = rawFilePath.trim();
+            }
+            final rawDrawingUrl = map['drawingUrl'] ?? map['remoteDrawingUrl'];
+            if (rawDrawingUrl is String && rawDrawingUrl.trim().isNotEmpty) {
+              remoteDrawingUrl = rawDrawingUrl.trim();
+            }
+            final rawLevelName = map['levelName'];
+            if (rawLevelName is String && rawLevelName.trim().isNotEmpty) {
+              levelName = rawLevelName.trim();
+            }
+            final rawProjectName = map['projectName'];
+            if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
+              projectName = rawProjectName.trim();
+            }
+            final rawProjectId = map['projectId'];
+            if (rawProjectId is String && rawProjectId.trim().isNotEmpty) {
+              projectId = rawProjectId.trim();
+            }
+            final rawLevelId = map['levelId'];
+            if (rawLevelId is String && rawLevelId.trim().isNotEmpty) {
+              levelId = rawLevelId.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: DrawingCanvasPage(
+              title: title,
+              filePath: filePath,
+              remoteDrawingUrl: remoteDrawingUrl,
+              levelName: levelName,
+              projectName: projectName,
+              projectId: projectId,
+              levelId: levelId,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ProjectDetailsPage.pathPrefix}/:projectId',
+        name: ProjectDetailsPage.name,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          QuoteSummary? summary;
+          if (extra is Map) {
+            summary = QuoteSummary.fromMap(Map<String, dynamic>.from(extra));
+          } else if (extra is QuoteSummary) {
+            summary = extra;
+          }
+          final id = state.pathParameters['projectId'] ?? '';
+          summary ??= QuoteSummary(id: id, quoteName: 'Project', quoteNumber: '—');
+          return _animatedPage(
+            state: state,
+            child: ProjectDetailsPage(project: summary),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: UploadDrawingPage.path,
+        name: UploadDrawingPage.name,
+        pageBuilder: (context, state) {
+          String projectId = '';
+          final extra = state.extra;
+          if (extra is Map) {
+            final map = Map<String, dynamic>.from(extra);
+            final rawId = map['projectId'];
+            if (rawId is String && rawId.trim().isNotEmpty) {
+              projectId = rawId.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: UploadDrawingPage(projectId: projectId),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
       ),
       GoRoute(
         path: QuoteCompositeItemGroupsPage.path,
@@ -135,6 +277,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) {
           final extra = state.extra;
           String? initialBlock;
+          String? initialProjectId;
+          int? initialOrganizationId;
+          int? initialClientId;
+          String? initialProjectDescription;
+          String? initialStartDate;
+          String? initialEndDate;
           String? initialPdfUrl;
           String? initialPdfName;
           List<Map<String, dynamic>>? initialProducts;
@@ -143,10 +291,26 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           } else if (extra is Map) {
             final m = Map<String, dynamic>.from(extra);
             final b = m['initialBlockName'];
+            final p = m['initialProjectId'];
+            final org = m['initialOrganizationId'];
+            final cli = m['initialClientId'];
+            final desc = m['initialProjectDescription'];
+            final sd = m['initialStartDate'];
+            final ed = m['initialEndDate'];
             final u = m['initialPdfUrl'];
             final n = m['initialPdfName'];
             final pr = m['initialProducts'];
             if (b is String && b.trim().isNotEmpty) initialBlock = b.trim();
+            if (p is String && p.trim().isNotEmpty) initialProjectId = p.trim();
+            if (org is int) initialOrganizationId = org;
+            if (org is String) initialOrganizationId = int.tryParse(org.trim());
+            if (cli is int) initialClientId = cli;
+            if (cli is String) initialClientId = int.tryParse(cli.trim());
+            if (desc is String && desc.trim().isNotEmpty) {
+              initialProjectDescription = desc.trim();
+            }
+            if (sd is String && sd.trim().isNotEmpty) initialStartDate = sd.trim();
+            if (ed is String && ed.trim().isNotEmpty) initialEndDate = ed.trim();
             if (u is String && u.trim().isNotEmpty) initialPdfUrl = u.trim();
             if (n is String && n.trim().isNotEmpty) initialPdfName = n.trim();
             if (pr is List) {
@@ -160,6 +324,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             state: state,
             child: QuoteProjectPage(
               initialBlockName: initialBlock,
+              initialProjectId: initialProjectId,
+              initialOrganizationId: initialOrganizationId,
+              initialClientId: initialClientId,
+              initialProjectDescription: initialProjectDescription,
+              initialStartDate: initialStartDate,
+              initialEndDate: initialEndDate,
               initialPdfUrl: initialPdfUrl,
               initialPdfName: initialPdfName,
               initialProducts: initialProducts,

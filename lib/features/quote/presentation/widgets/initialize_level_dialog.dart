@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
 
 /// Returns trimmed level name, or `null` if the dialog was dismissed without continuing.
 Future<String?> showInitializeLevelDialog(
@@ -91,13 +94,13 @@ class _InitializeLevelDialogBodyState
               ],
             ),
             const SizedBox(height: 14),
-            const Text(
+            Text(
               'Initialize Level',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF0F172A),
-              ),
+              style:
+                  AppFonts.headlineSmall(color: AppColors.navInactive).copyWith(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
             const SizedBox(height: 12),
             Container(
@@ -112,62 +115,33 @@ class _InitializeLevelDialogBodyState
                 widget.fileName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF374151),
-                ),
+                style:
+                    AppFonts.bodyMedium(color: AppColors.paginationText)
+                        .copyWith(fontWeight: FontWeight.w600),
               ),
             ),
             const SizedBox(height: 18),
-            const Text(
+            Text(
               'LEVEL NAME',
-              style: TextStyle(
-                fontSize: 11,
-                letterSpacing: 1.4,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF6B7280),
-              ),
+              style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
+                    fontSize: 11,
+                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
             const SizedBox(height: 8),
-            TextField(
+            AppTextField(
               controller: _levelController,
               autofocus: true,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => canContinue ? _submit() : null,
-              decoration: InputDecoration(
-                hintText: 'e.g. Level 1, Basement...',
-                hintStyle: const TextStyle(
-                  color: Color(0xFF9CA3AF),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 14,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF111827),
-                    width: 2,
+              hintText: 'e.g. Level 1, Basement...',
+              textStyle:
+                  AppFonts.titleMedium(color: AppColors.textFieldForeground)
+                      .copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                   ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF111827),
-                    width: 2,
-                  ),
-                ),
-              ),
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF111827),
-              ),
             ),
             const SizedBox(height: 20),
             SizedBox(
@@ -183,10 +157,10 @@ class _InitializeLevelDialogBodyState
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  textStyle: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  textStyle: AppFonts.titleMedium().copyWith(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
                 ),
                 child: const Text('Continue'),
               ),

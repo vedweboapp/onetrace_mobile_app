@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/features/quote/data/quote_selection_options.dart';
 import 'package:red5/features/quote/presentation/widgets/pdf_markup_geometry.dart';
 
@@ -178,13 +181,12 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
+                Text(
                   'Status',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF111827),
-                  ),
+                  style: AppFonts.titleMedium(color: AppColors.ink).copyWith(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
                 ),
                 const SizedBox(height: 12),
                 ..._statuses.map((s) {
@@ -225,10 +227,11 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                               Expanded(
                                 child: Text(
                                   s,
-                                  style: TextStyle(
+                                  style:
+                                      AppFonts.bodyMedium(color: _statusFg(s))
+                                          .copyWith(
                                     fontWeight: FontWeight.w700,
                                     fontSize: 14,
-                                    color: _statusFg(s),
                                   ),
                                 ),
                               ),
@@ -275,17 +278,16 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, size: 22, color: const Color(0xFF6B7280)),
+            Icon(icon, size: 22, color: AppColors.muted),
             const SizedBox(width: 12),
             Expanded(
               flex: 5,
               child: Text(
                 label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF6B7280),
-                ),
+                style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ),
             Expanded(
@@ -314,11 +316,10 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
           const SizedBox(width: 6),
           Text(
             _status,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: _statusFg(_status),
-            ),
+            style: AppFonts.labelMedium(color: _statusFg(_status)).copyWith(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
           ),
         ],
       ),
@@ -333,17 +334,16 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
               IconButton(
                 onPressed: () => Navigator.pop(context),
                 icon: const Icon(Icons.chevron_left, size: 28),
-                color: const Color(0xFF111827),
+                color: AppColors.ink,
               ),
               Expanded(
                 child: Text(
                   title,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF111827),
-                  ),
+                  style: AppFonts.titleMedium(color: AppColors.ink).copyWith(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                 ),
               ),
               if (_isEditing) ...[
@@ -423,11 +423,11 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                             ? p.productName!.trim()
                             : '—',
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF111827),
-                        ),
+                        style:
+                            AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
               ),
               row(
@@ -436,32 +436,21 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                 _isEditing
                     ? SizedBox(
                         width: 84,
-                        child: TextField(
+                        child: AppTextField(
                           controller: _qty,
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.right,
-                          decoration: InputDecoration(
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
-                            ),
-                            filled: true,
-                            fillColor: const Color(0xFFF3F4F6),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide.none,
-                            ),
-                          ),
+                          dense: true,
+                          hintText: '',
                         ),
                       )
                     : Text(
                         '${p.quantity}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF111827),
-                        ),
+                        style:
+                            AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
               ),
               row(
@@ -499,11 +488,12 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                                       _status,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 13,
-                                        color: _statusFg(_status),
-                                      ),
+                                      style: AppFonts.bodySmall(
+                                            color: _statusFg(_status),
+                                          ).copyWith(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 13,
+                                          ),
                                     ),
                                   ),
                                   Icon(
@@ -527,11 +517,10 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                       ? p.blockName!.trim()
                       : '—',
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
-                  ),
+                  style: AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
               ),
               row(
@@ -542,11 +531,10 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                       ? p.levelName!.trim()
                       : '—',
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
-                  ),
+                  style: AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
               ),
               row(
@@ -557,11 +545,10 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                       ? p.zoneLabel!.trim()
                       : '—',
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
-                  ),
+                  style: AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
               ),
               row(
@@ -592,11 +579,11 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                       )
                     : Text(
                         p.variation,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF111827),
-                        ),
+                        style:
+                            AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
               ),
               row(
@@ -605,41 +592,34 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                 Text(
                   _fmtDropped(),
                   textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111827),
-                  ),
+                  style: AppFonts.bodySmall(color: AppColors.ink).copyWith(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'DESCRIPTION',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.6,
-                  color: Color(0xFF6B7280),
-                ),
+                style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                    ),
               ),
               const SizedBox(height: 8),
-              TextField(
+              AppTextField(
                 controller: _desc,
                 maxLines: 4,
                 readOnly: !_isEditing,
-                decoration: InputDecoration(
-                  hintText: 'Add notes or detailed description here...',
-                  hintStyle: TextStyle(
-                    color: Colors.grey.shade500,
-                    fontStyle: FontStyle.italic,
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF3F4F6),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
+                hintText: 'Add notes or detailed description here...',
+                borderRadius: 12,
+                hintStyle:
+                    AppFonts.bodyMedium(color: AppColors.textFieldHint).copyWith(
+                      fontStyle: FontStyle.italic,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                    ),
               ),
               const SizedBox(height: 24),
               SizedBox(
@@ -657,9 +637,10 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
+                  child: Text(
                     'Remove This Pin',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                    style: AppFonts.labelLarge(color: AppColors.brandPrimary)
+                        .copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),

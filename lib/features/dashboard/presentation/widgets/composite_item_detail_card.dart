@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 
 class CompositeItemDetailCard extends StatelessWidget {
   const CompositeItemDetailCard({
@@ -30,21 +31,19 @@ class CompositeItemDetailCard extends StatelessWidget {
           children: [
             Text(
               name,
-              style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 16,
-                color: AppColors.ink,
-              ),
+              style: AppFonts.titleMedium(color: AppColors.ink).copyWith(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
             ),
             if (description != null && description!.trim().isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
                 description!.trim(),
-                style: const TextStyle(
-                  color: AppColors.muted,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 14,
-                ),
+                style: AppFonts.bodyMedium(color: AppColors.muted).copyWith(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
               ),
             ],
             const SizedBox(height: 10),
@@ -55,29 +54,28 @@ class CompositeItemDetailCard extends StatelessWidget {
                 if (sku != null && sku!.trim().isNotEmpty)
                   Text(
                     'SKU: $sku',
-                    style: const TextStyle(
-                      color: AppColors.muted,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
+                    style:
+                        AppFonts.bodyMedium(color: AppColors.muted).copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
                   ),
                 if (quantity != null)
                   Text(
                     'Qty: $quantity',
-                    style: const TextStyle(
-                      color: AppColors.muted,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
+                    style:
+                        AppFonts.bodyMedium(color: AppColors.muted).copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
                   ),
                 if (totalLabel != null)
                   Text(
                     'Total: $totalLabel',
-                    style: const TextStyle(
-                      color: AppColors.ink,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
+                    style: AppFonts.bodyMedium(color: AppColors.ink).copyWith(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
                   ),
               ],
             ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
 
 class QuotePaginationBar extends StatelessWidget {
   const QuotePaginationBar({
@@ -31,10 +32,8 @@ class QuotePaginationBar extends StatelessWidget {
           const Spacer(),
           Text(
             'Page $currentPage / $totalPages',
-            style: const TextStyle(
-              color: AppColors.paginationText,
-              fontWeight: FontWeight.w700,
-            ),
+            style: AppFonts.bodyMedium(color: AppColors.paginationText)
+                .copyWith(fontWeight: FontWeight.w700),
           ),
           const Spacer(),
           OutlinedButton(onPressed: isLoading ? null : onNext, child: const Text('Next')),
