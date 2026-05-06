@@ -6,6 +6,7 @@ import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/app_under_development_view.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
@@ -20,9 +21,9 @@ String? _absoluteDrawingFileUrl(String drawingFileFromApi) {
       (parsed.scheme == 'http' || parsed.scheme == 'https')) {
     return raw;
   }
-  return Uri.parse(AppApiUrls.baseUrl)
-      .resolve(raw.startsWith('/') ? raw : '/$raw')
-      .toString();
+  return Uri.parse(
+    AppApiUrls.baseUrl,
+  ).resolve(raw.startsWith('/') ? raw : '/$raw').toString();
 }
 
 class ProjectDetailsPage extends ConsumerStatefulWidget {
@@ -73,9 +74,14 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
       final next = levels.asMap().entries.map((entry) {
         final index = entry.key;
         final level = entry.value;
-        final title = level.name.trim().isEmpty ? 'Drawing ${index + 1}' : level.name.trim();
-        final meta = 'Level • ${level.name.trim().isEmpty ? 'N/A' : level.name.trim()}';
-        final code = level.id.trim().isEmpty ? 'L${(index + 1).toString().padLeft(3, '0')}' : level.id.trim();
+        final title = level.name.trim().isEmpty
+            ? 'Drawing ${index + 1}'
+            : level.name.trim();
+        final meta =
+            'Level • ${level.name.trim().isEmpty ? 'N/A' : level.name.trim()}';
+        final code = level.id.trim().isEmpty
+            ? 'L${(index + 1).toString().padLeft(3, '0')}'
+            : level.id.trim();
         return _DrawingItem(
           code: code,
           title: title,
@@ -133,7 +139,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
       text,
       style: AppFonts.headlineSmall(
         color: AppColors.inkStrong,
-      ).copyWith(fontWeight: FontWeight.w700, fontSize: 32),
+      ).copyWith(fontWeight: FontWeight.w700, fontSize: 24),
     );
   }
 
@@ -150,9 +156,6 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     final description = (widget.project.description ?? '').trim().isEmpty
         ? 'Project details will appear here once description data is available.'
         : widget.project.description!.trim();
-    final client = (widget.project.clientName ?? '').trim().isEmpty
-        ? widget.project.quoteNumber
-        : widget.project.clientName!.trim();
     final start = _displayDate(widget.project.startDate);
     final end = _displayDate(widget.project.endDate);
 
@@ -172,15 +175,6 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
           const SizedBox(height: 4),
           Text(
             widget.project.quoteName,
-            style: AppFonts.titleMedium(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w600, fontSize: 18),
-          ),
-          const SizedBox(height: 12),
-          _label('CLIENT'),
-          const SizedBox(height: 4),
-          Text(
-            client,
             style: AppFonts.titleMedium(
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w600, fontSize: 18),
@@ -302,21 +296,9 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
   }
 
   Widget _placeholderTab(String title) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
-      children: [
-        Text(
-          title,
-          style: AppFonts.headlineSmall(
-            color: AppColors.inkStrong,
-          ).copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          'This section is coming soon.',
-          style: AppFonts.bodyMedium(color: AppColors.muted),
-        ),
-      ],
+    return const AppUnderDevelopmentView(
+      title: 'Working on this page',
+      message: 'This section is under development.\nCheck back soon for updates.',
     );
   }
 
@@ -354,15 +336,28 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     if (result is! Map) return;
 
     final map = Map<String, dynamic>.from(result);
+    final uploadCount = map['uploadCount'] is int
+        ? (map['uploadCount'] as int).clamp(1, 999)
+        : (((map['filePath'] ?? '').toString().trim().isNotEmpty) ? 1 : 0);
+
+    if (uploadCount > 0 && _drawingSearchController.text.trim().isNotEmpty) {
+      // Clear any active search so newly uploaded drawings are visible.
+      setState(() => _drawingSearchController.clear());
+    }
+
     final fileName = (map['fileName'] ?? '').toString().trim();
     final pdfName = (map['pdfName'] ?? '').toString().trim();
     final levelName = (map['levelName'] ?? '').toString().trim();
     final filePath = (map['filePath'] ?? '').toString().trim();
     final title = (pdfName.isNotEmpty ? pdfName : fileName).trim();
 
-    // Always refresh from API so list stays source-of-truth.
+    // Always refresh from API so every uploaded level appears in the list.
     await _loadProjectDrawings();
     if (!mounted) return;
+
+    if (uploadCount > 1) {
+      return;
+    }
 
     if (title.isEmpty || filePath.isEmpty) return;
     await _openDrawingCanvas(
@@ -461,107 +456,122 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               child: RefreshIndicator(
                 onRefresh: _loadProjectDrawings,
                 child: _isLoadingDrawings
-                  ? const Center(child: CircularProgressIndicator())
-                  : _drawingsError != null
-                      ? Center(
-                          child: Padding( 
-                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                    ? const Center(child: CircularProgressIndicator())
+                    : _drawingsError != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          child: Text(
+                            _drawingsError!,
+                            textAlign: TextAlign.center,
+                            style: AppFonts.bodyMedium(color: AppColors.muted),
+                          ),
+                        ),
+                      )
+                    : _filteredDrawings.isEmpty
+                    ? ListView(
+                        children: [
+                          const SizedBox(height: 120),
+                          Center(
                             child: Text(
-                              _drawingsError!,
-                              textAlign: TextAlign.center,
-                              style: AppFonts.bodyMedium(color: AppColors.muted),
+                              'No levels found for this project',
+                              style: AppFonts.bodyMedium(
+                                color: AppColors.muted,
+                              ),
                             ),
                           ),
-                        )
-                      : _filteredDrawings.isEmpty
-                          ? ListView(
-                              children: [
-                                const SizedBox(height: 120),
-                                Center(
-                                  child: Text(
-                                    'No levels found for this project',
-                                    style: AppFonts.bodyMedium(color: AppColors.muted),
+                        ],
+                      )
+                    : ListView.separated(
+                        itemCount: _filteredDrawings.length,
+                        separatorBuilder: (_, _) =>
+                            const Divider(height: 1, color: Color(0xFFE3E3E4)),
+                        itemBuilder: (context, index) {
+                          final item = _filteredDrawings[index];
+                          final darkTile = item.accent.computeLuminance() < 0.2;
+                          return InkWell(
+                            onTap: () async => _openDrawingCanvas(item),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                10,
+                                12,
+                                10,
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 54,
+                                    height: 54,
+                                    decoration: BoxDecoration(
+                                      color: item.accent,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: const Color(0xFFE2E2E4),
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        item.code.substring(0, 1),
+                                        style: AppFonts.titleMedium(
+                                          color: darkTile
+                                              ? AppColors.white
+                                              : AppColors.muted,
+                                        ).copyWith(fontWeight: FontWeight.w700),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ],
-                            )
-                          : ListView.separated(
-                              itemCount: _filteredDrawings.length,
-                              separatorBuilder: (_, _) =>
-                                  const Divider(height: 1, color: Color(0xFFE3E3E4)),
-                              itemBuilder: (context, index) {
-                                final item = _filteredDrawings[index];
-                                final darkTile = item.accent.computeLuminance() < 0.2;
-                                return InkWell(
-                                  onTap: () async => _openDrawingCanvas(item),
-                                  child: Padding(
-                                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                                    child: Row(
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Container(
-                                          width: 54,
-                                          height: 54,
-                                          decoration: BoxDecoration(
-                                            color: item.accent,
-                                            borderRadius: BorderRadius.circular(10),
-                                            border: Border.all(color: const Color(0xFFE2E2E4)),
-                                          ),
-                                          child: Center(
-                                            child: Text(
-                                              item.code.substring(0, 1),
-                                              style: AppFonts.titleMedium(
-                                                color: darkTile
-                                                    ? AppColors.white
-                                                    : AppColors.muted,
-                                              ).copyWith(fontWeight: FontWeight.w700),
-                                            ),
-                                          ),
+                                        Text(
+                                          '${item.code} - ${item.title}',
+                                          style:
+                                              AppFonts.titleMedium(
+                                                color: AppColors.inkStrong,
+                                              ).copyWith(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 15,
+                                              ),
                                         ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                '${item.code} - ${item.title}',
-                                                style: AppFonts.titleMedium(
-                                                  color: AppColors.inkStrong,
-                                                ).copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                  fontSize: 15,
-                                                ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          item.meta,
+                                          style:
+                                              AppFonts.bodyMedium(
+                                                color: AppColors.muted,
+                                              ).copyWith(
+                                                fontWeight: FontWeight.w500,
+                                                fontSize: 14,
                                               ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                item.meta,
-                                                style: AppFonts.bodyMedium(
-                                                  color: AppColors.muted,
-                                                ).copyWith(
-                                                  fontWeight: FontWeight.w500,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                item.updated,
-                                                style: AppFonts.bodySmall(
-                                                  color: AppColors.mutedLight,
-                                                ).copyWith(fontWeight: FontWeight.w600),
-                                              ),
-                                            ],
-                                          ),
                                         ),
-                                        const Icon(
-                                          Icons.chevron_right_rounded,
-                                          color: AppColors.border,
-                                          size: 22,
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          item.updated,
+                                          style:
+                                              AppFonts.bodySmall(
+                                                color: AppColors.mutedLight,
+                                              ).copyWith(
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                );
-                              },
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: AppColors.border,
+                                    size: 22,
+                                  ),
+                                ],
+                              ),
                             ),
+                          );
+                        },
+                      ),
               ),
             ),
           ],
@@ -584,9 +594,6 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
   @override
   Widget build(BuildContext context) {
     final title = widget.project.quoteName;
-    final subtitle = (widget.project.clientName ?? '').trim().isEmpty
-        ? widget.project.quoteNumber
-        : widget.project.clientName!.trim();
 
     return DefaultTabController(
       length: 9,
@@ -624,15 +631,6 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
                     style: AppFonts.headlineSmall(
                       color: AppColors.inkStrong,
                     ).copyWith(fontWeight: FontWeight.w700, fontSize: 36),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppFonts.bodyMedium(
-                      color: AppColors.muted,
-                    ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
                   ),
                   const SizedBox(height: 6),
                   Row(

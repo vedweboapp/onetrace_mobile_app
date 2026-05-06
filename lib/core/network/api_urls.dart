@@ -45,6 +45,14 @@ abstract final class AppApiUrls {
   /// `GET` [group_read] · `PUT` [group_update] · `PATCH` [group_partial_update] · `DELETE` [group_delete]
   static String groupById(String id) => '$_v1/group/$id/';
 
+  // ─── Item ─────────────────────────────────────────────────────────────────
+
+  /// `GET` [item_list] · `POST` [item_create]
+  static const String items = '$_v1/item/';
+
+  /// `GET` [item_read] · `PUT` [item_update] · `PATCH` [item_partial_update] · `DELETE` [item_delete]
+  static String itemById(String id) => '$_v1/item/$id/';
+
   // ─── Pin status ───────────────────────────────────────────────────────────
 
   /// `GET` [pin-status_list] · `POST` [pin-status_create]

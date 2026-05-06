@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_urls.dart';
@@ -52,6 +53,35 @@ final class PinStatusItem {
   final bool isActive;
 }
 
+final class GroupItemOption {
+  const GroupItemOption({required this.id, required this.name});
+
+  final int id;
+  final String name;
+}
+
+final class CompositeItemOption {
+  const CompositeItemOption({
+    required this.id,
+    required this.name,
+    this.groupId,
+  });
+
+  final int id;
+  final String name;
+  final int? groupId;
+}
+
+final class GroupCompositeCatalog {
+  const GroupCompositeCatalog({
+    required this.groups,
+    required this.items,
+  });
+
+  final List<GroupItemOption> groups;
+  final List<CompositeItemOption> items;
+}
+
 /// API client for project and level (drawing) operations.
 final class QuoteProjectApiClient {
   QuoteProjectApiClient({Dio? dio}) : _dio = dio ?? _createDio();
@@ -86,6 +116,11 @@ final class QuoteProjectApiClient {
     if (description != null) payload['description'] = description;
     if (startDate != null) payload['start_date'] = startDate;
     if (endDate != null) payload['end_date'] = endDate;
+    _logOutgoingPayload(
+      methodName: 'createProject',
+      endpoint: AppApiUrls.projects,
+      payload: payload,
+    );
     final response = await _dio.post<Map<String, dynamic>>(
       AppApiUrls.projects,
       data: payload,
@@ -109,9 +144,15 @@ final class QuoteProjectApiClient {
     required String projectId,
     required String name,
   }) async {
+    final payload = <String, dynamic>{'name': name};
+    _logOutgoingPayload(
+      methodName: 'updateProject',
+      endpoint: AppApiUrls.projectById(projectId),
+      payload: payload,
+    );
     await _dio.put<Map<String, dynamic>>(
       AppApiUrls.projectById(projectId),
-      data: <String, dynamic>{'name': name},
+      data: payload,
     );
   }
 
@@ -153,6 +194,15 @@ final class QuoteProjectApiClient {
     final String path = !isCreate
         ? AppApiUrls.projectLevelById(projectId, levelId.trim())
         : AppApiUrls.projectLevels(projectId);
+    _logOutgoingPayload(
+      methodName: 'upsertLevel',
+      endpoint: path,
+      payload: <String, dynamic>{
+        'name': levelName,
+        'drawing_file': drawingFilePath,
+        'operation': isCreate ? 'create' : 'update',
+      },
+    );
     final response = !isCreate
         ? await _dio.put<dynamic>(path, data: payload)
         : await _dio.post<dynamic>(path, data: payload);
@@ -181,9 +231,15 @@ final class QuoteProjectApiClient {
     required String levelId,
     required List<Map<String, dynamic>> plots,
   }) async {
+    final payload = <String, dynamic>{'plots': plots};
+    _logOutgoingPayload(
+      methodName: 'updateLevelPlots',
+      endpoint: AppApiUrls.projectLevelById(projectId, levelId),
+      payload: payload,
+    );
     await _dio.put<dynamic>(
       AppApiUrls.projectLevelById(projectId, levelId),
-      data: <String, dynamic>{'plots': plots},
+      data: payload,
       options: Options(contentType: Headers.jsonContentType),
     );
   }
@@ -344,20 +400,150 @@ final class QuoteProjectApiClient {
     return out;
   }
 
+  Future<List<GroupItemOption>> fetchGroups() async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.groups,
+      queryParameters: const <String, dynamic>{
+        'page': 1,
+        'page_size': 20,
+      },
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final rows = root['data'] is List
+        ? (root['data'] as List<dynamic>)
+        : (root['results'] is List
+              ? (root['results'] as List<dynamic>)
+              : const <dynamic>[]);
+    final out = <GroupItemOption>[];
+    for (final row in rows) {
+      final map = _coerceMap(row);
+      final idRaw = map['id'] ?? map['group_id'];
+      final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+      if (id == null) continue;
+      final name =
+          _readString(map, const ['name', 'group_name', 'title']) ?? 'Group $id';
+      out.add(GroupItemOption(id: id, name: name));
+    }
+    return out;
+  }
+
+  Future<List<CompositeItemOption>> fetchCompositeItems({int? groupId}) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.items,
+      queryParameters: <String, dynamic>{
+        'page': 1,
+        'page_size': 20,
+        'is_composite': true,
+        if (groupId != null) 'group': groupId,
+      },
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final rows = root['data'] is List
+        ? (root['data'] as List<dynamic>)
+        : (root['results'] is List
+              ? (root['results'] as List<dynamic>)
+              : const <dynamic>[]);
+    final out = <CompositeItemOption>[];
+    for (final row in rows) {
+      final map = _coerceMap(row);
+      final idRaw = map['id'] ?? map['item_id'] ?? map['composite_item_id'];
+      final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+      if (id == null) continue;
+      final rawGroup = map['group'] ?? map['group_id'];
+      final parsedGroupId = rawGroup is Map
+          ? int.tryParse('${rawGroup['id'] ?? ''}')
+          : (rawGroup is int ? rawGroup : int.tryParse('${rawGroup ?? ''}'));
+      if (groupId != null && parsedGroupId != null && parsedGroupId != groupId) {
+        continue;
+      }
+      final name =
+          _readString(map, const ['name', 'item_name', 'title']) ?? 'Item $id';
+      out.add(CompositeItemOption(id: id, name: name, groupId: parsedGroupId));
+    }
+    return out;
+  }
+
+  Future<GroupCompositeCatalog> fetchGroupCompositeCatalog({
+    required String projectId,
+  }) async {
+    final response = await _dio.get<dynamic>(AppApiUrls.projectById(projectId));
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final groupNodes = _asMapList(
+      body['composite_groups'] ??
+          root['composite_groups'] ??
+          body['composite_item_groups'] ??
+          root['composite_item_groups'],
+    );
+
+    final groups = <GroupItemOption>[];
+    final items = <CompositeItemOption>[];
+    final seenGroupIds = <int>{};
+    final seenItemIds = <int>{};
+
+    for (final g in groupNodes) {
+      final groupIdRaw = g['id'] ?? g['group_id'] ?? g['pk'];
+      final groupId = groupIdRaw is int
+          ? groupIdRaw
+          : int.tryParse('${groupIdRaw ?? ''}');
+      final groupName =
+          _readString(g, const ['name', 'group_name', 'title']) ??
+          (groupId == null ? null : 'Group $groupId');
+      if (groupId != null && groupName != null && seenGroupIds.add(groupId)) {
+        groups.add(GroupItemOption(id: groupId, name: groupName));
+      }
+
+      final itemNodes = _asMapList(
+        g['items'] ?? g['composite_items'] ?? g['products'] ?? g['line_items'],
+      );
+      for (final item in itemNodes) {
+        final itemIdRaw = item['id'] ?? item['item_id'] ?? item['composite_item_id'];
+        final itemId = itemIdRaw is int
+            ? itemIdRaw
+            : int.tryParse('${itemIdRaw ?? ''}');
+        if (itemId == null || !seenItemIds.add(itemId)) continue;
+        final name =
+            _readString(item, const ['name', 'item_name', 'title', 'product_name']) ??
+            'Item $itemId';
+        final nestedGroupRaw = item['group'] ?? item['group_id'];
+        final nestedGroupId = nestedGroupRaw is Map
+            ? int.tryParse('${nestedGroupRaw['id'] ?? ''}')
+            : (nestedGroupRaw is int
+                  ? nestedGroupRaw
+                  : int.tryParse('${nestedGroupRaw ?? ''}'));
+        items.add(
+          CompositeItemOption(
+            id: itemId,
+            name: name,
+            groupId: nestedGroupId ?? groupId,
+          ),
+        );
+      }
+    }
+
+    return GroupCompositeCatalog(groups: groups, items: items);
+  }
+
   Future<PinStatusItem> createPinStatus({
     required String statusName,
     required String bgColour,
     required String textColour,
     bool? isActive,
   }) async {
+    final payload = <String, dynamic>{
+      'status_name': statusName,
+      'bg_colour': bgColour,
+      'text_colour': textColour,
+      if (isActive != null) 'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'createPinStatus',
+      endpoint: AppApiUrls.pinStatuses,
+      payload: payload,
+    );
     final response = await _dio.post<dynamic>(
       AppApiUrls.pinStatuses,
-      data: <String, dynamic>{
-        'status_name': statusName,
-        'bg_colour': bgColour,
-        'text_colour': textColour,
-        if (isActive != null) 'is_active': isActive,
-      },
+      data: payload,
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
@@ -387,14 +573,20 @@ final class QuoteProjectApiClient {
     required String textColour,
     required bool isActive,
   }) async {
+    final payload = <String, dynamic>{
+      'status_name': statusName,
+      'bg_colour': bgColour,
+      'text_colour': textColour,
+      'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'updatePinStatus',
+      endpoint: AppApiUrls.pinStatusById(statusId),
+      payload: payload,
+    );
     final response = await _dio.put<dynamic>(
       AppApiUrls.pinStatusById(statusId),
-      data: <String, dynamic>{
-        'status_name': statusName,
-        'bg_colour': bgColour,
-        'text_colour': textColour,
-        'is_active': isActive,
-      },
+      data: payload,
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
@@ -440,6 +632,14 @@ final class QuoteProjectApiClient {
     return const <String, dynamic>{};
   }
 
+  static List<Map<String, dynamic>> _asMapList(dynamic raw) {
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList(growable: false);
+  }
+
   static String? _readString(Map<String, dynamic> map, List<String> keys) {
     for (final key in keys) {
       final value = map[key];
@@ -464,6 +664,18 @@ final class QuoteProjectApiClient {
       );
     }
     return root;
+  }
+
+  static void _logOutgoingPayload({
+    required String methodName,
+    required String endpoint,
+    required Object payload,
+  }) {
+    if (!kDebugMode) return;
+    final prettyPayload = const JsonEncoder.withIndent('  ').convert(payload);
+    debugPrint(
+      '[API PAYLOAD] $methodName -> $endpoint\n$prettyPayload',
+    );
   }
 }
 

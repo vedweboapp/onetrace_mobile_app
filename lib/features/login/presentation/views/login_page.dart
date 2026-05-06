@@ -63,6 +63,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   late final FocusNode _emailOtpFocusNode;
   late final FocusNode _passwordFocusNode;
   late final PageController _onboardingPageController;
+  Timer? _onboardingAutoScrollTimer;
   int _onboardingPageIndex = 0;
   bool _rememberMe = false;
   bool _hidePassword = true;
@@ -85,7 +86,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   EdgeInsets _loginFieldScrollPadding(BuildContext context) {
-    return const EdgeInsets.fromLTRB(12, 72, 12, 140);
+    final kb = AppScreenSize.keyboardInsetBottomOf(context);
+    return EdgeInsets.fromLTRB(12, 72, 12, kb + 140);
   }
 
   @override
@@ -111,6 +113,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     });
     _onboardingPageController = PageController();
     _mobileAuthPaneController = PageController();
+    _onboardingAutoScrollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted || !_onboardingPageController.hasClients) return;
+      final next = (_onboardingPageIndex + 1) % _onboardingSlideCount;
+      _onboardingPageController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 360),
+        curve: Curves.easeInOut,
+      );
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final storage = ref.read(localStorageProvider);
@@ -134,6 +145,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     _emailFocusNode.dispose();
     _emailOtpFocusNode.dispose();
     _passwordFocusNode.dispose();
+    _onboardingAutoScrollTimer?.cancel();
     _onboardingPageController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -162,26 +174,25 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
-  /// Slide 1 uses the map locator asset (reference UI); other slides use Material map icons.
+  /// Uses image assets per slide:
+  /// 0: site_work.png, 1: map_locator.png, 2: edit_pen.png
   Widget _onboardingMapIcon(int index) {
     const size = 52.0;
-    if (index == 1) {
-      return Image.asset(
-        AppImageString.mapSiteWorkPng,
-        height: size,
-        width: size,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => Icon(
-          Icons.map_outlined,
-          size: size,
-          color: AppColors.white.withValues(alpha: 0.95),
-        ),
-      );
-    }
-    return Icon(
-      Icons.map_outlined,
-      size: size,
-      color: AppColors.white.withValues(alpha: 0.95),
+    final asset = switch (index) {
+      0 => AppImageString.siteWorkPng,
+      1 => AppImageString.mapSiteWorkPng,
+      _ => AppImageString.editPenPng,
+    };
+    return Image.asset(
+      asset,
+      height: size,
+      width: size,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) => Icon(
+        Icons.map_outlined,
+        size: size,
+        color: AppColors.white.withValues(alpha: 0.95),
+      ),
     );
   }
 
@@ -245,7 +256,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         await storage.remove(LocalStorageKeys.authAccessToken);
       }
       if (refreshToken != null) {
-        await storage.setString(LocalStorageKeys.authRefreshToken, refreshToken);
+        await storage.setString(
+          LocalStorageKeys.authRefreshToken,
+          refreshToken,
+        );
       } else {
         await storage.remove(LocalStorageKeys.authRefreshToken);
       }
@@ -633,12 +647,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   Widget _buildMobileLayout(BuildContext context) {
     final bottomInset = context.appScreenPadding.bottom;
-    const keyboardInset = 0.0;
+    final keyboardInset = context.appKeyboardInsetBottom;
     const headerFlex = 36;
     const formFlex = 64;
 
     return Scaffold(
       backgroundColor: _mobileDark,
+      // Keep the hero header + sheet split stable; only the inner form scrolls
+      // so the focused field moves slightly above the keyboard instead of
+      // resizing the whole screen.
       resizeToAvoidBottomInset: false,
       body: Column(
         children: [

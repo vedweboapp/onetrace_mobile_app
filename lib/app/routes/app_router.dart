@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/app/routes/route_observers.dart';
+import 'package:red5/core/auth/auth_session.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
@@ -9,6 +13,8 @@ import 'package:red5/features/dashboard/presentation/views/project_details_page.
 import 'package:red5/features/dashboard/presentation/views/quote_composite_items_screen.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_details_page.dart';
+import 'package:red5/features/clients/presentation/views/add_client_page.dart';
+import 'package:red5/features/clients/presentation/views/client_detail_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
@@ -35,6 +41,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   // Splash first; static preview (dart-define) only switches quote API, not entry route.
   return GoRouter(
     initialLocation: SplashPage.path,
+    observers: <NavigatorObserver>[appRouteObserver],
+    redirect: (context, state) {
+      final storage = ref.read(localStorageProvider);
+      final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
+      final isLoggedIn = AuthSession.isJwtValid(access);
+
+      final location = state.matchedLocation.trim();
+      final isSplash = location == SplashPage.path;
+      final isLoginFlow = location.startsWith('/login');
+
+      // Always allow splash + login flow routes.
+      if (isSplash || isLoginFlow) {
+        // If already logged in, keep user out of login flow screens.
+        if (isLoggedIn && isLoginFlow) return DashboardPage.path;
+        return null;
+      }
+
+      // Block all other routes when not authenticated.
+      if (!isLoggedIn) return LoginPage.path;
+      return null;
+    },
     routes: [
       GoRoute(
         path: SplashPage.path,
@@ -102,11 +129,53 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: CreateProjectPage.path,
         name: CreateProjectPage.name,
+        pageBuilder: (context, state) {
+          int? clientId;
+          String? clientName;
+          final extra = state.extra;
+          if (extra is Map) {
+            final m = Map<String, dynamic>.from(extra);
+            final rawClientId = m['clientId'];
+            if (rawClientId is int) {
+              clientId = rawClientId;
+            } else if (rawClientId != null) {
+              clientId = int.tryParse(rawClientId.toString().trim());
+            }
+            final rawClientName = m['clientName'];
+            if (rawClientName is String && rawClientName.trim().isNotEmpty) {
+              clientName = rawClientName.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: CreateProjectPage(
+              preselectedClientId: clientId,
+              preselectedClientName: clientName,
+            ),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
+        path: AddClientPage.path,
+        name: AddClientPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: const CreateProjectPage(),
+          child: const AddClientPage(),
           beginOffset: const Offset(0, 0.08),
         ),
+      ),
+      GoRoute(
+        path: '${ClientDetailPage.pathPrefix}/:clientId',
+        name: ClientDetailPage.name,
+        pageBuilder: (context, state) {
+          final clientId = (state.pathParameters['clientId'] ?? '').trim();
+          return _animatedPage(
+            state: state,
+            child: ClientDetailPage(clientId: clientId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
       ),
       GoRoute(
         path: DrawingCanvasPage.path,

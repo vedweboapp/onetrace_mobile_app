@@ -19,6 +19,14 @@ abstract final class AppBarStyles {
       titleSpacing: titleSpacing,
       title: title,
       actions: actions,
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(1),
+        child: Divider(
+          height: 1,
+          thickness: 2,
+          color: AppColors.inkStrong.withOpacity(0.1), // swap for any color
+        ),
+      ),
     );
   }
 }

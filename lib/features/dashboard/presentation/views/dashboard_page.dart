@@ -4,10 +4,16 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_under_development_view.dart';
+import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
+import 'package:red5/core/network/auth_api_client.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/features/clients/presentation/views/clients_page.dart';
 
 class DashboardPage extends ConsumerStatefulWidget {
   const DashboardPage({super.key});
@@ -21,7 +27,7 @@ class DashboardPage extends ConsumerStatefulWidget {
   ConsumerState<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends ConsumerState<DashboardPage> {
+class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   static const _backgroundColor = Color(0xFFF6F6F7);
   static const _inactiveNav = Color(0xFF8A8A8A);
   final _searchController = TextEditingController();
@@ -29,6 +35,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   bool _isLoadingProjects = false;
   String? _projectsError;
   int _selectedIndex = 0;
+  PageRoute<dynamic>? _subscribedRoute;
 
   @override
   void initState() {
@@ -38,16 +45,55 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<dynamic> && route != _subscribedRoute) {
+      if (_subscribedRoute != null) {
+        appRouteObserver.unsubscribe(this);
+      }
+      _subscribedRoute = route;
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _fetchProjects() async {
-    setState(() {
-      _isLoadingProjects = true;
-      _projectsError = null;
-    });
+  Future<void> _logout() async {
+    final storage = ref.read(localStorageProvider);
+    final token = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
+    try {
+      final auth = ref.read(authApiClientProvider);
+      await auth.logout(accessToken: token);
+    } catch (_) {
+      // Ignore logout network errors; still clear local session.
+    }
+    await storage.remove(LocalStorageKeys.authAccessToken);
+    await storage.remove(LocalStorageKeys.authRefreshToken);
+    if (!mounted) return;
+    GoRouter.of(context).go('/');
+  }
+
+  /// When returning from a pushed screen (e.g. project details), reload projects.
+  @override
+  void didPopNext() {
+    _fetchProjects(silent: _projects.isNotEmpty);
+  }
+
+  Future<void> _fetchProjects({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoadingProjects = true;
+        _projectsError = null;
+      });
+    } else if (mounted) {
+      setState(() => _projectsError = null);
+    }
     try {
       final api = ref.read(crmQuotesApiProvider);
       final first = await api.fetchQuotesPage(1);
@@ -55,6 +101,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       setState(() {
         _projects = first.summaries;
         _isLoadingProjects = false;
+        _projectsError = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -82,7 +129,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   }
 
   Widget _buildTopBarTitle() {
-    final title = _selectedIndex == 0 ? 'Home' : 'Projects';
+    final title = switch (_selectedIndex) {
+      0 => 'Home',
+      1 => 'Client',
+      _ => 'Projects',
+    };
     return Text(
       title,
       style: AppFonts.titleLarge(color: AppColors.inkStrong).copyWith(
@@ -108,10 +159,31 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           tooltip: 'Settings',
         ),
         const SizedBox(width: 4),
-        const CircleAvatar(
-          radius: 14,
-          backgroundColor: Color(0xFF2A2A2A),
-          child: Icon(Icons.person, size: 16, color: AppColors.white),
+        PopupMenuButton<String>(
+          tooltip: 'Profile',
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          onSelected: (value) {
+            if (value == 'logout') {
+              _logout();
+            }
+          },
+          itemBuilder: (context) => [
+            const PopupMenuItem<String>(
+              value: 'logout',
+              child: Row(
+                children: [
+                  Icon(Icons.logout_rounded, size: 18),
+                  SizedBox(width: 8),
+                  Text('Logout'),
+                ],
+              ),
+            ),
+          ],
+          child: const CircleAvatar(
+            radius: 14,
+            backgroundColor: Color(0xFF2A2A2A),
+            child: Icon(Icons.person, size: 16, color: AppColors.white),
+          ),
         ),
       ],
     );
@@ -185,108 +257,117 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     );
   }
 
+  Future<void> _onProjectsPullToRefresh() =>
+      _fetchProjects(silent: _projects.isNotEmpty);
+
+  /// Full-height scroll + [RefreshIndicator] so pull works even when list is short, empty, or error.
+  Widget _projectsBodyWithRefresh({
+    required BoxConstraints constraints,
+    required Widget child,
+  }) {
+    final minH = constraints.hasBoundedHeight
+        ? constraints.maxHeight
+        : MediaQuery.sizeOf(context).height;
+    return RefreshIndicator(
+      onRefresh: _onProjectsPullToRefresh,
+      color: const Color(0xFF121212),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: minH),
+          child: child,
+        ),
+      ),
+    );
+  }
+
   Widget _buildProjectsBody() {
     final filtered = _filteredProjects;
     final hasQuery = _searchController.text.trim().isNotEmpty;
-    if (_isLoadingProjects) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_projectsError != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _projectsError!,
-                textAlign: TextAlign.center,
-                style: AppFonts.bodyMedium(color: _inactiveNav),
-              ),
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: _fetchProjects,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    if (_projects.isEmpty) {
-      return _buildProjectsEmptyState();
-    }
-    return Column(
-      children: [
-        _buildProjectSearchBar(),
-        if (hasQuery)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
-            ),
-            child: Text(
-              'SEARCH RESULTS (${filtered.length})',
-              style: AppFonts.labelLarge(color: _inactiveNav).copyWith(
-                letterSpacing: 0.7,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (_isLoadingProjects) {
+          return _projectsBodyWithRefresh(
+            constraints: constraints,
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (_projectsError != null) {
+          return _projectsBodyWithRefresh(
+            constraints: constraints,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _projectsError!,
+                      textAlign: TextAlign.center,
+                      style: AppFonts.bodyMedium(color: _inactiveNav),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () => _fetchProjects(),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            itemCount: filtered.length,
-            itemBuilder: (context, index) {
-              final project = filtered[index];
-              return _buildProjectRow(project, highlight: hasQuery && index == 0);
-            },
-          ),
-        ),
-      ],
+          );
+        }
+        if (_projects.isEmpty) {
+          return _projectsBodyWithRefresh(
+            constraints: constraints,
+            child: _buildProjectsEmptyState(),
+          );
+        }
+        return Column(
+          children: [
+            _buildProjectSearchBar(),
+            if (hasQuery)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
+                ),
+                child: Text(
+                  'SEARCH RESULTS (${filtered.length})',
+                  style: AppFonts.labelLarge(color: _inactiveNav).copyWith(
+                    letterSpacing: 0.7,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _onProjectsPullToRefresh,
+                color: const Color(0xFF121212),
+                child: ListView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) {
+                    final project = filtered[index];
+                    return _buildProjectRow(
+                      project,
+                      highlight: hasQuery && index == 0,
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
   Widget _buildHomeEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                color: const Color(0xFFF1F1F2),
-                border: Border.all(color: const Color(0xFFE6E6E7)),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Working on this page',
-              textAlign: TextAlign.center,
-              style: AppFonts.headlineSmall(color: AppColors.inkStrong).copyWith(
-                fontWeight: FontWeight.w700,
-                fontSize: 34,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'This section is under development.\nCheck back soon for updates.',
-              textAlign: TextAlign.center,
-              style: AppFonts.bodyMedium(color: _inactiveNav).copyWith(
-                height: 1.45,
-                fontSize: 15,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return const AppUnderDevelopmentView();
   }
 
   Widget _buildProjectsEmptyState() {
@@ -346,11 +427,20 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       ),
       body: IndexedStack(
         index: _selectedIndex,
-        children: [_buildHomeEmptyState(), _buildProjectsBody()],
+        children: [
+          _buildHomeEmptyState(),
+          const ClientsPage(),
+          _buildProjectsBody(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+        onDestinationSelected: (index) {
+          setState(() => _selectedIndex = index);
+          if (index == 2) {
+            _fetchProjects(silent: _projects.isNotEmpty);
+          }
+        },
         backgroundColor: _backgroundColor,
         indicatorColor: const Color(0xFFECECEE),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -361,6 +451,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             label: 'Home',
           ),
           NavigationDestination(
+            icon: Icon(Icons.people_outline_rounded),
+            selectedIcon: Icon(Icons.people_rounded),
+            label: 'Clients',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.folder_outlined),
             selectedIcon: Icon(Icons.folder_rounded),
             label: 'Projects',
@@ -368,7 +463,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: _selectedIndex == 1
+      floatingActionButton: _selectedIndex == 2
           ? FloatingActionButton(
               heroTag: 'dashboard_create_quote',
               onPressed: _openCreateQuoteProject,

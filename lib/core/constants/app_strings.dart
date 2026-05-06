@@ -11,9 +11,9 @@ class AppStrings {
   static const loginOnboarding2Title = 'Manage Drawings';
   static const loginOnboarding2Subtitle =
       'Place and track jobs directly on floor plans';
-  static const loginOnboarding3Title = 'Mark Up In The Field';
+  static const loginOnboarding3Title = 'Approve & Report';
   static const loginOnboarding3Subtitle =
-      'Highlight scope and notes directly on your plans';
+      'Review work and generate client-ready reports';
   static const loginWelcomeBack = 'Welcome back';
   static const loginWelcomeSubtitle = 'Enter your details to continue';
   static const loginEmailHintRegistered = 'Enter registered email';

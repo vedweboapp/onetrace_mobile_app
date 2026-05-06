@@ -109,25 +109,25 @@ class PinEntry {
   }
 
   Map<String, dynamic> toJson() => {
-        'nx': nx,
-        'ny': ny,
-        if (page != null) 'page': page,
-        if (productName != null && productName!.trim().isNotEmpty)
-          'productName': productName!.trim(),
-        if (groupName != null && groupName!.trim().isNotEmpty)
-          'groupName': groupName!.trim(),
-        if (blockName != null && blockName!.trim().isNotEmpty)
-          'blockName': blockName!.trim(),
-        if (levelName != null && levelName!.trim().isNotEmpty)
-          'levelName': levelName!.trim(),
-        if (zoneLabel != null && zoneLabel!.trim().isNotEmpty)
-          'zoneLabel': zoneLabel!.trim(),
-        if (description.trim().isNotEmpty) 'description': description.trim(),
-        if (quantity != 1) 'quantity': quantity,
-        if (status != 'To Do') 'status': status,
-        if (variation != 'No') 'variation': variation,
-        if (droppedAt != null) 'droppedAt': droppedAt!.toUtc().toIso8601String(),
-      };
+    'nx': nx,
+    'ny': ny,
+    if (page != null) 'page': page,
+    if (productName != null && productName!.trim().isNotEmpty)
+      'productName': productName!.trim(),
+    if (groupName != null && groupName!.trim().isNotEmpty)
+      'groupName': groupName!.trim(),
+    if (blockName != null && blockName!.trim().isNotEmpty)
+      'blockName': blockName!.trim(),
+    if (levelName != null && levelName!.trim().isNotEmpty)
+      'levelName': levelName!.trim(),
+    if (zoneLabel != null && zoneLabel!.trim().isNotEmpty)
+      'zoneLabel': zoneLabel!.trim(),
+    if (description.trim().isNotEmpty) 'description': description.trim(),
+    if (quantity != 1) 'quantity': quantity,
+    if (status != 'To Do') 'status': status,
+    if (variation != 'No') 'variation': variation,
+    if (droppedAt != null) 'droppedAt': droppedAt!.toUtc().toIso8601String(),
+  };
 
   static PinEntry? fromJson(dynamic e) {
     if (e is List && e.length >= 2) {
@@ -172,20 +172,13 @@ class PinEntry {
   }
 
   /// Viewport pixel position for this pin (overlay top-left origin).
-  Offset? toViewportOffset(
-    PdfControllerPinch? pdf,
-    Size viewport,
-    bool isPdf,
-  ) {
+  Offset? toViewportOffset(PdfControllerPinch? pdf, Size viewport, bool isPdf) {
     if (!isPdf || page == null || pdf == null) {
       return Offset(nx * viewport.width, ny * viewport.height);
     }
     final pr = safeGetPageRect(pdf, page!);
     if (pr == null) return null;
-    final doc = Offset(
-      pr.left + nx * pr.width,
-      pr.top + ny * pr.height,
-    );
+    final doc = Offset(pr.left + nx * pr.width, pr.top + ny * pr.height);
     return docToViewportLocal(pdf, doc);
   }
 }
@@ -209,11 +202,11 @@ class BoxEntry {
   final int? colorValue;
 
   Map<String, dynamic> toJson() => {
-        'r': [n.left, n.top, n.right, n.bottom],
-        if (page != null) 'page': page,
-        if (plotName.isNotEmpty) 'plotName': plotName,
-        if (colorValue != null) 'color': colorValue,
-      };
+    'r': [n.left, n.top, n.right, n.bottom],
+    if (page != null) 'page': page,
+    if (plotName.isNotEmpty) 'plotName': plotName,
+    if (colorValue != null) 'color': colorValue,
+  };
 
   static BoxEntry? fromJson(dynamic e) {
     if (e is List && e.length >= 4) {
@@ -262,21 +255,18 @@ class PolyEntry {
   final int? colorValue;
 
   Map<String, dynamic> toJson() => {
-        'p': points.map((o) => [o.dx, o.dy]).toList(),
-        if (page != null) 'page': page,
-        if (plotName.isNotEmpty) 'plotName': plotName,
-        if (colorValue != null) 'color': colorValue,
-      };
+    'p': points.map((o) => [o.dx, o.dy]).toList(),
+    if (page != null) 'page': page,
+    if (plotName.isNotEmpty) 'plotName': plotName,
+    if (colorValue != null) 'color': colorValue,
+  };
 
   static PolyEntry? fromJson(dynamic e) {
     if (e is List) {
       final pts = <Offset>[];
       for (final pt in e) {
         if (pt is! List || pt.length < 2) continue;
-        pts.add(Offset(
-          (pt[0] as num).toDouble(),
-          (pt[1] as num).toDouble(),
-        ));
+        pts.add(Offset((pt[0] as num).toDouble(), (pt[1] as num).toDouble()));
       }
       if (pts.isEmpty) return null;
       return PolyEntry(points: pts, page: null, colorValue: null);
@@ -288,10 +278,7 @@ class PolyEntry {
       final pts = <Offset>[];
       for (final pt in raw) {
         if (pt is! List || pt.length < 2) continue;
-        pts.add(Offset(
-          (pt[0] as num).toDouble(),
-          (pt[1] as num).toDouble(),
-        ));
+        pts.add(Offset((pt[0] as num).toDouble(), (pt[1] as num).toDouble()));
       }
       if (pts.isEmpty) return null;
       final pg = m['page'];
@@ -320,7 +307,10 @@ BoxEntry? pdfCommitLayerNormBox(
   );
   final br = viewportLocalToDoc(
     c,
-    Offset(layerNorm.right * viewport.width, layerNorm.bottom * viewport.height),
+    Offset(
+      layerNorm.right * viewport.width,
+      layerNorm.bottom * viewport.height,
+    ),
   );
   final docRect = Rect.fromPoints(tl, br);
   final center = docRect.center;
@@ -340,13 +330,9 @@ BoxEntry? pdfCommitLayerNormBox(
 }
 
 /// Creates a pin from a tap in viewport-local coordinates (PDF).
-PinEntry? pdfPinFromViewportLocal(
-  PdfControllerPinch c,
-  Offset local,
-) {
+PinEntry? pdfPinFromViewportLocal(PdfControllerPinch c, Offset local) {
   final doc = viewportLocalToDoc(c, local);
-  final page =
-      findPageContainingDoc(c, doc) ?? findNearestPage(c, doc);
+  final page = findPageContainingDoc(c, doc) ?? findNearestPage(c, doc);
   if (page == null) return null;
   final pr = safeGetPageRect(c, page);
   if (pr == null) return null;
@@ -398,8 +384,7 @@ PolyEntry? pdfCommitLayerNormPoly(
   cx /= docPts.length;
   cy /= docPts.length;
   final center = Offset(cx, cy);
-  final page =
-      findPageContainingDoc(c, center) ?? findNearestPage(c, center);
+  final page = findPageContainingDoc(c, center) ?? findNearestPage(c, center);
   if (page == null) return null;
   final pr = safeGetPageRect(c, page);
   if (pr == null) return null;
@@ -474,10 +459,7 @@ Path? polyEntryToViewportPath(
   final path = Path();
   for (var i = 0; i < e.points.length; i++) {
     final o = e.points[i];
-    final doc = Offset(
-      pr.left + o.dx * pr.width,
-      pr.top + o.dy * pr.height,
-    );
+    final doc = Offset(pr.left + o.dx * pr.width, pr.top + o.dy * pr.height);
     final v = docToViewportLocal(pdf, doc);
     if (i == 0) {
       path.moveTo(v.dx, v.dy);
@@ -498,21 +480,13 @@ List<Offset>? polyEntryToViewportPoints(
   if (e.points.length < 3) return null;
   if (!isPdf || e.page == null || pdf == null) {
     return e.points
-        .map(
-          (o) => Offset(
-            o.dx * viewport.width,
-            o.dy * viewport.height,
-          ),
-        )
+        .map((o) => Offset(o.dx * viewport.width, o.dy * viewport.height))
         .toList();
   }
   final pr = safeGetPageRect(pdf, e.page!);
   if (pr == null) return null;
   return e.points.map((o) {
-    final doc = Offset(
-      pr.left + o.dx * pr.width,
-      pr.top + o.dy * pr.height,
-    );
+    final doc = Offset(pr.left + o.dx * pr.width, pr.top + o.dy * pr.height);
     return docToViewportLocal(pdf, doc);
   }).toList();
 }
@@ -653,15 +627,14 @@ class QuoteDocMarkup {
   final List<PolyEntry> polygons = [];
   final List<PinEntry> pins = [];
 
-  bool get isEmpty =>
-      boxHighlights.isEmpty && polygons.isEmpty && pins.isEmpty;
+  bool get isEmpty => boxHighlights.isEmpty && polygons.isEmpty && pins.isEmpty;
 
   Map<String, dynamic> toJson() => {
-        'v': 2,
-        'boxes': boxHighlights.map((e) => e.toJson()).toList(),
-        'polygons': polygons.map((e) => e.toJson()).toList(),
-        'pins': pins.map((e) => e.toJson()).toList(),
-      };
+    'v': 2,
+    'boxes': boxHighlights.map((e) => e.toJson()).toList(),
+    'polygons': polygons.map((e) => e.toJson()).toList(),
+    'pins': pins.map((e) => e.toJson()).toList(),
+  };
 
   static QuoteDocMarkup fromJson(Map<String, dynamic>? json) {
     final m = QuoteDocMarkup();

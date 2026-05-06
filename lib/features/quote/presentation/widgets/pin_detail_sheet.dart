@@ -79,6 +79,7 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
     'Installed',
     'In Progress',
     'Action Required',
+    'Declined',
   ];
   static const List<String> _variations = ['No', 'Yes'];
 
@@ -140,6 +141,7 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
       'Installed' => const Color(0xFFE9F9EE),
       'In Progress' => const Color(0xFFFEF3E8),
       'Action Required' => const Color(0xFFFDECEC),
+      'Declined' => const Color(0xFFF3E8FF),
       _ => const Color(0xFFE0F2FE),
     };
   }
@@ -149,6 +151,7 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
       'Installed' => const Color(0xFF137333),
       'In Progress' => const Color(0xFFB54708),
       'Action Required' => const Color(0xFFB42318),
+      'Declined' => const Color(0xFF6B21A8),
       _ => const Color(0xFF0B6E99),
     };
   }
@@ -162,6 +165,7 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
       'Installed' => Icons.check_circle_outline,
       'In Progress' => Icons.timelapse,
       'Action Required' => Icons.error_outline,
+      'Declined' => Icons.cancel_outlined,
       _ => Icons.pending_actions_outlined,
     };
   }

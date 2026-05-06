@@ -25,4 +25,5 @@ class AppImageString {
   static String get lineSelectionIconPng => icon("line_selection");
   static String get deleteIconPng => icon("delete");
   static String get editFillIconPng => icon("edit-fill");
+  static String get hammerPng => icon("hammer");
 } 

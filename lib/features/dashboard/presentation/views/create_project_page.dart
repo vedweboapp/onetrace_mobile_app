@@ -11,10 +11,16 @@ import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.d
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 class CreateProjectPage extends ConsumerStatefulWidget {
-  const CreateProjectPage({super.key});
+  const CreateProjectPage({
+    super.key,
+    this.preselectedClientId,
+    this.preselectedClientName,
+  });
 
   static const path = '/create-project';
   static const name = 'create-project';
+  final int? preselectedClientId;
+  final String? preselectedClientName;
 
   @override
   ConsumerState<CreateProjectPage> createState() => _CreateProjectPageState();
@@ -75,6 +81,20 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       if (!mounted) return;
       setState(() {
         _clients = clients;
+        final incomingId = widget.preselectedClientId;
+        if (_selectedClient == null && incomingId != null) {
+          final match = clients.where((c) => c.id == incomingId).toList();
+          if (match.isNotEmpty) {
+            _selectedClient = match.first;
+          } else {
+            final fallbackName = (widget.preselectedClientName ?? '').trim();
+            _selectedClient = ClientOption(
+              id: incomingId,
+              name:
+                  fallbackName.isEmpty ? 'Client #$incomingId' : fallbackName,
+            );
+          }
+        }
         _isLoadingClients = false;
       });
     } catch (e) {
@@ -157,9 +177,12 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
               return ListTile(
                 title: Text(
                   client.name,
-                  style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  ),
+                  style: AppFonts.bodyMedium(color: AppColors.inkStrong)
+                      .copyWith(
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
                 ),
                 trailing: selected
                     ? const Icon(Icons.check, color: AppColors.inkStrong)
@@ -206,6 +229,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       }
 
       final map = Map<String, dynamic>.from(uploadResult);
+      final uploadCount = map['uploadCount'] is int
+          ? (map['uploadCount'] as int).clamp(1, 999)
+          : (((map['filePath'] ?? '').toString().trim().isNotEmpty) ? 1 : 0);
       final fileName = (map['fileName'] ?? '').toString().trim();
       final pdfName = (map['pdfName'] ?? '').toString().trim();
       final filePath = (map['filePath'] ?? '').toString().trim();
@@ -214,7 +240,7 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       final levelId = (map['levelId'] ?? '').toString().trim();
       final title = (pdfName.isNotEmpty ? pdfName : fileName).trim();
 
-      if (title.isNotEmpty && filePath.isNotEmpty) {
+      if (uploadCount == 1 && title.isNotEmpty && filePath.isNotEmpty) {
         await context.push<bool>(
           DrawingCanvasPage.path,
           extra: <String, dynamic>{
@@ -222,7 +248,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
             'filePath': filePath,
             'levelName': levelName,
             'projectName': _projectNameController.text.trim(),
-            'projectId': uploadedProjectId.isEmpty ? projectId : uploadedProjectId,
+            'projectId': uploadedProjectId.isEmpty
+                ? projectId
+                : uploadedProjectId,
             'levelId': levelId,
           },
         );
@@ -247,7 +275,8 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
 
   bool get _isProjectNameValid => _projectNameController.text.trim().isNotEmpty;
 
-  bool get _isDescriptionValid => _descriptionController.text.trim().length >= 20;
+  bool get _isDescriptionValid =>
+      _descriptionController.text.trim().length >= 20;
 
   bool get _areDatesValid {
     if (_startDate == null || _endDate == null) return false;
@@ -272,10 +301,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
           const SizedBox(width: 8),
           Text(
             text,
-            style: AppFonts.labelLarge(color: AppColors.muted).copyWith(
-              letterSpacing: 0.8,
-              fontWeight: FontWeight.w700,
-            ),
+            style: AppFonts.labelLarge(
+              color: AppColors.muted,
+            ).copyWith(letterSpacing: 0.8, fontWeight: FontWeight.w700),
           ),
         ],
       ),
@@ -288,16 +316,16 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       child: RichText(
         text: TextSpan(
           text: text,
-          style: AppFonts.titleSmall(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          style: AppFonts.titleSmall(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w600),
           children: required
               ? [
                   TextSpan(
                     text: ' *',
-                    style: AppFonts.titleSmall(color: AppColors.accentRed).copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: AppFonts.titleSmall(
+                      color: AppColors.accentRed,
+                    ).copyWith(fontWeight: FontWeight.w700),
                   ),
                 ]
               : const [],
@@ -307,49 +335,90 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
   }
 
   Widget _clientField() {
-    final text = _selectedClient?.name ?? 'Select a client';
-    final showClientError = _attemptedSubmit && !_isClientValid;
-    return InkWell(
-      onTap: _chooseClient,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: showClientError ? AppColors.error : AppColors.textFieldBorder,
-          ),
-        ),
-        child: Row(
+    return FormField<void>(
+      validator: (_) {
+        if (!_isClientValid) return 'Client is required';
+        return null;
+      },
+      autovalidateMode: _attemptedSubmit
+          ? AutovalidateMode.always
+          : AutovalidateMode.disabled,
+      builder: (state) {
+        final text = _selectedClient?.name ?? 'Select a client';
+        final hasError = state.hasError;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                text,
-                style: AppFonts.bodyMedium(
-                  color: _selectedClient == null
-                      ? AppColors.textFieldHint
-                      : AppColors.textFieldForeground,
-                ).copyWith(
-                  fontSize: 15,
-                  fontWeight: _selectedClient == null
-                      ? FontWeight.w500
-                      : FontWeight.w600,
+            InkWell(
+              onTap: _chooseClient,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                height: 52,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: hasError
+                        ? AppColors.error
+                        : AppColors.textFieldBorder,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        text,
+                        style:
+                            AppFonts.bodyMedium(
+                              color: _selectedClient == null
+                                  ? AppColors.textFieldHint
+                                  : AppColors.textFieldForeground,
+                            ).copyWith(
+                              fontSize: 15,
+                              fontWeight: _selectedClient == null
+                                  ? FontWeight.w500
+                                  : FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                    if (_isLoadingClients)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      const Icon(
+                        Icons.keyboard_arrow_down,
+                        color: AppColors.muted,
+                      ),
+                  ],
                 ),
               ),
             ),
-            if (_isLoadingClients)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              const Icon(Icons.keyboard_arrow_down, color: AppColors.muted),
+            if (hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  state.errorText ?? '',
+                  style: AppFonts.bodySmall(
+                    color: AppColors.error,
+                  ).copyWith(fontWeight: FontWeight.w500),
+                ),
+              ),
+
+            if (hasError)
+              Padding(
+                padding: const EdgeInsets.only(left: 12, top: 6),
+                child: Text(
+                  state.errorText!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -370,7 +439,11 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
           suffixIcon: Row(
             mainAxisSize: MainAxisSize.min,
             children: const [
-              Icon(Icons.calendar_month_outlined, size: 18, color: AppColors.inkStrong),
+              Icon(
+                Icons.calendar_month_outlined,
+                size: 18,
+                color: AppColors.inkStrong,
+              ),
               SizedBox(width: 8),
               Icon(Icons.date_range_outlined, size: 18, color: AppColors.muted),
               SizedBox(width: 12),
@@ -400,9 +473,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
         ),
         title: Text(
           'Create Project',
-          style: AppFonts.titleLarge(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+          style: AppFonts.titleLarge(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w700),
         ),
       ),
       body: Form(
@@ -437,16 +510,16 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
                         children: [
                           Text(
                             'Form Submission Failed',
-                            style: AppFonts.titleSmall(color: AppColors.error).copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                            style: AppFonts.titleSmall(
+                              color: AppColors.error,
+                            ).copyWith(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             'Please correct the errors highlighted below to continue.',
-                            style: AppFonts.bodySmall(color: AppColors.error).copyWith(
-                              fontWeight: FontWeight.w500,
-                            ),
+                            style: AppFonts.bodySmall(
+                              color: AppColors.error,
+                            ).copyWith(fontWeight: FontWeight.w500),
                           ),
                         ],
                       ),
@@ -462,27 +535,22 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
               suffixIcon: _attemptedSubmit && !_isProjectNameValid
                   ? const Padding(
                       padding: EdgeInsets.only(right: 12),
-                      child: Icon(Icons.error_rounded, color: AppColors.error, size: 18),
+                      child: Icon(
+                        Icons.error_rounded,
+                        color: AppColors.error,
+                        size: 18,
+                      ),
                     )
                   : null,
               validator: (value) {
-                if ((value ?? '').trim().isEmpty) return 'Project name is required';
+                if ((value ?? '').trim().isEmpty)
+                  return 'Project name is required';
                 return null;
               },
             ),
             const SizedBox(height: 14),
             _label('Client'),
             _clientField(),
-            if (_attemptedSubmit && !_isClientValid)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  'Client is required',
-                  style: AppFonts.bodySmall(color: AppColors.error).copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
             if (_clientsError != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -513,9 +581,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
                 alignment: Alignment.centerRight,
                 child: Text(
                   '$descriptionLength/20',
-                  style: AppFonts.labelSmall(color: descriptionCounterColor).copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: AppFonts.labelSmall(
+                    color: descriptionCounterColor,
+                  ).copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
             ),
@@ -527,7 +595,8 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
               hint: 'mm/dd/yyyy',
               onTap: _pickStartDate,
               validator: (value) {
-                if ((value ?? '').trim().isEmpty) return 'Start date is required';
+                if ((value ?? '').trim().isEmpty)
+                  return 'Start date is required';
                 return null;
               },
             ),
@@ -565,9 +634,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
                 ),
                 child: Text(
                   _isSubmitting ? 'Creating...' : 'Create',
-                  style: AppFonts.titleMedium(color: AppColors.white).copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: AppFonts.titleMedium(
+                    color: AppColors.white,
+                  ).copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
             ),
