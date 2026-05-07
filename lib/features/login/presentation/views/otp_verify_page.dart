@@ -9,6 +9,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
 import 'package:red5/core/widgets/app_const_widget.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/login/presentation/views/reset_password_page.dart';
 
 /// How [OtpVerifyPage] was opened — drives titles, primary/secondary actions, and footer.
@@ -217,7 +218,7 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
   Future<void> _onSubmitOtp() async {
     final code = _otpCode();
     if (code.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(content: Text('Please enter the 6-digit code')),
       );
       return;
@@ -238,7 +239,7 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
         context.pushReplacement(uri.toString());
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(content: Text('Code entered: $code')),
       );
     } finally {
@@ -250,7 +251,7 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
     if (_resendSecondsLeft > 0) return;
     _startResendTimer();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    context.showTopSnackBar(
       SnackBar(
         content: Text(
           widget.email != null && widget.email!.isNotEmpty

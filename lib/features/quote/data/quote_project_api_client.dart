@@ -4,10 +4,9 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_urls.dart';
-import 'package:red5/core/network/auth_bearer_interceptor.dart';
-import 'package:red5/core/providers/local_storage_provider.dart';
 
 final class LevelSyncResult {
   const LevelSyncResult({this.levelId, this.rawResponse});
@@ -679,20 +678,6 @@ final class QuoteProjectApiClient {
   }
 }
 
-final quoteProjectApiClientProvider = Provider<QuoteProjectApiClient>((ref) {
-  final storage = ref.read(localStorageProvider);
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: AppApiUrls.baseUrl,
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 120),
-      sendTimeout: const Duration(seconds: 120),
-      headers: const {Headers.acceptHeader: Headers.jsonContentType},
-    ),
-  );
-  dio.interceptors.addAll([
-    AuthBearerInterceptor(storage),
-    ApiDioLogInterceptor(),
-  ]);
-  return QuoteProjectApiClient(dio: dio);
-});
+final quoteProjectApiClientProvider = Provider<QuoteProjectApiClient>(
+  (ref) => sl<QuoteProjectApiClient>(),
+);

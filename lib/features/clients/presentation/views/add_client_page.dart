@@ -5,6 +5,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
 
@@ -102,7 +103,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
       context.pop<ClientModel>(created);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(

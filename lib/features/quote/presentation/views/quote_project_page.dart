@@ -26,6 +26,7 @@ import 'package:red5/core/widgets/app_button.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/update_block_name_dialog.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
@@ -192,7 +193,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       QuotePinPlacementRejection.overlapsExistingPin =>
         'A pin already exists here. Move it or drop this pin at a different spot.',
     };
-    ScaffoldMessenger.of(context).showSnackBar(
+    context.showTopSnackBar(
       SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
     );
   }
@@ -564,7 +565,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     } catch (e, st) {
       debugPrint('[QuoteProject] bootstrap error: $e\n$st');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(
@@ -889,7 +890,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
           '$_pdfLoadLogTag download failed: no valid drawing file for url=$raw',
         );
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           const SnackBar(
             content: Text(
               'Could not fetch drawing file from this link. Please upload file manually.',
@@ -929,7 +930,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       });
       _attachViewerForSelection();
       _scrollCarouselToIndex(_selectedIndex);
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             seededPins.isEmpty
@@ -943,7 +944,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     } catch (_) {
       debugPrint('$_pdfLoadLogTag load exception for url=$raw');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(
           content: Text('Could not load drawing into Create Quote.'),
           behavior: SnackBarBehavior.floating,
@@ -1385,7 +1386,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     }
     if (withLevels.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           const SnackBar(
             content: Text(
               'Enter a level name for each file to add it to this quote.',
@@ -1465,7 +1466,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     }
     if (projectId.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           const SnackBar(
             content: Text('Project is not ready yet. Try again in a moment.'),
             behavior: SnackBarBehavior.floating,
@@ -1486,7 +1487,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       return levelResult.levelId;
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           SnackBar(
             content: Text(
               ApiResponseMessage.fromAnyError(
@@ -1684,14 +1685,14 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     final name = _blockName?.trim();
     if (name == null || name.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(content: Text('Set a block name before submitting.')),
       );
       return;
     }
     if (_documents.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(
           content: Text('Add at least one file before submitting.'),
         ),
@@ -1765,7 +1766,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       await _persistBlockQuotation(recordSubmitTime: true);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text('Quote saved to levels successfully.'),
           behavior: SnackBarBehavior.floating,
@@ -1774,7 +1775,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       context.go(DashboardPage.path);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(

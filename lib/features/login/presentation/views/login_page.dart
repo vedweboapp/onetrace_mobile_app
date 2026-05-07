@@ -19,6 +19,7 @@ import 'package:red5/core/widgets/app_branded_logo_block.dart';
 import 'package:red5/core/widgets/app_button.dart';
 import 'package:red5/core/widgets/app_frosted_panel.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
@@ -278,7 +279,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       context.go(DashboardPage.path);
     } on DioException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromDioException(

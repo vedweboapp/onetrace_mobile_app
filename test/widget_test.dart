@@ -11,8 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:red5/app/app.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/auth_api_client.dart';
-import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/shared_preferences_storage.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,11 +47,11 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final storage = SharedPreferencesStorage(prefs);
+    await configureDependencies(localStorage: storage);
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          localStorageProvider.overrideWith((ref) => storage),
           authApiClientProvider.overrideWithValue(_fakeAuthApiClient()),
         ],
         child: const App(),

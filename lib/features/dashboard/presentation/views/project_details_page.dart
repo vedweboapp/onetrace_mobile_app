@@ -7,6 +7,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/app_under_development_view.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
@@ -396,7 +397,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     if (result == true) {
       await _loadProjectDrawings();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(
           content: Text('Selection and pins saved successfully'),
           behavior: SnackBarBehavior.floating,

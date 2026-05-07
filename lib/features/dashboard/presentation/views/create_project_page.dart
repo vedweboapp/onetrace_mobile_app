@@ -6,6 +6,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_date_picker_dialog.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
@@ -216,7 +217,7 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
         endDate: _formatForApi(_endDate!),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(content: Text('Project created successfully')),
       );
       final uploadResult = await context.push<dynamic>(
@@ -258,7 +259,7 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       if (mounted) context.pop();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(

@@ -71,10 +71,9 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
       padding: const EdgeInsets.fromLTRB(2, 12, 2, 10),
       child: Text(
         text,
-        style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-          fontWeight: FontWeight.w700,
-          fontSize: 24,
-        ),
+        style: AppFonts.titleMedium(
+          color: AppColors.inkStrong,
+        ).copyWith(fontWeight: FontWeight.w700, fontSize: 24),
       ),
     );
   }
@@ -94,10 +93,9 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
         const SizedBox(height: 4),
         Text(
           value.trim().isEmpty ? '—' : value.trim(),
-          style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w500,
-            fontSize: 16,
-          ),
+          style: AppFonts.bodyMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
         ),
       ],
     );
@@ -112,28 +110,32 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
             Expanded(
               child: Text(
                 c.name,
-                style: AppFonts.headlineSmall(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 34,
-                ),
+                style: AppFonts.headlineSmall(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
               ),
             ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: c.isActive ? const Color(0xFFE9F9EE) : const Color(0xFFF1F1F2),
+                color: c.isActive
+                    ? const Color(0xFFE9F9EE)
+                    : const Color(0xFFF1F1F2),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
                 c.isActive ? 'ACTIVE' : 'IN ACTIVE',
-                style: AppFonts.labelMedium(
-                  color: c.isActive ? const Color(0xFF137333) : const Color(0xFF66666A),
-                ).copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.6,
-                  fontSize: 10,
-                ),
+                style:
+                    AppFonts.labelMedium(
+                      color: c.isActive
+                          ? const Color(0xFF137333)
+                          : const Color(0xFF66666A),
+                    ).copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                      fontSize: 10,
+                    ),
               ),
             ),
           ],
@@ -141,7 +143,9 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
         const SizedBox(height: 4),
         Text(
           c.email,
-          style: AppFonts.bodyMedium(color: AppColors.muted).copyWith(fontSize: 15),
+          style: AppFonts.bodyMedium(
+            color: AppColors.muted,
+          ).copyWith(fontSize: 15),
         ),
         const SizedBox(height: 18),
         const Divider(height: 1, color: Color(0xFFE2E2E4)),
@@ -163,7 +167,9 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
           const SizedBox(height: 4),
           Text(
             c.addressLine2.trim(),
-            style: AppFonts.bodyMedium(color: AppColors.muted).copyWith(fontSize: 16),
+            style: AppFonts.bodyMedium(
+              color: AppColors.muted,
+            ).copyWith(fontSize: 16),
           ),
         ],
         const SizedBox(height: 14),
@@ -198,13 +204,16 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF0F172A),
               foregroundColor: AppColors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             icon: const Icon(Icons.assignment_add, size: 18),
             label: Text(
               'Create New Project',
-              style: AppFonts.titleSmall(color: AppColors.white)
-                  .copyWith(fontWeight: FontWeight.w700),
+              style: AppFonts.titleSmall(
+                color: AppColors.white,
+              ).copyWith(fontWeight: FontWeight.w700),
             ),
           ),
         ),
@@ -220,45 +229,44 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
         backgroundColor: AppColors.white,
         surfaceTintColor: AppColors.white,
         scrolledUnderElevation: 0,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(height: 1, color: Color(0xFFE2E2E4)),
+        ),
         leading: IconButton(
           onPressed: () => context.pop(),
           icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
         ),
         title: Text(
-          _client?.name.trim().isNotEmpty == true ? _client!.name : 'Client Details',
+          'Client Details',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-          ),
+          style: AppFonts.titleMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w700, fontSize: 16),
         ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _error!,
-                          textAlign: TextAlign.center,
-                          style: AppFonts.bodyMedium(color: AppColors.muted),
-                        ),
-                        const SizedBox(height: 10),
-                        FilledButton(
-                          onPressed: _load,
-                          child: const Text('Retry'),
-                        ),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: AppFonts.bodyMedium(color: AppColors.muted),
                     ),
-                  ),
-                )
-              : _buildContent(_client!),
+                    const SizedBox(height: 10),
+                    FilledButton(onPressed: _load, child: const Text('Retry')),
+                  ],
+                ),
+              ),
+            )
+          : _buildContent(_client!),
     );
   }
 }
-

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 
 /// Status + optional raw bytes (file download, multipart response body).
@@ -126,6 +127,6 @@ final class DioMultipartTransfer {
   }
 }
 
-final dioMultipartTransferProvider = Provider<DioMultipartTransfer>((ref) {
-  return DioMultipartTransfer();
-});
+final dioMultipartTransferProvider = Provider<DioMultipartTransfer>(
+  (ref) => sl<DioMultipartTransfer>(),
+);

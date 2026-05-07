@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
 import 'package:red5/features/clients/presentation/views/add_client_page.dart';
@@ -260,6 +261,12 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
       setState(() => _searchController.clear());
     }
     setState(() => _clients.insert(0, created));
+    context.showTopSnackBar(
+      SnackBar(
+        content: Text('${created.name} created successfully'),
+        backgroundColor: Colors.green.shade700,
+      ),
+    );
   }
 
   @override

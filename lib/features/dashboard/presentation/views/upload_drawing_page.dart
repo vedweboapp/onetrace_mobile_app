@@ -6,6 +6,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 class UploadDrawingPage extends ConsumerStatefulWidget {
@@ -90,7 +91,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
     if (!mounted) return;
 
     if (tooLarge.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             tooLarge.length == 1
@@ -104,7 +105,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
 
     if (added.isEmpty) {
       if (tooLarge.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           const SnackBar(
             content: Text('No new PDF files could be added'),
             behavior: SnackBarBehavior.floating,
@@ -128,7 +129,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
     if (_isUploading) return;
     final projectId = widget.projectId.trim();
     if (projectId.isEmpty || _rows.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(
           content: Text('Please add at least one PDF file'),
           behavior: SnackBarBehavior.floating,
@@ -139,7 +140,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
 
     for (final row in _rows) {
       if (row.nameController.text.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           const SnackBar(
             content: Text('Enter a name for each drawing'),
             behavior: SnackBarBehavior.floating,
@@ -152,7 +153,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
     for (final row in _rows) {
       if (row.sizeBytes != null &&
           row.sizeBytes! > UploadDrawingPage.maxBytesPerFile) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        context.showTopSnackBar(
           SnackBar(
             content: Text(
               '${row.originalFileName} exceeds the 50MB limit',
@@ -185,7 +186,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
         });
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             uploaded.length > 1
@@ -212,7 +213,7 @@ class _UploadDrawingPageState extends ConsumerState<UploadDrawingPage> {
       Navigator.of(context).pop(payload);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(

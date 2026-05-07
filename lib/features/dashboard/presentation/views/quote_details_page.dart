@@ -9,6 +9,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_layout.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
 import 'package:red5/features/dashboard/data/quote_payload.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_composite_items_screen.dart';
@@ -110,7 +111,7 @@ class _QuoteDetailsPageState extends ConsumerState<QuoteDetailsPage> {
     final levelLink = _levels.isNotEmpty ? _levels.first.drawingFile.trim() : '';
     final link = levelLink.isNotEmpty ? levelLink : (quoteLink ?? '').trim();
     if (link.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(
           content: Text('No drawing file/link found for this project.'),
         ),
@@ -120,9 +121,7 @@ class _QuoteDetailsPageState extends ConsumerState<QuoteDetailsPage> {
     }
     final uri = Uri.tryParse(link);
     if (uri == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Invalid PDF URL.')));
+      context.showTopSnackBar(const SnackBar(content: Text('Invalid PDF URL.')));
       if (mounted) setState(() => _isOpeningPdf = false);
       return;
     }

@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/core/auth/auth_session.dart';
-import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
@@ -13,6 +14,13 @@ import 'package:red5/features/dashboard/presentation/views/project_details_page.
 import 'package:red5/features/dashboard/presentation/views/quote_composite_items_screen.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_details_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 import 'package:red5/features/clients/presentation/views/add_client_page.dart';
 import 'package:red5/features/clients/presentation/views/client_detail_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
@@ -43,7 +51,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     initialLocation: SplashPage.path,
     observers: <NavigatorObserver>[appRouteObserver],
     redirect: (context, state) {
-      final storage = ref.read(localStorageProvider);
+      final storage = sl<LocalStorage>();
       final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
       final isLoggedIn = AuthSession.isJwtValid(access);
 
@@ -418,6 +426,69 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             beginOffset: const Offset(0.08, 0),
           );
         },
+      ),
+      GoRoute(
+        path: SettingsPage.path,
+        name: SettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const SettingsPage(),
+          beginOffset: const Offset(0, -0.1),
+        ),
+      ),
+      GoRoute(
+        path: PersonalProfilePage.path,
+        name: PersonalProfilePage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const PersonalProfilePage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: UsersSettingsPage.path,
+        name: UsersSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const UsersSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: InviteUserPage.path,
+        name: InviteUserPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const InviteUserPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: CompanySettingsPage.path,
+        name: CompanySettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const CompanySettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: MetadataSettingsPage.path,
+        name: MetadataSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const MetadataSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: PinStatusSettingsPage.path,
+        name: PinStatusSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const PinStatusSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
       ),
     ],
   );

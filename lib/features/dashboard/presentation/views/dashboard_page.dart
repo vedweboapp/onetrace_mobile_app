@@ -11,6 +11,7 @@ import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
 import 'package:red5/features/clients/presentation/views/clients_page.dart';
@@ -119,6 +120,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     GoRouter.of(context).push(CreateProjectPage.path);
   }
 
+  void _openSettings() {
+    context.push(SettingsPage.path);
+  }
+
   List<QuoteSummary> get _filteredProjects {
     final query = _searchController.text.trim().toLowerCase();
     if (query.isEmpty) return _projects;
@@ -136,9 +141,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     };
     return Text(
       title,
-      style: AppFonts.titleLarge(color: AppColors.inkStrong).copyWith(
-        fontWeight: FontWeight.w800,
-      ),
+      style: AppFonts.titleLarge(
+        color: AppColors.inkStrong,
+      ).copyWith(fontWeight: FontWeight.w800),
     );
   }
 
@@ -153,7 +158,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
           tooltip: 'Notifications',
         ),
         IconButton(
-          onPressed: () {},
+          onPressed: _openSettings,
           icon: const Icon(Icons.settings_rounded, size: 22),
           color: AppColors.inkStrong,
           tooltip: 'Settings',
@@ -161,7 +166,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         const SizedBox(width: 4),
         PopupMenuButton<String>(
           tooltip: 'Profile',
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           onSelected: (value) {
             if (value == 'logout') {
               _logout();
@@ -199,11 +206,16 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       ),
       child: TextField(
         controller: _searchController,
-        style: AppFonts.bodyLarge(color: AppColors.inkStrong).copyWith(fontSize: 18),
+        style: AppFonts.bodyLarge(
+          color: AppColors.inkStrong,
+        ).copyWith(fontSize: 18),
         decoration: InputDecoration(
           hintText: '',
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 14,
+          ),
           prefixIcon: const Icon(Icons.search, color: _inactiveNav, size: 20),
           suffixIcon: hasQuery
               ? IconButton(
@@ -233,23 +245,25 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
           children: [
             Text(
               project.quoteName,
-              style: AppFonts.titleMedium(
-                color: highlight ? const Color(0xFF2A66C6) : const Color(0xFF2E2E2E),
-              ).copyWith(
-                fontWeight: FontWeight.w700,
-                fontSize: 17,
-                height: 1.2,
-              ),
+              style:
+                  AppFonts.titleMedium(
+                    color: highlight
+                        ? const Color(0xFF2A66C6)
+                        : const Color(0xFF2E2E2E),
+                  ).copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 17,
+                    height: 1.2,
+                  ),
             ),
             const SizedBox(height: 2),
             Text(
               project.clientName?.trim().isNotEmpty == true
                   ? project.clientName!
                   : project.quoteNumber,
-              style: AppFonts.bodyMedium(color: const Color(0xFF8B8B8B)).copyWith(
-                fontSize: 14,
-                height: 1.25,
-              ),
+              style: AppFonts.bodyMedium(
+                color: const Color(0xFF8B8B8B),
+              ).copyWith(fontSize: 14, height: 1.25),
             ),
           ],
         ),
@@ -394,18 +408,17 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
             Text(
               'No projects yet',
               textAlign: TextAlign.center,
-              style: AppFonts.headlineSmall(color: AppColors.inkStrong).copyWith(
-                fontWeight: FontWeight.w700,
-                fontSize: 36,
-              ),
+              style: AppFonts.headlineSmall(
+                color: AppColors.inkStrong,
+              ).copyWith(fontWeight: FontWeight.w700, fontSize: 36),
             ),
             const SizedBox(height: 8),
             Text(
               'Create your first project to get started',
               textAlign: TextAlign.center,
-              style: AppFonts.bodyMedium(color: _inactiveNav).copyWith(
-                fontSize: 15,
-              ),
+              style: AppFonts.bodyMedium(
+                color: _inactiveNav,
+              ).copyWith(fontSize: 15),
             ),
           ],
         ),

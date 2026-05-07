@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 class DrawingCanvasPage extends ConsumerStatefulWidget {
@@ -97,6 +99,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   bool _isSubmitting = false;
   bool _isFetchingRemoteDrawing = false;
   String? _remoteDrawingError;
+  double? _activeContentAspectRatio;
+  Rect? _lastObservedContentRect;
+  bool _contentReprojectionQueued = false;
+  Rect? _queuedContentRectFrom;
+  Rect? _queuedContentRectTo;
 
   static const List<String> _pinStatusDialogActiveOptions = <String>[
     'Active',
@@ -154,6 +161,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _activeFilePath = k;
       _uploadedPdfPaths.add(k);
       _initPdfControllerForActivePath();
+      unawaited(_refreshActiveContentAspectRatio());
     } else {
       _activeFilePath = null;
     }
@@ -161,10 +169,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     _levelId = (widget.levelId ?? '').trim();
     _loadPinStatuses();
     _loadGroupAndCompositeOptions();
-    _loadSavedLevelMarkup();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_ensureDrawingSourceReady());
+      unawaited(_initializeDrawingAndMarkup());
     });
+  }
+
+  Future<void> _initializeDrawingAndMarkup() async {
+    await _ensureDrawingSourceReady();
+    if (!mounted) return;
+    await _refreshActiveContentAspectRatio();
+    if (!mounted) return;
+    await _loadSavedLevelMarkup();
   }
 
   void _initPdfControllerForActivePath() {
@@ -200,6 +215,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         _remoteDrawingError = null;
       });
       _initPdfControllerForActivePath();
+      unawaited(_refreshActiveContentAspectRatio());
       if (mounted) setState(() {});
     } catch (e) {
       if (!mounted) return;
@@ -286,8 +302,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   Widget _buildDrawingPreview() {
     if (_isFetchingRemoteDrawing) {
       return Container(
-        width: 250,
-        height: 150,
+        width: double.infinity,
+        height: double.infinity,
         decoration: BoxDecoration(
           color: AppColors.white,
           borderRadius: BorderRadius.circular(8),
@@ -314,8 +330,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     if (_remoteDrawingError != null) {
       return Container(
-        width: 250,
-        height: 150,
+        width: double.infinity,
+        height: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: AppColors.white,
@@ -335,8 +351,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     if (!_hasFile) {
       return Container(
-        width: 250,
-        height: 150,
+        width: double.infinity,
+        height: double.infinity,
         decoration: BoxDecoration(
           color: AppColors.white,
           borderRadius: BorderRadius.circular(8),
@@ -351,7 +367,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final path = _activeFilePath!.trim();
     if (_isPdfFile && _pdfController != null) {
       return Container(
-        margin: const EdgeInsets.all(10),
+        width: double.infinity,
+        height: double.infinity,
         decoration: BoxDecoration(
           color: AppColors.white,
           borderRadius: BorderRadius.circular(8),
@@ -386,20 +403,23 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
 
     if (_isImageFile) {
-      return Image.file(
-        File(path),
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Center(
-          child: Text(
-            'Could not open image',
-            style: AppFonts.bodyMedium(color: AppColors.muted),
+      return SizedBox.expand(
+        child: Image.file(
+          File(path),
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => Center(
+            child: Text(
+              'Could not open image',
+              style: AppFonts.bodyMedium(color: AppColors.muted),
+            ),
           ),
         ),
       );
     }
 
     return Container(
-      width: 280,
+      width: double.infinity,
+      height: double.infinity,
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -488,6 +508,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _regionMoveAnchorScene = null;
       _selectAreaPointerDown = false;
     });
+    unawaited(_refreshActiveContentAspectRatio());
   }
 
   void _switchActivePdf(String path) {
@@ -520,10 +541,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _regionMoveAnchorScene = null;
       _selectAreaPointerDown = false;
     });
-  }
-
-  Offset _toScene(Offset viewportPoint) {
-    return _viewerTransform.toScene(viewportPoint);
+    unawaited(_refreshActiveContentAspectRatio());
   }
 
   Offset _globalPositionToScene(Offset global) {
@@ -548,21 +566,232 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return Offset(anchor.dx, anchor.dy - pointerHeight - (size / 2));
   }
 
-  Offset _canvasPinOffsetFromApi(double x, double y, Rect plotRect) {
-    final pixelCandidate = Offset(x, y);
-    // Large values are canvas pixel coords from this screen; skip %/fraction remap.
-    if (x.abs() > 105 || y.abs() > 105) {
-      return pixelCandidate;
+  Size _canvasSceneSizeForNormalization() {
+    final ctx = _viewportCanvasKey.currentContext;
+    final box = ctx?.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      return box.size;
     }
-    if (plotRect.inflate(96).contains(pixelCandidate)) {
-      return pixelCandidate;
+    final mq = MediaQuery.maybeOf(context);
+    if (mq != null) return mq.size;
+    return const Size(1, 1);
+  }
+
+  Rect _contentRectForSceneSize(Size scene) {
+    final w = scene.width <= 0 ? 1.0 : scene.width;
+    final h = scene.height <= 0 ? 1.0 : scene.height;
+    final aspect = _activeContentAspectRatio;
+    if (aspect == null || aspect <= 0) {
+      return Rect.fromLTWH(0, 0, w, h);
     }
-    final nx = (x > 1 ? x / 100.0 : x).clamp(0.0, 1.0);
-    final ny = (y > 1 ? y / 100.0 : y).clamp(0.0, 1.0);
+    final containerAspect = w / h;
+    double displayW;
+    double displayH;
+    if (containerAspect > aspect) {
+      displayH = h;
+      displayW = displayH * aspect;
+    } else {
+      displayW = w;
+      displayH = displayW / aspect;
+    }
+    final dx = (w - displayW) / 2;
+    final dy = (h - displayH) / 2;
+    return Rect.fromLTWH(dx, dy, displayW, displayH);
+  }
+
+  Rect _currentContentRectInScene() {
+    return _contentRectForSceneSize(_canvasSceneSizeForNormalization());
+  }
+
+  bool _rectNearEqual(Rect a, Rect b, [double epsilon = 0.5]) {
+    return (a.left - b.left).abs() <= epsilon &&
+        (a.top - b.top).abs() <= epsilon &&
+        (a.width - b.width).abs() <= epsilon &&
+        (a.height - b.height).abs() <= epsilon;
+  }
+
+  Offset _mapPointAcrossContentRects(Offset p, Rect from, Rect to) {
+    final safeFromW = from.width <= 0 ? 1.0 : from.width;
+    final safeFromH = from.height <= 0 ? 1.0 : from.height;
+    final nx = ((p.dx - from.left) / safeFromW).clamp(0.0, 1.0);
+    final ny = ((p.dy - from.top) / safeFromH).clamp(0.0, 1.0);
+    return Offset(to.left + nx * to.width, to.top + ny * to.height);
+  }
+
+  void _observeViewportGeometry(Size viewportSize) {
+    if (!viewportSize.width.isFinite ||
+        !viewportSize.height.isFinite ||
+        viewportSize.width <= 0 ||
+        viewportSize.height <= 0) {
+      return;
+    }
+    final nextRect = _contentRectForSceneSize(viewportSize);
+    final prevRect = _lastObservedContentRect;
+    _lastObservedContentRect = nextRect;
+    if (prevRect == null || _rectNearEqual(prevRect, nextRect)) return;
+    if (!_hasDrawableContentForReprojection) return;
+    _queueContentReprojection(prevRect, nextRect);
+  }
+
+  bool get _hasDrawableContentForReprojection =>
+      _regions.isNotEmpty ||
+      _canvasLines.isNotEmpty ||
+      _lineDraftPoints.isNotEmpty ||
+      _lineDraftCurrent != null ||
+      _draftStart != null ||
+      _draftCurrent != null ||
+      _regionMoveAnchorScene != null;
+
+  void _queueContentReprojection(Rect from, Rect to) {
+    _queuedContentRectFrom ??= from;
+    _queuedContentRectTo = to;
+    if (_contentReprojectionQueued) return;
+    _contentReprojectionQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _contentReprojectionQueued = false;
+      if (!mounted) return;
+      final qFrom = _queuedContentRectFrom;
+      final qTo = _queuedContentRectTo;
+      _queuedContentRectFrom = null;
+      _queuedContentRectTo = null;
+      if (qFrom == null || qTo == null || _rectNearEqual(qFrom, qTo)) return;
+      setState(() {
+        _regions.setAll(
+          0,
+          _regions.map((region) {
+            final mappedLines = region.safeLines
+                .map(
+                  (line) => _CanvasLine(
+                    start: _mapPointAcrossContentRects(line.start, qFrom, qTo),
+                    end: _mapPointAcrossContentRects(line.end, qFrom, qTo),
+                  ),
+                )
+                .toList(growable: false);
+            final mappedPins = region.pins
+                .map(
+                  (pin) => pin.copyWith(
+                    offset: _mapPointAcrossContentRects(pin.offset, qFrom, qTo),
+                  ),
+                )
+                .toList(growable: false);
+            final mappedRect = region.safeLines.isNotEmpty
+                ? _boundingRectFromPoints(
+                    mappedLines.map((line) => line.start).toList(),
+                  )
+                : Rect.fromPoints(
+                    _mapPointAcrossContentRects(region.rect.topLeft, qFrom, qTo),
+                    _mapPointAcrossContentRects(
+                      region.rect.bottomRight,
+                      qFrom,
+                      qTo,
+                    ),
+                  );
+            return region.copyWith(
+              rect: mappedRect,
+              lines: mappedLines,
+              pins: mappedPins,
+            );
+          }).toList(growable: false),
+        );
+        _canvasLines.setAll(
+          0,
+          _canvasLines
+              .map(
+                (line) => _CanvasLine(
+                  start: _mapPointAcrossContentRects(line.start, qFrom, qTo),
+                  end: _mapPointAcrossContentRects(line.end, qFrom, qTo),
+                ),
+              )
+              .toList(growable: false),
+        );
+        for (var i = 0; i < _lineDraftPoints.length; i++) {
+          _lineDraftPoints[i] = _mapPointAcrossContentRects(
+            _lineDraftPoints[i],
+            qFrom,
+            qTo,
+          );
+        }
+        if (_lineDraftCurrent != null) {
+          _lineDraftCurrent = _mapPointAcrossContentRects(
+            _lineDraftCurrent!,
+            qFrom,
+            qTo,
+          );
+        }
+        if (_draftStart != null) {
+          _draftStart = _mapPointAcrossContentRects(_draftStart!, qFrom, qTo);
+        }
+        if (_draftCurrent != null) {
+          _draftCurrent = _mapPointAcrossContentRects(_draftCurrent!, qFrom, qTo);
+        }
+        if (_regionMoveAnchorScene != null) {
+          _regionMoveAnchorScene = _mapPointAcrossContentRects(
+            _regionMoveAnchorScene!,
+            qFrom,
+            qTo,
+          );
+        }
+      });
+    });
+  }
+
+  Offset _normalizeScenePoint(Offset scenePoint) {
+    final rect = _currentContentRectInScene();
+    final safeW = rect.width <= 0 ? 1.0 : rect.width;
+    final safeH = rect.height <= 0 ? 1.0 : rect.height;
     return Offset(
-      plotRect.left + nx * plotRect.width,
-      plotRect.top + ny * plotRect.height,
+      ((scenePoint.dx - rect.left) / safeW).clamp(0.0, 1.0),
+      ((scenePoint.dy - rect.top) / safeH).clamp(0.0, 1.0),
     );
+  }
+
+  Offset _denormalizeScenePoint(double nx, double ny) {
+    final rect = _currentContentRectInScene();
+    return Offset(
+      rect.left + nx.clamp(0.0, 1.0) * rect.width,
+      rect.top + ny.clamp(0.0, 1.0) * rect.height,
+    );
+  }
+
+  Future<void> _refreshActiveContentAspectRatio() async {
+    final path = (_activeFilePath ?? '').trim();
+    if (path.isEmpty || !File(path).existsSync()) return;
+    try {
+      double? ratio;
+      if (_isPdfFile) {
+        final doc = await PdfDocument.openFile(path);
+        final page = await doc.getPage(1);
+        if (page.width > 0 && page.height > 0) {
+          ratio = page.width / page.height;
+        }
+        await page.close();
+        await doc.close();
+      } else if (_isImageFile) {
+        final bytes = await File(path).readAsBytes();
+        final completer = Completer<ui.Image>();
+        ui.decodeImageFromList(bytes, completer.complete);
+        final image = await completer.future;
+        if (image.width > 0 && image.height > 0) {
+          ratio = image.width / image.height;
+        }
+      }
+      if (!mounted) return;
+      if (ratio != null && ratio > 0) {
+        setState(() => _activeContentAspectRatio = ratio);
+      }
+    } catch (_) {
+      // Keep fallback behavior when media metadata cannot be resolved.
+    }
+  }
+
+  Offset _canvasPinOffsetFromApi(double x, double y) {
+    final pixelCandidate = Offset(x, y);
+    // If API already returns canvas/document pixels, keep exact position.
+    if (x.abs() > 1 || y.abs() > 1) {
+      return pixelCandidate;
+    }
+    // Only treat as normalized fractions when values are in [0..1].
+    return _denormalizeScenePoint(x, y);
   }
 
   void _applyPinScenePosition(_PinHit hit, Offset scene) {
@@ -600,18 +829,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   void _showTopToast(String message) {
-    final messenger = ScaffoldMessenger.of(context);
-    final topInset =
-        MediaQuery.of(context).viewPadding.top + kToolbarHeight + 8;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.fromLTRB(12, topInset, 12, 0),
-        ),
-      );
+    context.showTopSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _onDeleteSelection() async {
@@ -793,7 +1011,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   void _onCanvasTapUp(TapUpDetails details) {
-    final scenePoint = _toScene(details.localPosition);
+    final scenePoint = _globalPositionToScene(details.globalPosition);
     if (_selectedTool == _CanvasTool.line) {
       _handleLineToolTap(scenePoint);
       return;
@@ -1249,6 +1467,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final projectId = (_projectId ?? '').trim();
     final levelId = (_levelId ?? '').trim();
     if (projectId.isEmpty || levelId.isEmpty) return;
+    if (_activeContentAspectRatio == null && _hasFile) {
+      await _refreshActiveContentAspectRatio();
+    }
     try {
       final api = ref.read(quoteProjectApiClientProvider);
       final levels = await api.fetchProjectLevels(projectId: projectId);
@@ -1260,8 +1481,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       final loaded = <_PlotRegion>[];
       for (final plot in level.plots) {
         final name = (plot['name'] ?? '').toString().trim();
-        final rect = _rectFromCoordinates(plot['coordinates']);
+        final coordinatePoints = _pointsFromCoordinates(plot['coordinates']);
+        final rect = _rectFromCoordinatePoints(coordinatePoints);
         if (rect == null) continue;
+        final shapeLines = _linesFromCoordinatePoints(coordinatePoints);
         final plotIdRaw = plot['id'];
         final serverPlotId = plotIdRaw is int
             ? plotIdRaw
@@ -1284,7 +1507,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 : int.tryParse('${pinIdRaw ?? ''}');
             pins.add(
               _CanvasPin(
-                offset: _canvasPinOffsetFromApi(x, y, rect),
+                offset: _canvasPinOffsetFromApi(x, y),
                 productName: '',
                 status: _statusNameById(statusId),
                 statusId: statusId,
@@ -1315,7 +1538,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             rect: rect,
             name: name,
             pins: pins,
-            lines: const <_CanvasLine>[],
+            lines: shapeLines,
             serverPlotId: serverPlotId,
           ),
         );
@@ -1342,18 +1565,63 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return double.tryParse('${value ?? ''}');
   }
 
-  Rect? _rectFromCoordinates(dynamic rawCoordinates) {
-    if (rawCoordinates is! List || rawCoordinates.length < 2) return null;
+  List<Offset> _pointsFromCoordinates(dynamic rawCoordinates) {
+    if (rawCoordinates is! List || rawCoordinates.isEmpty) return const <Offset>[];
     final points = <Offset>[];
     for (final point in rawCoordinates) {
-      if (point is! List || point.length < 2) continue;
-      final x = _toDouble(point[0]);
-      final y = _toDouble(point[1]);
+      double? x;
+      double? y;
+      if (point is List && point.length >= 2) {
+        x = _toDouble(point[0]);
+        y = _toDouble(point[1]);
+      } else if (point is Map) {
+        final map = Map<String, dynamic>.from(point);
+        x = _toDouble(map['x'] ?? map['x_coordinate'] ?? map['left']);
+        y = _toDouble(map['y'] ?? map['y_coordinate'] ?? map['top']);
+      }
       if (x == null || y == null) continue;
-      points.add(Offset(x, y));
+      if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+        points.add(_denormalizeScenePoint(x, y));
+      } else {
+        points.add(Offset(x, y));
+      }
     }
+    return points;
+  }
+
+  Rect? _rectFromCoordinatePoints(List<Offset> points) {
     if (points.length < 2) return null;
-    return Rect.fromPoints(points.first, points.last);
+    var minX = points.first.dx;
+    var minY = points.first.dy;
+    var maxX = points.first.dx;
+    var maxY = points.first.dy;
+    for (final p in points.skip(1)) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  List<_CanvasLine> _linesFromCoordinatePoints(List<Offset> points) {
+    if (points.length < 3) return const <_CanvasLine>[];
+    final normalized = List<Offset>.from(points);
+    if (normalized.length > 2 &&
+        (normalized.first - normalized.last).distance < 0.5) {
+      normalized.removeLast();
+    }
+    if (normalized.length < 3) return const <_CanvasLine>[];
+    final lines = <_CanvasLine>[];
+    for (var i = 0; i < normalized.length; i++) {
+      lines.add(
+        _CanvasLine(
+          start: normalized[i],
+          end: normalized[(i + 1) % normalized.length],
+        ),
+      );
+    }
+    return lines;
   }
 
   String _statusNameById(int? statusId) {
@@ -1391,10 +1659,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         final pins = <Map<String, dynamic>>[];
         for (var p = 0; p < region.pins.length; p++) {
           final pin = region.pins[p];
+          final normalizedPin = _normalizeScenePoint(pin.offset);
           pins.add(<String, dynamic>{
             if (pin.serverPinId != null) 'id': pin.serverPinId,
-            'x_coordinate': pin.offset.dx.round(),
-            'y_coordinate': pin.offset.dy.round(),
+            'x_coordinate': normalizedPin.dx,
+            'y_coordinate': normalizedPin.dy,
             'status': pin.statusId ?? _statusIdByName(pin.status),
             'group': pin.groupId,
             'item': pin.compositeItemId,
@@ -1403,15 +1672,27 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               'variation': pin.variation.toLowerCase() == 'yes',
           });
         }
+        final coordinatePoints = region.safeLines.isNotEmpty
+            ? region.safeLines.map((line) => line.start).toList(growable: false)
+            : <Offset>[
+                region.rect.topLeft,
+                region.rect.topRight,
+                region.rect.bottomRight,
+                region.rect.bottomLeft,
+              ];
+        final normalizedCoordinates = coordinatePoints
+            .map((p) {
+              final n = _normalizeScenePoint(p);
+              return <double>[n.dx, n.dy];
+            })
+            .toList(growable: false);
         plotsPayload.add(<String, dynamic>{
           if (region.serverPlotId != null) 'id': region.serverPlotId,
           'name': (region.name ?? '').trim().isEmpty
               ? 'Plot ${i + 1}'
               : region.name!.trim(),
-          'coordinates': <List<int>>[
-            <int>[region.rect.left.round(), region.rect.top.round()],
-            <int>[region.rect.right.round(), region.rect.bottom.round()],
-          ],
+          'page': 1,
+          'coordinates': normalizedCoordinates,
           'pins': pins,
         });
       }
@@ -1592,7 +1873,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         _activeRegionIndex = moveIdx;
         _draftStart = null;
         _draftCurrent = null;
-      });
+      }); 
       return;
     }
     setState(() {
@@ -1933,8 +2214,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             child: Container(
               width: double.infinity,
               color: const Color(0xFFF3F3F4),
-              child: Stack(
-                children: [
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  _observeViewportGeometry(constraints.biggest);
+                  return Stack(
+                    children: [
                   Positioned.fill(
                     child: InteractiveViewer(
                       transformationController: _viewerTransform,
@@ -1945,7 +2229,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       child: SizedBox.expand(
                         child: Stack(
                           children: [
-                            Center(child: _buildDrawingPreview()),
+                            Positioned.fill(child: _buildDrawingPreview()),
                             Positioned.fill(
                               child: _buildCanvasInteractionLayer(),
                             ),
@@ -2110,7 +2394,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       ],
                     ),
                   ),
-                ],
+                    ],
+                  );
+                },
               ),
             ),
           ),

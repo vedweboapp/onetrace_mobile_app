@@ -1,9 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_urls.dart';
-import 'package:red5/core/network/auth_bearer_interceptor.dart';
-import 'package:red5/core/providers/local_storage_provider.dart';
 
 /// Auth endpoints using Dio ([AppApiUrls] for paths).
 final class AuthApiClient {
@@ -80,24 +79,6 @@ final class AuthApiClient {
   }
 }
 
-final authApiClientProvider = Provider<AuthApiClient>((ref) {
-  final storage = ref.read(localStorageProvider);
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: AppApiUrls.baseUrl,
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
-      sendTimeout: const Duration(seconds: 30),
-      headers: const {
-        Headers.acceptHeader: Headers.jsonContentType,
-        Headers.contentTypeHeader: Headers.jsonContentType,
-      },
-      validateStatus: (status) => status != null && status >= 200 && status < 300,
-    ),
-  );
-  dio.interceptors.addAll([
-    AuthBearerInterceptor(storage),
-    ApiDioLogInterceptor(),
-  ]);
-  return AuthApiClient(dio: dio);
-});
+final authApiClientProvider = Provider<AuthApiClient>(
+  (ref) => sl<AuthApiClient>(),
+);

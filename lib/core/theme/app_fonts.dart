@@ -147,6 +147,14 @@ abstract final class AppFonts {
     height: 1.43,
     color: color,
   );
+  static TextStyle bodyMedium1({Color? color, bool italic = false}) => inter(
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    fontStyle: italic ? FontStyle.italic : FontStyle.normal,
+    letterSpacing: 0.25,
+    height: 1.43,
+    color: color,
+  );
 
   /// 12 sp · Regular · +0.4 tracking  (M3 bodySmall)
   static TextStyle bodySmall({Color? color, bool italic = false}) => inter(

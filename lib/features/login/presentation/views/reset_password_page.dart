@@ -9,6 +9,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
 import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 
 /// New password + confirmation after forgot-password OTP — dark header (slide 2)
 /// and white sheet, with rules checklist and strength meter.
@@ -284,7 +285,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     try {
       await Future<void>.delayed(const Duration(milliseconds: 400));
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(content: Text('Password has been reset. Sign in with your new password.')),
       );
       context.go('/login');
