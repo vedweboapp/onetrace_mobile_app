@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
@@ -74,6 +76,114 @@ final class AuthApiClient {
     return _dio.post<Map<String, dynamic>>(
       AppApiUrls.authTokenRefresh,
       data: {'refresh': refreshToken},
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Send a one-time password to [email] for sign-in.
+  Future<Response<Map<String, dynamic>>> sendOtp({
+    required String email,
+    Map<String, dynamic>? extraFields,
+    CancelToken? cancelToken,
+  }) async {
+    return _dio.post<Map<String, dynamic>>(
+      AppApiUrls.authSendOtp,
+      data: <String, dynamic>{
+        'email': email,
+        if (extraFields != null) ...extraFields,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Re-send the most recently issued OTP for [email].
+  Future<Response<Map<String, dynamic>>> resendOtp({
+    required String email,
+    Map<String, dynamic>? extraFields,
+    CancelToken? cancelToken,
+  }) async {
+    return _dio.post<Map<String, dynamic>>(
+      AppApiUrls.authResendOtp,
+      data: <String, dynamic>{
+        'email': email,
+        if (extraFields != null) ...extraFields,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Verify a 6-digit [otp] for [email]. On the sign-in flow the response
+  /// typically contains access/refresh tokens.
+  Future<Response<Map<String, dynamic>>> verifyOtp({
+    required String email,
+    required String otp,
+    Map<String, dynamic>? extraFields,
+    CancelToken? cancelToken,
+  }) async {
+    return _dio.post<Map<String, dynamic>>(
+      AppApiUrls.authVerifyOtp,
+      data: <String, dynamic>{
+        'email': email,
+        'otp': otp,
+        if (extraFields != null) ...extraFields,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Forgot-password endpoint. The same endpoint is used in two ways:
+  ///
+  /// * Call with just [email] to request the password-reset OTP / email.
+  /// * After OTP verification, call with [email] + [newPassword] +
+  ///   [newPasswordConfirm] to commit the new password.
+  Future<Response<Map<String, dynamic>>> forgotPassword({
+    required String email,
+    String? newPassword,
+    String? newPasswordConfirm,
+    Map<String, dynamic>? extraFields,
+    CancelToken? cancelToken,
+  }) async {
+    return _dio.post<Map<String, dynamic>>(
+      AppApiUrls.authForgotPassword,
+      data: <String, dynamic>{
+        'email': email,
+        if (newPassword != null) 'new_password': newPassword,
+        if (newPasswordConfirm != null)
+          'new_password_confirm': newPasswordConfirm,
+        if (extraFields != null) ...extraFields,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Invite a new user. When [profilePhotoBytes] is provided the request is
+  /// sent as `multipart/form-data` so the photo can be uploaded alongside
+  /// [data]; otherwise it's a regular JSON POST.
+  Future<Response<Map<String, dynamic>>> inviteUser({
+    required Map<String, dynamic> data,
+    Uint8List? profilePhotoBytes,
+    String profilePhotoFieldName = 'profile_photo',
+    String profilePhotoFileName = 'profile.jpg',
+    CancelToken? cancelToken,
+  }) async {
+    if (profilePhotoBytes != null && profilePhotoBytes.isNotEmpty) {
+      final form = FormData.fromMap(<String, dynamic>{
+        ...data,
+        profilePhotoFieldName: MultipartFile.fromBytes(
+          profilePhotoBytes,
+          filename: profilePhotoFileName,
+        ),
+      });
+      return _dio.post<Map<String, dynamic>>(
+        AppApiUrls.authInviteUser,
+        data: form,
+        cancelToken: cancelToken,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+    }
+    return _dio.post<Map<String, dynamic>>(
+      AppApiUrls.authInviteUser,
+      data: data,
       cancelToken: cancelToken,
     );
   }

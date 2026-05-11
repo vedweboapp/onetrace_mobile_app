@@ -4,7 +4,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 
-/// Meta Data → Pin Status categories (static UI for now).
+/// Module and Field → Pin Status categories (static UI for now).
 class PinStatusSettingsPage extends StatelessWidget {
   const PinStatusSettingsPage({super.key});
 
@@ -147,14 +147,20 @@ Future<Color?> _showCustomColorSheet(
                           borderRadius: BorderRadius.circular(999),
                           child: const Padding(
                             padding: EdgeInsets.all(6),
-                            child: Icon(Icons.close_rounded, color: Color(0xFF9CA3AF)),
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: Color(0xFF9CA3AF),
+                            ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 10),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF3F4F6),
                         borderRadius: BorderRadius.circular(12),
@@ -191,8 +197,9 @@ Future<Color?> _showCustomColorSheet(
                           const SizedBox(width: 8),
                           Text(
                             'CUSTOM',
-                            style: AppFonts.labelSmall(color: const Color(0xFF2563EB))
-                                .copyWith(fontWeight: FontWeight.w700),
+                            style: AppFonts.labelSmall(
+                              color: const Color(0xFF2563EB),
+                            ).copyWith(fontWeight: FontWeight.w700),
                           ),
                         ],
                       ),
@@ -251,7 +258,11 @@ Future<Color?> _showCustomColorSheet(
                                 ),
                               ),
                               child: selected.value == color.value
-                                  ? const Icon(Icons.check_rounded, color: Colors.white, size: 18)
+                                  ? const Icon(
+                                      Icons.check_rounded,
+                                      color: Colors.white,
+                                      size: 18,
+                                    )
                                   : null,
                             ),
                           ),
@@ -271,8 +282,9 @@ Future<Color?> _showCustomColorSheet(
                         ),
                         child: Text(
                           'Apply Color',
-                          style: AppFonts.labelLarge(color: Colors.white)
-                              .copyWith(fontWeight: FontWeight.w700),
+                          style: AppFonts.labelLarge(
+                            color: Colors.white,
+                          ).copyWith(fontWeight: FontWeight.w700),
                         ),
                       ),
                     ),
@@ -461,7 +473,9 @@ void _showAddStatusSheet(BuildContext context) {
                               ),
                             ),
                             child: Icon(
-                              isCustomSelected ? Icons.check_rounded : Icons.add,
+                              isCustomSelected
+                                  ? Icons.check_rounded
+                                  : Icons.add,
                               size: 16,
                               color: isCustomSelected
                                   ? Colors.white
@@ -493,8 +507,9 @@ void _showAddStatusSheet(BuildContext context) {
                           const SizedBox(width: 6),
                           Text(
                             _toHexRgb(customColor),
-                            style: AppFonts.bodySmall(color: AppColors.inkStrong)
-                                .copyWith(fontWeight: FontWeight.w700),
+                            style: AppFonts.bodySmall(
+                              color: AppColors.inkStrong,
+                            ).copyWith(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(width: 8),
                           Text(

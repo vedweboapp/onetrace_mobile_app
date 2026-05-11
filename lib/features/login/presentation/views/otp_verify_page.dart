@@ -1,15 +1,23 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/auth/auth_session.dart';
 import 'package:red5/core/constants/app_image_string.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/auth_api_client.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
 import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/reset_password_page.dart';
 
 /// How [OtpVerifyPage] was opened — drives titles, primary/secondary actions, and footer.
@@ -26,7 +34,7 @@ const String otpVerifyFlowForgotPasswordQueryValue = 'forgot';
 
 /// Full-screen mobile OTP entry (code verification) with the same dark header /
 /// white sheet layout as [LoginPage].
-class OtpVerifyPage extends StatefulWidget {
+class OtpVerifyPage extends ConsumerStatefulWidget {
   const OtpVerifyPage({
     super.key,
     this.email,
@@ -42,12 +50,19 @@ class OtpVerifyPage extends StatefulWidget {
   static const name = 'loginOtp';
 
   @override
-  State<OtpVerifyPage> createState() => _OtpVerifyPageState();
+  ConsumerState<OtpVerifyPage> createState() => _OtpVerifyPageState();
 }
 
-class _OtpVerifyPageState extends State<OtpVerifyPage> {
-  bool get _isForgotPasswordFlow =>
-      widget.flow == OtpVerifyFlow.forgotPassword;
+class _OtpVerifyPageState extends ConsumerState<OtpVerifyPage> {
+  bool get _isForgotPasswordFlow => widget.flow == OtpVerifyFlow.forgotPassword;
+
+  /// Purpose sent to `/auth/verify-otp/` and `/auth/resend-otp/`. Mirrors the
+  /// value used by the preceding send-otp call so the backend can match the
+  /// verification (and resend) to the originally issued code.
+  ///
+  /// `forgot` when the user reached this screen from the forgot-password flow,
+  /// otherwise `login` (sign-in with OTP).
+  String get _otpPurpose => _isForgotPasswordFlow ? 'forgot' : 'login';
 
   static const _mobileDark = Color(0xFF111111);
   static const _mobileSubtextGray = Color(0xFF666666);
@@ -58,8 +73,10 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
   late final PageController _onboardingPageController;
   int _onboardingPageIndex = 0;
 
-  final List<TextEditingController> _otpControllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _otpControllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _otpFocusNodes = List.generate(6, (_) => FocusNode());
 
   Timer? _resendTimer;
@@ -136,21 +153,18 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
             title,
             textAlign: TextAlign.center,
             style: AppFonts.titleLarge(color: AppColors.white).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 25,
-                  letterSpacing: -0.3,
-                ),
+              fontWeight: FontWeight.w700,
+              fontSize: 25,
+              letterSpacing: -0.3,
+            ),
           ),
           vGap(10),
           Text(
             subtitle,
             textAlign: TextAlign.center,
             style: AppFonts.bodyMedium(
-                  color: AppColors.white.withValues(alpha: 0.65),
-                ).copyWith(
-                  height: 1.35,
-                  fontSize: 18,
-                ),
+              color: AppColors.white.withValues(alpha: 0.65),
+            ).copyWith(height: 1.35, fontSize: 18),
           ),
         ],
       ),
@@ -189,8 +203,7 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
     }
     final char = digits.substring(0, 1);
     _otpControllers[index].text = char;
-    _otpControllers[index].selection =
-        const TextSelection.collapsed(offset: 1);
+    _otpControllers[index].selection = const TextSelection.collapsed(offset: 1);
     if (index < 5) {
       _otpFocusNodes[index + 1].requestFocus();
     } else {
@@ -223,43 +236,100 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
       );
       return;
     }
+    final email = widget.email?.trim() ?? '';
+    if (email.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text('Email is missing. Please request a new code.'),
+        ),
+      );
+      return;
+    }
     if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
     try {
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      final client = ref.read(authApiClientProvider);
+      final response = await client.verifyOtp(
+        email: email,
+        otp: code,
+        extraFields: {'purpose': _otpPurpose},
+      );
       if (!mounted) return;
       if (_isForgotPasswordFlow) {
-        final email = widget.email?.trim() ?? '';
-        final uri = email.isEmpty
-            ? Uri(path: ResetPasswordPage.path)
-            : Uri(
-                path: ResetPasswordPage.path,
-                queryParameters: <String, String>{'email': email},
-              );
+        final uri = Uri(
+          path: ResetPasswordPage.path,
+          queryParameters: <String, String>{'email': email},
+        );
         context.pushReplacement(uri.toString());
         return;
       }
+      // Sign-in OTP flow: persist tokens (when present) and go to dashboard.
+      final storage = ref.read(localStorageProvider);
+      final accessToken = AuthSession.readAccessToken(response.data);
+      final refreshToken = AuthSession.readRefreshToken(response.data);
+      if (accessToken != null) {
+        await storage.setString(LocalStorageKeys.authAccessToken, accessToken);
+      }
+      if (refreshToken != null) {
+        await storage.setString(
+          LocalStorageKeys.authRefreshToken,
+          refreshToken,
+        );
+      }
+      if (!mounted) return;
+      context.go(DashboardPage.path);
+    } on DioException catch (e) {
+      if (!mounted) return;
       context.showTopSnackBar(
-        SnackBar(content: Text('Code entered: $code')),
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromDioException(
+              e,
+              genericFallback: AppStrings.apiErrorVerifyOtp,
+            ),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
-  void _onResendTap() {
+  Future<void> _onResendTap() async {
     if (_resendSecondsLeft > 0) return;
-    _startResendTimer();
-    if (!mounted) return;
-    context.showTopSnackBar(
-      SnackBar(
-        content: Text(
-          widget.email != null && widget.email!.isNotEmpty
-              ? 'A new code was sent to ${widget.email}'
-              : 'If OTP is enabled, a new code will be sent.',
+    final email = widget.email?.trim() ?? '';
+    if (email.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text('Email is missing. Please request a new code.'),
         ),
-      ),
-    );
+      );
+      return;
+    }
+    try {
+      final client = ref.read(authApiClientProvider);
+      await client.resendOtp(
+        email: email,
+        extraFields: {'purpose': _otpPurpose},
+      );
+      _startResendTimer();
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(content: Text('A new code was sent to $email')),
+      );
+    } on DioException catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromDioException(
+              e,
+              genericFallback: AppStrings.apiErrorResendOtp,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   void _onSecondaryAction() {
@@ -286,12 +356,12 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
             focusNode: _otpFocusNodes[index],
             textAlign: TextAlign.center,
             keyboardType: TextInputType.number,
-            textInputAction:
-                index < 5 ? TextInputAction.next : TextInputAction.done,
-            style: AppFonts.headlineSmall(color: _mobileDark).copyWith(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                ),
+            textInputAction: index < 5
+                ? TextInputAction.next
+                : TextInputAction.done,
+            style: AppFonts.headlineSmall(
+              color: _mobileDark,
+            ).copyWith(fontSize: 22, fontWeight: FontWeight.w600),
             inputFormatters: [
               FilteringTextInputFormatter.digitsOnly,
               LengthLimitingTextInputFormatter(1),
@@ -329,20 +399,18 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
     return Center(
       child: Text.rich(
         TextSpan(
-          style: AppFonts.bodyMedium(color: _mobileSubtextGray).copyWith(
-                fontSize: 14,
-                height: 1.35,
-              ),
+          style: AppFonts.bodyMedium(
+            color: _mobileSubtextGray,
+          ).copyWith(fontSize: 14, height: 1.35),
           children: [
             TextSpan(text: AppStrings.otpResendLead),
             TextSpan(
               text: canResend
                   ? AppStrings.otpResendCta
                   : '${AppStrings.otpResendInPrefix}$countdown',
-              style: AppFonts.bodyMedium(color: _mobileDark).copyWith(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
+              style: AppFonts.bodyMedium(
+                color: _mobileDark,
+              ).copyWith(fontWeight: FontWeight.w700, fontSize: 14),
             ),
           ],
         ),
@@ -359,18 +427,17 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
         children: [
           Text(
             '${AppStrings.loginNoAccountQuestion} ',
-            style: AppFonts.bodyMedium(color: _mobileSubtextGray).copyWith(
-                  fontSize: 14,
-                ),
+            style: AppFonts.bodyMedium(
+              color: _mobileSubtextGray,
+            ).copyWith(fontSize: 14),
           ),
           GestureDetector(
             onTap: () {},
             child: Text(
               AppStrings.loginRequestAccessArrow,
-              style: AppFonts.bodyMedium(color: _mobileDark).copyWith(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
+              style: AppFonts.bodyMedium(
+                color: _mobileDark,
+              ).copyWith(fontWeight: FontWeight.w700, fontSize: 14),
             ),
           ),
         ],
@@ -385,7 +452,12 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
   }) {
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.fromLTRB(22, 28, 22, 24 + bottomInset + keyboardInset),
+      padding: EdgeInsets.fromLTRB(
+        22,
+        28,
+        22,
+        24 + bottomInset + keyboardInset,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -394,28 +466,25 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
                 ? AppStrings.otpForgotPasswordVerifyTitle
                 : AppStrings.otpVerifyTitle,
             style: AppFonts.headlineSmall(color: _mobileDark).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 26,
-                  letterSpacing: -0.5,
-                ),
+              fontWeight: FontWeight.w700,
+              fontSize: 26,
+              letterSpacing: -0.5,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             AppStrings.otpVerifySubtitle,
-            style:
-                AppFonts.bodyMedium(color: _mobileSubtextGray).copyWith(
-                  fontSize: 14,
-                  height: 1.35,
-                ),
+            style: AppFonts.bodyMedium(
+              color: _mobileSubtextGray,
+            ).copyWith(fontSize: 14, height: 1.35),
           ),
           if (widget.email != null && widget.email!.trim().isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
               widget.email!.trim(),
-              style:
-                  AppFonts.bodySmall(color: _mobileSubtextGray).copyWith(
-                    fontSize: 13,
-                  ),
+              style: AppFonts.bodySmall(
+                color: _mobileSubtextGray,
+              ).copyWith(fontSize: 13),
             ),
           ],
           const SizedBox(height: 28),
@@ -424,17 +493,16 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
             onTap: () => _otpFocusNodes.first.requestFocus(),
             child: Text(
               AppStrings.otpLabel,
-              style: AppFonts.labelLarge(color: _mobileDark).copyWith(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
+              style: AppFonts.labelLarge(
+                color: _mobileDark,
+              ).copyWith(fontWeight: FontWeight.w700, fontSize: 13),
             ),
           ),
           const SizedBox(height: 10),
           Row(children: List.generate(6, (i) => _otpField(context, i))),
           const SizedBox(height: 20),
           GestureDetector(
-            onTap: _onResendTap,
+            onTap: () => unawaited(_onResendTap()),
             behavior: HitTestBehavior.opaque,
             child: _resendRow(context),
           ),
@@ -448,23 +516,22 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
                 backgroundColor: _mobileDark,
                 foregroundColor: AppColors.white,
                 disabledBackgroundColor: _mobileDark.withValues(alpha: 0.45),
-                disabledForegroundColor:
-                    AppColors.white.withValues(alpha: 0.7),
+                disabledForegroundColor: AppColors.white.withValues(alpha: 0.7),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(11),
                 ),
                 textStyle: AppFonts.titleMedium().copyWith(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
               ),
               child: Text(
                 _isSubmitting
                     ? (_isForgotPasswordFlow ? 'Verifying…' : 'Signing in…')
                     : (_isForgotPasswordFlow
-                        ? AppStrings.otpVerifyOtpButton
-                        : AppStrings.loginSignInLower),
+                          ? AppStrings.otpVerifyOtpButton
+                          : AppStrings.loginSignInLower),
               ),
             ),
           ),
@@ -481,9 +548,9 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
                   borderRadius: BorderRadius.circular(11),
                 ),
                 textStyle: AppFonts.titleMedium().copyWith(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
               ),
               child: Text(
                 _isForgotPasswordFlow
@@ -586,7 +653,9 @@ class _OtpVerifyPageState extends State<OtpVerifyPage> {
           Expanded(
             flex: formFlex,
             child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(30),
+              ),
               child: ColoredBox(
                 color: AppColors.white,
                 child: SafeArea(

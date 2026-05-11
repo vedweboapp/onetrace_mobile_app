@@ -7,6 +7,7 @@ import 'package:red5/features/dashboard/presentation/views/settings/company_sett
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 
 /// User directory: search, status filters, list, FAB — matches RED5 settings visual language.
 class UsersSettingsPage extends StatefulWidget {
@@ -145,6 +146,7 @@ class _UsersSettingsPageState extends State<UsersSettingsPage> {
         onPersonalProfile: () => _closeDrawerPush(PersonalProfilePage.path),
         onUsers: () => _scaffoldKey.currentState?.closeDrawer(),
         onCompany: () => _closeDrawerPush(CompanySettingsPage.path),
+        onPrivacy: () => _closeDrawerPush(PrivacySettingsPage.path),
         onMetadata: () => _closeDrawerPush(MetadataSettingsPage.path),
       ),
       appBar: AppBar(
@@ -261,7 +263,13 @@ class _UsersSettingsPageState extends State<UsersSettingsPage> {
   }
 }
 
-enum _SettingsDrawerSelection { personalProfile, users, company, metadata }
+enum _SettingsDrawerSelection {
+  personalProfile,
+  users,
+  company,
+  metadata,
+  privacy,
+}
 
 class _SettingsDrawer extends StatelessWidget {
   const _SettingsDrawer({
@@ -270,6 +278,7 @@ class _SettingsDrawer extends StatelessWidget {
     required this.onPersonalProfile,
     required this.onUsers,
     required this.onCompany,
+    required this.onPrivacy,
     required this.onMetadata,
   });
 
@@ -278,6 +287,7 @@ class _SettingsDrawer extends StatelessWidget {
   final VoidCallback onPersonalProfile;
   final VoidCallback onUsers;
   final VoidCallback onCompany;
+  final VoidCallback onPrivacy;
   final VoidCallback onMetadata;
 
   @override
@@ -305,10 +315,11 @@ class _SettingsDrawer extends StatelessWidget {
                   IconButton(
                     tooltip: 'Exit',
                     onPressed: onExit,
-                    icon: const Icon(
-                      Icons.exit_to_app_rounded,
+                    icon: Image.asset(
+                      "assets/images/Vector.png",
                       color: AppColors.inkStrong,
-                      size: 22,
+                      height: 15,
+                      width: 15,
                     ),
                   ),
                 ],
@@ -338,9 +349,15 @@ class _SettingsDrawer extends StatelessWidget {
                     selected: selection == _SettingsDrawerSelection.company,
                     onTap: onCompany,
                   ),
+                  _sidebarNavTile(
+                    title: 'Privacy',
+                    iconAsset: 'assets/images/privacy.png',
+                    selected: selection == _SettingsDrawerSelection.privacy,
+                    onTap: onPrivacy,
+                  ),
                   _sectionLabelCaps('CUSTOMISATION'),
                   _sidebarNavTile(
-                    title: 'Meta Data',
+                    title: 'Module and Field',
                     iconAsset: 'assets/images/database (1).png',
                     selected: selection == _SettingsDrawerSelection.metadata,
                     onTap: onMetadata,

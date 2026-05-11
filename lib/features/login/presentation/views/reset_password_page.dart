@@ -1,9 +1,13 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/constants/app_image_string.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
@@ -13,7 +17,7 @@ import 'package:red5/core/widgets/top_snackbar.dart';
 
 /// New password + confirmation after forgot-password OTP — dark header (slide 2)
 /// and white sheet, with rules checklist and strength meter.
-class ResetPasswordPage extends StatefulWidget {
+class ResetPasswordPage extends ConsumerStatefulWidget {
   const ResetPasswordPage({super.key, this.email});
 
   final String? email;
@@ -22,10 +26,10 @@ class ResetPasswordPage extends StatefulWidget {
   static const name = 'resetPassword';
 
   @override
-  State<ResetPasswordPage> createState() => _ResetPasswordPageState();
+  ConsumerState<ResetPasswordPage> createState() => _ResetPasswordPageState();
 }
 
-class _ResetPasswordPageState extends State<ResetPasswordPage> {
+class _ResetPasswordPageState extends ConsumerState<ResetPasswordPage> {
   static const _mobileDark = Color(0xFF111111);
   static const _mobileSubtextGray = Color(0xFF666666);
   static const _mobileDotInactive = Color(0xFF757575);
@@ -280,15 +284,47 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
 
   Future<void> _onResetPassword() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final email = widget.email?.trim() ?? '';
+    if (email.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text(
+            'Email is missing. Please restart the forgot-password flow.',
+          ),
+        ),
+      );
+      return;
+    }
     if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
     try {
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      final client = ref.read(authApiClientProvider);
+      await client.forgotPassword(
+        email: email,
+        newPassword: _newPasswordController.text,
+        newPasswordConfirm: _confirmPasswordController.text,
+      );
       if (!mounted) return;
       context.showTopSnackBar(
-        const SnackBar(content: Text('Password has been reset. Sign in with your new password.')),
+        const SnackBar(
+          content: Text(
+            'Password has been reset. Sign in with your new password.',
+          ),
+        ),
       );
       context.go('/login');
+    } on DioException catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromDioException(
+              e,
+              genericFallback: AppStrings.apiErrorForgotPassword,
+            ),
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

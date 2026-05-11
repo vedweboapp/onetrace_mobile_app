@@ -7,6 +7,7 @@ import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 
 class CompanySettingsPage extends StatefulWidget {
@@ -25,8 +26,9 @@ enum _NavigationStyle { sidebar, bottomBar }
 
 class _CompanySettingsPageState extends State<CompanySettingsPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final _companyNameController =
-      TextEditingController(text: 'Apex Construction Solutions');
+  final _companyNameController = TextEditingController(
+    text: 'Apex Construction Solutions',
+  );
 
   _AppearanceMode _appearanceMode = _AppearanceMode.light;
   _NavigationStyle _navigationStyle = _NavigationStyle.sidebar;
@@ -180,9 +182,9 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
           const SizedBox(height: 8),
           Text(
             'Upload Profile Photo (Optional)',
-            style: AppFonts.bodyMedium(color: _photoCaption).copyWith(
-              fontWeight: FontWeight.w500,
-            ),
+            style: AppFonts.bodyMedium(
+              color: _photoCaption,
+            ).copyWith(fontWeight: FontWeight.w500),
           ),
         ],
       ),
@@ -207,7 +209,8 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
               selected: _appearanceMode == _AppearanceMode.light,
               selectedColor: _brandPalette[1],
               selectedBg: selectedBg,
-              onTap: () => setState(() => _appearanceMode = _AppearanceMode.light),
+              onTap: () =>
+                  setState(() => _appearanceMode = _AppearanceMode.light),
             ),
           ),
           Expanded(
@@ -217,7 +220,8 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
               selected: _appearanceMode == _AppearanceMode.dark,
               selectedColor: _brandPalette[4],
               selectedBg: selectedBg,
-              onTap: () => setState(() => _appearanceMode = _AppearanceMode.dark),
+              onTap: () =>
+                  setState(() => _appearanceMode = _AppearanceMode.dark),
             ),
           ),
         ],
@@ -230,7 +234,9 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
       children: [
         for (var i = 0; i < _brandPalette.length; i++)
           Padding(
-            padding: EdgeInsets.only(right: i == _brandPalette.length - 1 ? 0 : 10),
+            padding: EdgeInsets.only(
+              right: i == _brandPalette.length - 1 ? 0 : 10,
+            ),
             child: InkWell(
               onTap: () => setState(() => _selectedBrandColor = i),
               borderRadius: BorderRadius.circular(999),
@@ -271,7 +277,11 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.black, width: 2),
               ),
-              child: const Icon(Icons.check_rounded, size: 18, color: Colors.white),
+              child: const Icon(
+                Icons.check_rounded,
+                size: 18,
+                color: Colors.white,
+              ),
             ),
           ),
         ],
@@ -338,9 +348,9 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                       children: [
                         Text(
                           'Brand Color',
-                          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: AppFonts.titleMedium(
+                            color: AppColors.inkStrong,
+                          ).copyWith(fontWeight: FontWeight.w700),
                         ),
                         const Spacer(),
                         InkWell(
@@ -348,14 +358,20 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                           borderRadius: BorderRadius.circular(999),
                           child: const Padding(
                             padding: EdgeInsets.all(6),
-                            child: Icon(Icons.close_rounded, color: Color(0xFF94A3B8)),
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: Color(0xFF94A3B8),
+                            ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF3F4F6),
                         borderRadius: BorderRadius.circular(12),
@@ -374,17 +390,20 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                           const SizedBox(width: 10),
                           Text(
                             _hexOf(selectedColor),
-                            style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: AppFonts.bodyMedium(
+                              color: AppColors.inkStrong,
+                            ).copyWith(fontWeight: FontWeight.w600),
                           ),
                           const Spacer(),
                           Text(
                             'CUSTOM',
-                            style: AppFonts.labelSmall(color: const Color(0xFF2563EB)).copyWith(
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.4,
-                            ),
+                            style:
+                                AppFonts.labelSmall(
+                                  color: const Color(0xFF2563EB),
+                                ).copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.4,
+                                ),
                           ),
                         ],
                       ),
@@ -417,7 +436,10 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                                 ),
                               ),
                               child: i == localIndex
-                                  ? const Icon(Icons.check_rounded, color: Colors.white)
+                                  ? const Icon(
+                                      Icons.check_rounded,
+                                      color: Colors.white,
+                                    )
                                   : null,
                             ),
                           ),
@@ -452,9 +474,9 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                         ),
                         child: Text(
                           'Apply Color',
-                          style: AppFonts.labelLarge(color: Colors.white).copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: AppFonts.labelLarge(
+                            color: Colors.white,
+                          ).copyWith(fontWeight: FontWeight.w700),
                         ),
                       ),
                     ),
@@ -480,6 +502,7 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
         onPersonalProfile: () => _closeDrawerPush(PersonalProfilePage.path),
         onUsers: () => _closeDrawerPush(UsersSettingsPage.path),
         onCompany: () => _scaffoldKey.currentState?.closeDrawer(),
+        onPrivacy: () => _closeDrawerPush(PrivacySettingsPage.path),
         onMetadata: () => _closeDrawerPush(MetadataSettingsPage.path),
       ),
       appBar: AppBar(
@@ -510,10 +533,9 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                 children: [
                   Text(
                     'COMPANY PROFILE',
-                    style: AppFonts.labelMedium(color: _labelGrey).copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                    ),
+                    style: AppFonts.labelMedium(
+                      color: _labelGrey,
+                    ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.8),
                   ),
                   const SizedBox(height: 14),
                   _profilePhotoPicker(),
@@ -525,7 +547,10 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                     textStyle: AppFonts.bodyLarge(
                       color: AppColors.inkStrong,
                     ).copyWith(fontWeight: FontWeight.w500),
-                    hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+                    hintStyle: const TextStyle(
+                      color: Colors.transparent,
+                      height: 0,
+                    ),
                   ),
                   const SizedBox(height: 22),
                   const Divider(color: _panelBorder, height: 1),
@@ -587,9 +612,9 @@ class _CompanySettingsPageState extends State<CompanySettingsPage> {
                   ),
                   child: Text(
                     'Save Changes',
-                    style: AppFonts.labelLarge(color: Colors.white).copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: AppFonts.labelLarge(
+                      color: Colors.white,
+                    ).copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),
@@ -640,7 +665,9 @@ class _AppearanceButton extends StatelessWidget {
               Text(
                 label,
                 style: AppFonts.bodyMedium(
-                  color: selected ? AppColors.inkStrong : const Color(0xFF6B7280),
+                  color: selected
+                      ? AppColors.inkStrong
+                      : const Color(0xFF6B7280),
                 ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
               ),
             ],
@@ -740,7 +767,13 @@ class _NavigationTile extends StatelessWidget {
   }
 }
 
-enum _SettingsDrawerSelection { personalProfile, users, company, metadata }
+enum _SettingsDrawerSelection {
+  personalProfile,
+  users,
+  company,
+  privacy,
+  metadata,
+}
 
 class _SettingsDrawer extends StatelessWidget {
   const _SettingsDrawer({
@@ -749,6 +782,7 @@ class _SettingsDrawer extends StatelessWidget {
     required this.onPersonalProfile,
     required this.onUsers,
     required this.onCompany,
+    required this.onPrivacy,
     required this.onMetadata,
   });
 
@@ -757,6 +791,7 @@ class _SettingsDrawer extends StatelessWidget {
   final VoidCallback onPersonalProfile;
   final VoidCallback onUsers;
   final VoidCallback onCompany;
+  final VoidCallback onPrivacy;
   final VoidCallback onMetadata;
 
   @override
@@ -801,7 +836,8 @@ class _SettingsDrawer extends StatelessWidget {
                   _sidebarNavTile(
                     title: 'Personal Profile',
                     iconAsset: 'assets/images/person.png',
-                    selected: selected == _SettingsDrawerSelection.personalProfile,
+                    selected:
+                        selected == _SettingsDrawerSelection.personalProfile,
                     onTap: onPersonalProfile,
                   ),
                   _sidebarNavTile(
@@ -816,9 +852,15 @@ class _SettingsDrawer extends StatelessWidget {
                     selected: selected == _SettingsDrawerSelection.company,
                     onTap: onCompany,
                   ),
+                  _sidebarNavTile(
+                    title: 'Privacy',
+                    iconAsset: 'assets/images/privacy.png',
+                    selected: selected == _SettingsDrawerSelection.privacy,
+                    onTap: onPrivacy,
+                  ),
                   _sectionLabelCaps('CUSTOMISATION'),
                   _sidebarNavTile(
-                    title: 'Meta Data',
+                    title: 'Module and Field',
                     iconAsset: 'assets/images/database (1).png',
                     selected: selected == _SettingsDrawerSelection.metadata,
                     onTap: onMetadata,
@@ -874,14 +916,17 @@ class _SettingsDrawer extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: AppFonts.bodyMedium(
-                      color: selected
-                          ? AppColors.inkStrong
-                          : const Color(0xFF525860),
-                    ).copyWith(
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                      fontSize: 15,
-                    ),
+                    style:
+                        AppFonts.bodyMedium(
+                          color: selected
+                              ? AppColors.inkStrong
+                              : const Color(0xFF525860),
+                        ).copyWith(
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          fontSize: 15,
+                        ),
                   ),
                 ),
               ],

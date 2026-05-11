@@ -4,8 +4,9 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
-import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/module_metadata_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 
 class MetadataSettingsPage extends StatefulWidget {
@@ -41,7 +42,7 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: AppColors.surface,
+      backgroundColor: AppColors.white,
       drawerEnableOpenDragGesture: true,
       drawer: _SettingsDrawer(
         selected: _SettingsDrawerSelection.metadata,
@@ -49,6 +50,7 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
         onPersonalProfile: () => _closeDrawerPush(PersonalProfilePage.path),
         onUsers: () => _closeDrawerPush(UsersSettingsPage.path),
         onCompany: () => _closeDrawerPush(CompanySettingsPage.path),
+        onPrivacy: () => _closeDrawerPush(PrivacySettingsPage.path),
         onMetadata: () => _scaffoldKey.currentState?.closeDrawer(),
       ),
       appBar: AppBar(
@@ -59,12 +61,12 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
           icon: const Icon(Icons.menu_rounded, color: AppColors.inkStrong),
         ),
         title: Text(
-          'Meta Data',
+          'Module and Field',
           style: AppFonts.titleMedium(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w700),
         ),
-        centerTitle: true,
+        // centerTitle: true,
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
           child: Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -72,29 +74,63 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
       ),
       body: SafeArea(
         top: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-              child: Text(
-                'SYSTEM METADATA',
-                style: AppFonts.labelMedium(color: const Color(0xFF9CA3AF))
-                    .copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.0,
-                ),
-              ),
+            Text(
+              'MODULE NAME',
+              style: AppFonts.labelMedium(
+                color: const Color(0xFF9CA3AF),
+              ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 1.0),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _MetadataNavTile(
-                title: 'Pin Status',
-                subtitle: 'Configuration',
-                onTap: () => context.push(PinStatusSettingsPage.path),
-              ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/projects.png",
+              title: 'Projects',
+              onTap: () => context.push(ProjectsMetadataPage.path),
             ),
-            const Spacer(),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/qoutations.png",
+              title: 'Quotations',
+              onTap: () => context.push(QuotationsMetadataPage.path),
+            ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/clients.png",
+              title: 'Client',
+              onTap: () {},
+            ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/sites.png",
+              title: 'Sites',
+              onTap: () {},
+            ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/contacts.png",
+              title: 'Contacts',
+              onTap: () {},
+            ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon:"assets/images/groups.png",
+              title: 'Groups',
+              onTap: () {},
+            ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/products.png",
+              title: 'Items',
+              onTap: () {},
+            ),
+            const SizedBox(height: 12),
+            _MetadataNavTile(
+              icon: "assets/images/products.png",
+              title: 'Composite Items',
+              onTap: () {},
+            ),
           ],
         ),
       ),
@@ -104,47 +140,54 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
 
 class _MetadataNavTile extends StatelessWidget {
   const _MetadataNavTile({
+    required this.icon,
     required this.title,
-    required this.subtitle,
     required this.onTap,
   });
 
+  final String icon;
   final String title;
-  final String subtitle;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: AppColors.white,
-      elevation: 0,
-      borderRadius: BorderRadius.circular(14),
+      elevation: 2,
+      borderRadius: BorderRadius.circular(24),
       shadowColor: AppColors.shadowCard,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(24),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            color: AppColors.white,
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: const Color(0xFFE5E7EB)),
+            boxShadow: const [
+              BoxShadow(
+                color: AppColors.shadowCard,
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ],
           ),
           child: Row(
             children: [
               Container(
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: AppColors.surfaceHigh,
+                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xFFF3F4F6),
                 ),
-                child: const Icon(
-                  Icons.push_pin_rounded,
-                  size: 18,
-                  color: Color(0xFF2563EB),
+                child: Padding(
+                  padding: const EdgeInsets.all(7.0),
+                  child: Image.asset(icon, height: 15, width:15,color: const Color(0xFF4B5563)),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,22 +200,18 @@ class _MetadataNavTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      subtitle.toUpperCase(),
-                      style: AppFonts.labelSmall(
-                        color: const Color(0xFF9CA3AF),
-                      ).copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
+                      'OCT 12, 2023  14:20 PM',
+                      style: AppFonts.labelSmall(color: const Color(0xFF9CA3AF))
+                          .copyWith(
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF9CA3AF),
-              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
             ],
           ),
         ),
@@ -181,7 +220,13 @@ class _MetadataNavTile extends StatelessWidget {
   }
 }
 
-enum _SettingsDrawerSelection { personalProfile, users, company, metadata }
+enum _SettingsDrawerSelection {
+  personalProfile,
+  users,
+  company,
+  privacy,
+  metadata,
+}
 
 class _SettingsDrawer extends StatelessWidget {
   const _SettingsDrawer({
@@ -190,6 +235,7 @@ class _SettingsDrawer extends StatelessWidget {
     required this.onPersonalProfile,
     required this.onUsers,
     required this.onCompany,
+    required this.onPrivacy,
     required this.onMetadata,
   });
 
@@ -198,6 +244,7 @@ class _SettingsDrawer extends StatelessWidget {
   final VoidCallback onPersonalProfile;
   final VoidCallback onUsers;
   final VoidCallback onCompany;
+  final VoidCallback onPrivacy;
   final VoidCallback onMetadata;
 
   @override
@@ -242,7 +289,8 @@ class _SettingsDrawer extends StatelessWidget {
                   _sidebarNavTile(
                     title: 'Personal Profile',
                     iconAsset: 'assets/images/person.png',
-                    selected: selected == _SettingsDrawerSelection.personalProfile,
+                    selected:
+                        selected == _SettingsDrawerSelection.personalProfile,
                     onTap: onPersonalProfile,
                   ),
                   _sidebarNavTile(
@@ -257,9 +305,15 @@ class _SettingsDrawer extends StatelessWidget {
                     selected: selected == _SettingsDrawerSelection.company,
                     onTap: onCompany,
                   ),
+                  _sidebarNavTile(
+                    title: 'Privacy',
+                    iconAsset: 'assets/images/privacy.png',
+                    selected: selected == _SettingsDrawerSelection.privacy,
+                    onTap: onPrivacy,
+                  ),
                   _sectionLabelCaps('CUSTOMISATION'),
                   _sidebarNavTile(
-                    title: 'Meta Data',
+                    title: 'Module and Field',
                     iconAsset: 'assets/images/database (1).png',
                     selected: selected == _SettingsDrawerSelection.metadata,
                     onTap: onMetadata,
@@ -315,14 +369,17 @@ class _SettingsDrawer extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: AppFonts.bodyMedium(
-                      color: selected
-                          ? AppColors.inkStrong
-                          : const Color(0xFF525860),
-                    ).copyWith(
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                      fontSize: 15,
-                    ),
+                    style:
+                        AppFonts.bodyMedium(
+                          color: selected
+                              ? AppColors.inkStrong
+                              : const Color(0xFF525860),
+                        ).copyWith(
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          fontSize: 15,
+                        ),
                   ),
                 ),
               ],

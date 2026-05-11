@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
@@ -399,7 +401,14 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
     } catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(
-        SnackBar(content: Text('Could not send invite: $e')),
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: AppStrings.apiErrorInviteUser,
+            ),
+          ),
+        ),
       );
     } finally {
       if (mounted) ui.setSubmitting(false);

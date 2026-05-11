@@ -16,18 +16,29 @@ import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.d
 import 'package:red5/features/dashboard/presentation/views/quote_details_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/module_metadata_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/change_password_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/password_updated_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/tags_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 import 'package:red5/features/clients/presentation/views/add_client_page.dart';
 import 'package:red5/features/clients/presentation/views/client_detail_page.dart';
+import 'package:red5/features/contacts/presentation/views/add_contact_page.dart';
+import 'package:red5/features/contacts/presentation/views/contact_detail_page.dart';
+import 'package:red5/features/groups/presentation/views/add_group_page.dart';
+import 'package:red5/features/groups/presentation/views/group_detail_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
 import 'package:red5/features/login/presentation/views/reset_password_page.dart';
 import 'package:red5/features/quote/presentation/views/quote_project_page.dart';
+import 'package:red5/features/sites/presentation/views/add_site_page.dart';
+import 'package:red5/features/sites/presentation/views/site_detail_page.dart';
 import 'package:red5/features/splash/presentation/views/splash_page.dart';
 
 /// Resolves `groups` from route [extra]: JSON list or in-memory [QuoteCompositeItemGroup] list.
@@ -52,7 +63,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     observers: <NavigatorObserver>[appRouteObserver],
     redirect: (context, state) {
       final storage = sl<LocalStorage>();
-      final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
+      final access = storage
+          .getString(LocalStorageKeys.authAccessToken)
+          ?.trim();
       final isLoggedIn = AuthSession.isJwtValid(access);
 
       final location = state.matchedLocation.trim();
@@ -174,6 +187,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: AddSitePage.path,
+        name: AddSitePage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddSitePage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${SiteDetailPage.pathPrefix}/:siteId',
+        name: SiteDetailPage.name,
+        pageBuilder: (context, state) {
+          final siteId = (state.pathParameters['siteId'] ?? '').trim();
+          return _animatedPage(
+            state: state,
+            child: SiteDetailPage(siteId: siteId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: '${ClientDetailPage.pathPrefix}/:clientId',
         name: ClientDetailPage.name,
         pageBuilder: (context, state) {
@@ -181,6 +215,48 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return _animatedPage(
             state: state,
             child: ClientDetailPage(clientId: clientId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: AddContactPage.path,
+        name: AddContactPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddContactPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${ContactDetailPage.pathPrefix}/:contactId',
+        name: ContactDetailPage.name,
+        pageBuilder: (context, state) {
+          final contactId = (state.pathParameters['contactId'] ?? '').trim();
+          return _animatedPage(
+            state: state,
+            child: ContactDetailPage(contactId: contactId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: AddGroupPage.path,
+        name: AddGroupPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddGroupPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${GroupDetailPage.pathPrefix}/:groupId',
+        name: GroupDetailPage.name,
+        pageBuilder: (context, state) {
+          final groupId = (state.pathParameters['groupId'] ?? '').trim();
+          return _animatedPage(
+            state: state,
+            child: GroupDetailPage(groupId: groupId),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -255,7 +331,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             summary = extra;
           }
           final id = state.pathParameters['projectId'] ?? '';
-          summary ??= QuoteSummary(id: id, quoteName: 'Project', quoteNumber: '—');
+          summary ??= QuoteSummary(
+            id: id,
+            quoteName: 'Project',
+            quoteNumber: '—',
+          );
           return _animatedPage(
             state: state,
             child: ProjectDetailsPage(project: summary),
@@ -386,8 +466,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             if (desc is String && desc.trim().isNotEmpty) {
               initialProjectDescription = desc.trim();
             }
-            if (sd is String && sd.trim().isNotEmpty) initialStartDate = sd.trim();
-            if (ed is String && ed.trim().isNotEmpty) initialEndDate = ed.trim();
+            if (sd is String && sd.trim().isNotEmpty)
+              initialStartDate = sd.trim();
+            if (ed is String && ed.trim().isNotEmpty)
+              initialEndDate = ed.trim();
             if (u is String && u.trim().isNotEmpty) initialPdfUrl = u.trim();
             if (n is String && n.trim().isNotEmpty) initialPdfName = n.trim();
             if (pr is List) {
@@ -482,12 +564,66 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: ProjectsMetadataPage.path,
+        name: ProjectsMetadataPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const ProjectsMetadataPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: QuotationsMetadataPage.path,
+        name: QuotationsMetadataPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const QuotationsMetadataPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
         path: PinStatusSettingsPage.path,
         name: PinStatusSettingsPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
           child: const PinStatusSettingsPage(),
           beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: TagsSettingsPage.path,
+        name: TagsSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const TagsSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: PrivacySettingsPage.path,
+        name: PrivacySettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const PrivacySettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: ChangePasswordPage.path,
+        name: ChangePasswordPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const ChangePasswordPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: PasswordUpdatedPage.path,
+        name: PasswordUpdatedPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const PasswordUpdatedPage(),
+          beginOffset: const Offset(0, 0.08),
         ),
       ),
     ],

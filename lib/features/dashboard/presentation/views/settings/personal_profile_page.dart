@@ -1,8 +1,10 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
@@ -10,35 +12,39 @@ import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
 /// Personal profile + RED 5 sidebar; edit mode adds multi phone/email, add rows, save.
-class PersonalProfilePage extends StatefulWidget {
+class PersonalProfilePage extends ConsumerStatefulWidget {
   const PersonalProfilePage({super.key});
 
   static const path = '/settings/personal-profile';
   static const name = 'settings-personal-profile';
 
   @override
-  State<PersonalProfilePage> createState() => _PersonalProfilePageState();
+  ConsumerState<PersonalProfilePage> createState() =>
+      _PersonalProfilePageState();
 }
 
-class _PersonalProfilePageState extends State<PersonalProfilePage> {
+class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   final ImagePicker _imagePicker = ImagePicker();
   Uint8List? _profilePhotoBytes;
   bool _photoPickInFlight = false;
 
-  final _firstNameController = TextEditingController(text: 'John');
-  final _lastNameController = TextEditingController(text: 'Doe');
-  final _roleController = TextEditingController(text: 'Site Supervisor');
-  final _dobController = TextEditingController(text: '01/01/1990');
-  final _addr1Controller = TextEditingController(text: '123 Industrial Way');
-  final _addr2Controller = TextEditingController(text: 'Suite 400');
-  final _cityController = TextEditingController(text: 'San Francisco');
-  final _stateController = TextEditingController(text: 'California');
-  final _zipController = TextEditingController(text: '94105');
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _roleController = TextEditingController();
+  final _dobController = TextEditingController();
+  final _addr1Controller = TextEditingController();
+  final _addr2Controller = TextEditingController();
+  final _cityController = TextEditingController();
+  final _stateController = TextEditingController();
+  final _zipController = TextEditingController();
 
   late final List<TextEditingController> _phoneControllers;
   late final List<TextEditingController> _emailControllers;
@@ -58,17 +64,82 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
   bool _editable = false;
   bool _showExtraAddress = false;
 
+  /// `/user-profile/` state.
+  UserProfileModel? _profile;
+  String? _profileId;
+  bool _loading = true;
+  bool _saving = false;
+  String? _loadError;
+  String? _photoUrl;
+
   @override
   void initState() {
     super.initState();
-    _phoneControllers = [
-      TextEditingController(text: '+1 (555) 000-1234'),
-      TextEditingController(text: '+1 (555) 000-1234'),
-    ];
-    _emailControllers = [
-      TextEditingController(text: 'john.doe@acmeconstruction.com'),
-    ];
+    _phoneControllers = [TextEditingController()];
+    _emailControllers = [TextEditingController()];
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadProfile());
   }
+
+  Future<void> _loadProfile() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final api = ref.read(userProfileApiClientProvider);
+      final profile = await api.fetchCurrentProfile();
+      if (!mounted) return;
+      if (profile == null) {
+        setState(() {
+          _loading = false;
+          _loadError = 'No profile found.';
+        });
+        return;
+      }
+      _applyProfile(profile);
+      setState(() => _loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = ApiResponseMessage.fromAnyError(e);
+      });
+    }
+  }
+
+  void _applyProfile(UserProfileModel profile) {
+    _profile = profile;
+    _profileId = profile.id;
+    _firstNameController.text = profile.firstName;
+    _lastNameController.text = profile.lastName;
+    _roleController.text = profile.role;
+    _dobController.text = profile.dateOfBirth;
+    _addr1Controller.text = profile.addressLine1;
+    _addr2Controller.text = profile.addressLine2;
+    _cityController.text = profile.city;
+    _stateController.text = profile.state;
+    _zipController.text = profile.postalCode;
+
+    _phoneControllers
+      ..forEach((c) => c.dispose())
+      ..clear();
+    final phone = profile.phoneNumber;
+    _phoneControllers.add(TextEditingController(text: phone));
+
+    _emailControllers
+      ..forEach((c) => c.dispose())
+      ..clear();
+    _emailControllers.add(TextEditingController(text: profile.email));
+
+    final gender = profile.gender;
+    if (_genderOptions.contains(gender)) {
+      _gender = gender;
+    }
+    _photoUrl = profile.userImage.isEmpty ? null : profile.userImage;
+  }
+
+  static const _genderOptions = <String>['Male', 'Female', 'Other'];
 
   @override
   void dispose() {
@@ -111,13 +182,65 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
     });
   }
 
-  void _toggleEdit() => setState(() => _editable = !_editable);
+  void _toggleEdit() {
+    if (_loading || _saving) return;
+    if (_editable) {
+      _saveChanges();
+      return;
+    }
+    setState(() => _editable = true);
+  }
 
-  void _saveChanges() {
-    setState(() => _editable = false);
-    context.showTopSnackBar(
-      const SnackBar(content: Text('Profile changes saved')),
-    );
+  Future<void> _saveChanges() async {
+    final profileId = _profileId;
+    if (profileId == null || profileId.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Profile not loaded yet.')),
+      );
+      return;
+    }
+    if (_saving) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _saving = true);
+    try {
+      final api = ref.read(userProfileApiClientProvider);
+      final phone = _phoneControllers.isEmpty
+          ? ''
+          : _phoneControllers.first.text.trim();
+      final email = _emailControllers.isEmpty
+          ? ''
+          : _emailControllers.first.text.trim();
+      final updated = await api.updateProfile(
+        id: profileId,
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        email: email,
+        phoneNumber: phone,
+        gender: _gender,
+        role: _roleController.text.trim(),
+        dateOfBirth: _dobController.text.trim(),
+        addressLine1: _addr1Controller.text.trim(),
+        addressLine2: _addr2Controller.text.trim(),
+        city: _cityController.text.trim(),
+        state: _stateController.text.trim(),
+        postalCode: _zipController.text.trim(),
+      );
+      if (!mounted) return;
+      _applyProfile(updated);
+      setState(() {
+        _saving = false;
+        _editable = false;
+      });
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Profile updated successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      context.showTopSnackBar(
+        SnackBar(content: Text(ApiResponseMessage.fromAnyError(e))),
+      );
+    }
   }
 
   void _addPhone() {
@@ -233,17 +356,25 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                       ),
                     ),
                   ),
-                  const Divider(height: 1, thickness: 1, color: Color(0xFFEAEAEC)),
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: Color(0xFFEAEAEC),
+                  ),
                   ListTile(
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 22,
                       vertical: 4,
                     ),
-                    leading: Icon(Icons.photo_camera_outlined, color: AppColors.inkStrong),
+                    leading: Icon(
+                      Icons.photo_camera_outlined,
+                      color: AppColors.inkStrong,
+                    ),
                     title: Text(
                       'Take photo',
-                      style: AppFonts.bodyLarge(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w500),
+                      style: AppFonts.bodyLarge(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500),
                     ),
                     onTap: () async {
                       Navigator.of(ctx).pop();
@@ -261,8 +392,9 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                     ),
                     title: Text(
                       'Choose from gallery',
-                      style: AppFonts.bodyLarge(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w500),
+                      style: AppFonts.bodyLarge(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500),
                     ),
                     onTap: () async {
                       Navigator.of(ctx).pop();
@@ -287,7 +419,10 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                       ),
                       onTap: () {
                         Navigator.of(ctx).pop();
-                        setState(() => _profilePhotoBytes = null);
+                        setState(() {
+                          _profilePhotoBytes = null;
+                          _photoUrl = null;
+                        });
                       },
                     ),
                   Padding(
@@ -470,8 +605,16 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
     );
   }
 
+  ImageProvider? _avatarImage() {
+    if (_profilePhotoBytes != null) return MemoryImage(_profilePhotoBytes!);
+    final url = _photoUrl;
+    if (url != null && url.isNotEmpty) return NetworkImage(url);
+    return null;
+  }
+
   Widget _profileHeader() {
-    final hasPhoto = _profilePhotoBytes != null;
+    final avatar = _avatarImage();
+    final hasPhoto = avatar != null;
     final photoReady = _editable;
 
     void openPick() {
@@ -498,7 +641,7 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                       CircleAvatar(
                         radius: 54,
                         backgroundColor: const Color(0xFFE5E7EB),
-                        backgroundImage: hasPhoto ? MemoryImage(_profilePhotoBytes!) : null,
+                        backgroundImage: avatar,
                         child: !hasPhoto
                             ? Icon(
                                 Icons.person_rounded,
@@ -581,7 +724,10 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
   Widget _genderDropdown() {
     return InputDecorator(
       decoration: _fieldDecoration(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 12,
+        ),
       ),
       child: DropdownButtonHideUnderline(
         child: SizedBox(
@@ -597,7 +743,7 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
             style: _fieldTextStyle(),
             dropdownColor: AppColors.white,
             padding: EdgeInsets.zero,
-            items: ['Male', 'Female', 'Other']
+            items: _genderOptions
                 .map(
                   (e) => DropdownMenuItem<String>(
                     value: e,
@@ -713,8 +859,6 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = _editable;
-
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: AppColors.white,
@@ -774,9 +918,15 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                       selected: false,
                       onTap: () => _closeDrawerPush(CompanySettingsPage.path),
                     ),
+                    _sidebarNavTile(
+                      title: 'Privacy',
+                      iconAsset: 'assets/images/privacy.png',
+                      selected: false,
+                      onTap: () => _closeDrawerPush(PrivacySettingsPage.path),
+                    ),
                     _sectionLabelCaps('CUSTOMISATION'),
                     _sidebarNavTile(
-                      title: 'Meta Data',
+                      title: 'Module and Field',
                       iconAsset: 'assets/images/database (1).png',
                       selected: false,
                       onTap: () => _closeDrawerPush(MetadataSettingsPage.path),
@@ -812,7 +962,16 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                   width: 40,
                   height: 40,
                   child: Center(
-                    child: _editable
+                    child: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.inkStrong,
+                            ),
+                          )
+                        : _editable
                         ? const Icon(
                             Icons.check_rounded,
                             size: 22,
@@ -841,9 +1000,61 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
           child: Divider(height: 1, thickness: 1, color: Color(0xFFE2E2E4)),
         ),
       ),
-      body: ListView(
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null && _profile == null) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              color: AppColors.inkStrong,
+              size: 48,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _loadError!,
+              textAlign: TextAlign.center,
+              style: AppFonts.bodyMedium(color: AppColors.inkStrong),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _loadProfile,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.inkStrong,
+                foregroundColor: AppColors.white,
+              ),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final enabled = _editable;
+    return RefreshIndicator(
+      onRefresh: _loadProfile,
+      child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         children: [
+          _buildFormBody(enabled),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFormBody(bool enabled) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
           _profileHeader(),
           const SizedBox(height: 28),
           _sectionHeader('BASIC INFO'),
@@ -1089,7 +1300,7 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
               width: double.infinity,
               height: 52,
               child: FilledButton(
-                onPressed: _saveChanges,
+                onPressed: _saving ? null : _saveChanges,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF121212),
                   foregroundColor: AppColors.white,
@@ -1097,17 +1308,25 @@ class _PersonalProfilePageState extends State<PersonalProfilePage> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: Text(
-                  'Save Changes',
-                  style: AppFonts.titleSmall(
-                    color: AppColors.white,
-                  ).copyWith(fontWeight: FontWeight.w700),
-                ),
+                child: _saving
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        'Save Changes',
+                        style: AppFonts.titleSmall(
+                          color: AppColors.white,
+                        ).copyWith(fontWeight: FontWeight.w700),
+                      ),
               ),
             ),
           ],
         ],
-      ),
-    );
+      );
   }
 }

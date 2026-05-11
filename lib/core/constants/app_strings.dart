@@ -105,4 +105,12 @@ class AppStrings {
   static const apiErrorLoadQuote = 'Could not load this quote.';
   static const apiErrorOpenCreateQuote =
       'Could not open Create Quote.';
+  static const apiErrorSendOtp = 'Could not send OTP. Please try again.';
+  static const apiErrorResendOtp = 'Could not resend OTP. Please try again.';
+  static const apiErrorVerifyOtp =
+      'Could not verify the OTP. Please try again.';
+  static const apiErrorForgotPassword =
+      'Could not send the password reset code. Please try again.';
+  static const apiErrorInviteUser =
+      'Could not send invitation. Please try again.';
 }

@@ -6,6 +6,7 @@ import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 
 /// Full-screen settings hub. Sub-pages are pushed on top so [context.pop]
@@ -62,13 +63,16 @@ class SettingsPage extends StatelessWidget {
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 14),
                       ),
-                      icon: const Icon(Icons.close, size: 18, color: Colors.white),
+                      icon: const Icon(
+                        Icons.close,
+                        size: 18,
+                        color: Colors.white,
+                      ),
                       label: Text(
                         'Close',
-                        style: AppFonts.bodyMedium(color: Colors.white).copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
-                        ),
+                        style: AppFonts.bodyMedium(
+                          color: Colors.white,
+                        ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
                       ),
                     ),
                   ),
@@ -103,6 +107,11 @@ class SettingsPage extends StatelessWidget {
                 title: 'Company Settings',
                 route: CompanySettingsPage.path,
               ),
+              const _SettingsMenuRow(
+                iconAsset: 'assets/images/privacy.png',
+                title: 'Privacy',
+                route: PrivacySettingsPage.path,
+              ),
               const SizedBox(height: 20),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -119,7 +128,7 @@ class SettingsPage extends StatelessWidget {
               const SizedBox(height: 8),
               const _SettingsMenuRow(
                 iconAsset: 'assets/images/database (1).png',
-                title: 'Meta Data',
+                title: 'Module and Field',
                 route: MetadataSettingsPage.path,
               ),
               SizedBox(height: MediaQuery.of(context).padding.bottom + 16),

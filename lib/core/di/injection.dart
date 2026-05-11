@@ -7,10 +7,14 @@ import 'package:red5/core/network/auth_bearer_interceptor.dart';
 import 'package:red5/core/network/dio_multipart_transfer.dart';
 import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
+import 'package:red5/features/contacts/data/contacts_api_client.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api.dart';
+import 'package:red5/features/groups/data/groups_api_client.dart';
 import 'package:red5/features/dashboard/data/invite_user_service.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
+import 'package:red5/features/sites/data/sites_api_client.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -85,6 +89,69 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     return ClientsApiClient(dio: dio);
   });
 
+  sl.registerLazySingleton<SitesApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll([
+      AuthBearerInterceptor(storage),
+      ApiDioLogInterceptor(),
+    ]);
+    return SitesApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<ContactsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll([
+      AuthBearerInterceptor(storage),
+      ApiDioLogInterceptor(),
+    ]);
+    return ContactsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<GroupsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll([
+      AuthBearerInterceptor(storage),
+      ApiDioLogInterceptor(),
+    ]);
+    return GroupsApiClient(dio: dio);
+  });
+
   sl.registerLazySingleton<QuoteProjectApiClient>(() {
     final storage = sl<LocalStorage>();
     final dio = Dio(
@@ -103,9 +170,30 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     return QuoteProjectApiClient(dio: dio);
   });
 
-  sl.registerLazySingleton<DioMultipartTransfer>(
-    DioMultipartTransfer.new,
-  );
+  sl.registerLazySingleton<UserProfileApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll([
+      AuthBearerInterceptor(storage),
+      ApiDioLogInterceptor(),
+    ]);
+    return UserProfileApiClient(dio: dio);
+  });
 
-  sl.registerLazySingleton<InviteUserService>(InviteUserServiceStub.new);
+  sl.registerLazySingleton<DioMultipartTransfer>(DioMultipartTransfer.new);
+
+  sl.registerLazySingleton<InviteUserService>(
+    () => InviteUserApiService(sl<AuthApiClient>()),
+  );
 }

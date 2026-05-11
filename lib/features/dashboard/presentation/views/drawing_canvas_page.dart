@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -56,6 +55,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   List<CompositeItemOption> _productOptions = const <CompositeItemOption>[];
   int? _selectedGroupId;
   int? _selectedCompositeItemId;
+  int? _selectedPlotRegionIndex;
   bool _isLoadingGroups = false;
   bool _isLoadingCompositeItems = false;
   static const List<Color> _regionPalette = <Color>[
@@ -448,69 +448,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
   }
 
-  Future<void> _pickMultiplePdfs() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['pdf'],
-      allowMultiple: true,
-      withData: false,
-    );
-    if (!mounted || result == null || result.files.isEmpty) return;
-
-    final pickedPaths = result.files
-        .map((file) => (file.path ?? '').trim())
-        .where((path) => path.isNotEmpty)
-        .toList();
-    if (pickedPaths.isEmpty) return;
-
-    _persistActiveRegionsToCache();
-
-    final keySeen = <String>{};
-    final merged = <String>[];
-    for (final p in _uploadedPdfPaths) {
-      final k = _pdfStorageKey(p);
-      if (keySeen.add(k)) merged.add(k);
-    }
-    for (final p in pickedPaths) {
-      final k = _pdfStorageKey(p);
-      if (keySeen.add(k)) merged.add(k);
-    }
-    final selectedPath = _pdfStorageKey(pickedPaths.first);
-
-    _pdfController?.dispose();
-    final nextController = PdfControllerPinch(
-      document: PdfDocument.openFile(selectedPath),
-    );
-
-    final restored = _regionsByPdfPath[selectedPath];
-    final restoredLines = _linesByPdfPath[selectedPath];
-
-    setState(() {
-      _uploadedPdfPaths
-        ..clear()
-        ..addAll(merged);
-      _activeFilePath = selectedPath;
-      _pdfController = nextController;
-      _regions
-        ..clear()
-        ..addAll(restored != null ? _snapshotRegions(restored) : []);
-      _canvasLines
-        ..clear()
-        ..addAll(
-          restoredLines != null
-              ? List<_CanvasLine>.from(restoredLines)
-              : <_CanvasLine>[],
-        );
-      _activeRegionIndex = null;
-      _draftStart = null;
-      _draftCurrent = null;
-      _movingRegionIndex = null;
-      _regionMoveAnchorScene = null;
-      _selectAreaPointerDown = false;
-    });
-    unawaited(_refreshActiveContentAspectRatio());
-  }
-
   void _switchActivePdf(String path) {
     final trimmed = _pdfStorageKey(path);
     if (trimmed.isEmpty || trimmed == _activeFilePath) return;
@@ -753,6 +690,55 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
   }
 
+  /// Whether the API/website expects a rotated (landscape) coordinate frame
+  /// for the currently active PDF page.
+  ///
+  /// The website always renders drawings in landscape orientation. When the
+  /// PDF page itself is portrait-natural (`width < height`) the mobile mark-up
+  /// (made on a portrait viewport) must be rotated 90° before being sent to
+  /// the backend so the website draws plots/pins at the exact same physical
+  /// location. PDFs that are already landscape-natural need no rotation.
+  bool get _shouldApplyLandscapeRotation {
+    final ratio = _activeContentAspectRatio;
+    if (ratio == null || !ratio.isFinite || ratio <= 0) return false;
+    return ratio < 1.0;
+  }
+
+  /// Rotation direction used when bridging mobile (portrait) mark-up to the
+  /// website's landscape orientation. Flip to `false` if the website rotates
+  /// the page counter-clockwise instead of clockwise.
+  static const bool _kRotateLandscapeClockwise = true;
+
+  /// Converts a portrait-relative normalized point `(0..1, 0..1)` (as produced
+  /// by [_normalizeScenePoint]) into the landscape-relative normalized frame
+  /// the website / backend expects. No-op when the page is not portrait.
+  Offset _portraitNormToLandscapeApi(Offset portraitNorm) {
+    if (!_shouldApplyLandscapeRotation) return portraitNorm;
+    final px = portraitNorm.dx.clamp(0.0, 1.0);
+    final py = portraitNorm.dy.clamp(0.0, 1.0);
+    if (_kRotateLandscapeClockwise) {
+      // 90° clockwise: portrait top-left -> landscape top-right.
+      return Offset(1.0 - py, px);
+    }
+    // 90° counter-clockwise: portrait top-left -> landscape bottom-left.
+    return Offset(py, 1.0 - px);
+  }
+
+  /// Inverse of [_portraitNormToLandscapeApi]: converts a landscape-relative
+  /// normalized point received from the backend into the mobile portrait
+  /// frame so [_denormalizeScenePoint] can place it under the user's finger.
+  Offset _landscapeApiToPortraitNorm(Offset landscapeNorm) {
+    if (!_shouldApplyLandscapeRotation) return landscapeNorm;
+    final lx = landscapeNorm.dx.clamp(0.0, 1.0);
+    final ly = landscapeNorm.dy.clamp(0.0, 1.0);
+    if (_kRotateLandscapeClockwise) {
+      // Inverse of 90° CW.
+      return Offset(ly, 1.0 - lx);
+    }
+    // Inverse of 90° CCW.
+    return Offset(1.0 - ly, lx);
+  }
+
   Future<void> _refreshActiveContentAspectRatio() async {
     final path = (_activeFilePath ?? '').trim();
     if (path.isEmpty || !File(path).existsSync()) return;
@@ -790,8 +776,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (x.abs() > 1 || y.abs() > 1) {
       return pixelCandidate;
     }
-    // Only treat as normalized fractions when values are in [0..1].
-    return _denormalizeScenePoint(x, y);
+    // API stores normalized values in landscape orientation; rotate back into
+    // the portrait frame the mobile canvas paints in before denormalizing.
+    final portraitNorm = _landscapeApiToPortraitNorm(Offset(x, y));
+    return _denormalizeScenePoint(portraitNorm.dx, portraitNorm.dy);
   }
 
   void _applyPinScenePosition(_PinHit hit, Offset scene) {
@@ -1040,10 +1028,21 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     final p = scenePoint;
     int? targetIndex;
-    for (var i = _regions.length - 1; i >= 0; i--) {
-      if (_regionContainsPoint(_regions[i], p)) {
-        targetIndex = i;
-        break;
+    final selectedPlotIndex = _selectedPlotRegionIndex;
+    if (selectedPlotIndex != null &&
+        selectedPlotIndex >= 0 &&
+        selectedPlotIndex < _regions.length) {
+      if (!_regionContainsPoint(_regions[selectedPlotIndex], p)) {
+        _showTopToast('Pin must be inside selected plot');
+        return;
+      }
+      targetIndex = selectedPlotIndex;
+    } else {
+      for (var i = _regions.length - 1; i >= 0; i--) {
+        if (_regionContainsPoint(_regions[i], p)) {
+          targetIndex = i;
+          break;
+        }
       }
     }
     if (targetIndex == null) {
@@ -1581,7 +1580,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       }
       if (x == null || y == null) continue;
       if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
-        points.add(_denormalizeScenePoint(x, y));
+        // Rotate landscape API coords back to portrait before denormalizing.
+        final portraitNorm = _landscapeApiToPortraitNorm(Offset(x, y));
+        points.add(_denormalizeScenePoint(portraitNorm.dx, portraitNorm.dy));
       } else {
         points.add(Offset(x, y));
       }
@@ -1659,11 +1660,14 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         final pins = <Map<String, dynamic>>[];
         for (var p = 0; p < region.pins.length; p++) {
           final pin = region.pins[p];
-          final normalizedPin = _normalizeScenePoint(pin.offset);
+          // Capture in the portrait frame the user marked, then rotate into
+          // the landscape frame the website renders against.
+          final portraitNorm = _normalizeScenePoint(pin.offset);
+          final landscapeNorm = _portraitNormToLandscapeApi(portraitNorm);
           pins.add(<String, dynamic>{
             if (pin.serverPinId != null) 'id': pin.serverPinId,
-            'x_coordinate': normalizedPin.dx,
-            'y_coordinate': normalizedPin.dy,
+            'x_coordinate': landscapeNorm.dx,
+            'y_coordinate': landscapeNorm.dy,
             'status': pin.statusId ?? _statusIdByName(pin.status),
             'group': pin.groupId,
             'item': pin.compositeItemId,
@@ -1682,8 +1686,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               ];
         final normalizedCoordinates = coordinatePoints
             .map((p) {
-              final n = _normalizeScenePoint(p);
-              return <double>[n.dx, n.dy];
+              final portraitNorm = _normalizeScenePoint(p);
+              final landscapeNorm = _portraitNormToLandscapeApi(portraitNorm);
+              return <double>[landscapeNorm.dx, landscapeNorm.dy];
             })
             .toList(growable: false);
         plotsPayload.add(<String, dynamic>{
@@ -2411,76 +2416,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               top: false,
               child: Column(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 48,
-                          child: FilledButton.icon(
-                            onPressed: _pickMultiplePdfs,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF0F1013),
-                              foregroundColor: AppColors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                            icon: const Icon(Icons.upload_file, size: 18),
-                            label: Text(
-                              'Upload PDF',
-                              style: AppFonts.titleSmall(
-                                color: AppColors.white,
-                              ).copyWith(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: SizedBox(
-                          height: 48,
-                          child: FilledButton.icon(
-                            onPressed: _isSubmitting ? null : _submitLevelPlots,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF0F1013),
-                              foregroundColor: AppColors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                            icon: const Icon(Icons.send_rounded, size: 18),
-                            label: Text(
-                              _isSubmitting ? 'Saving...' : 'Submit',
-                              style: AppFonts.titleSmall(
-                                color: AppColors.white,
-                              ).copyWith(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: AppTextField(
-                          controller: _blockController,
-                          hintText: 'Block :',
-                          fillColor: const Color(0xFFF2F2F3),
-                          borderRadius: 12,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: AppTextField(
-                          controller: _levelController,
-                          hintText: 'Level :',
-                          fillColor: const Color(0xFFF2F2F3),
-                          borderRadius: 12,
-                        ),
-                      ),
-                    ],
+                  AppTextField(
+                    controller: _blockController,
+                    hintText: 'Name :',
+                    fillColor: const Color(0xFFF2F2F3),
+                    borderRadius: 12,
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
@@ -2514,7 +2454,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       unawaited(_loadCompositeItemsForGroup(value));
                     },
                     decoration: InputDecoration(
-                      hintText: _isLoadingGroups ? 'Loading groups...' : 'Group',
+                      hintText: _isLoadingGroups ? 'Loading groups...' : 'Group :',
                       filled: true,
                       fillColor: const Color(0xFFF2F2F3),
                       contentPadding: const EdgeInsets.symmetric(
@@ -2561,8 +2501,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       hintText: _selectedGroupId == null
                           ? 'Select group first'
                           : (_isLoadingCompositeItems
-                                ? 'Loading composite items...'
-                                : 'Composite Item'),
+                                ? 'Loading products...'
+                                : 'Product :'),
                       filled: true,
                       fillColor: const Color(0xFFF2F2F3),
                       contentPadding: const EdgeInsets.symmetric(
@@ -2572,6 +2512,63 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       border: const OutlineInputBorder(
                         borderRadius: BorderRadius.all(Radius.circular(12)),
                         borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: (_selectedPlotRegionIndex != null &&
+                            _selectedPlotRegionIndex! >= 0 &&
+                            _selectedPlotRegionIndex! < _regions.length)
+                        ? _selectedPlotRegionIndex
+                        : null,
+                    items: List<DropdownMenuItem<int>>.generate(
+                      _regions.length,
+                      (index) => DropdownMenuItem<int>(
+                        value: index,
+                        child: Text(
+                          _shortPlotName(_regions[index].name).trim().isEmpty
+                              ? 'Plot ${index + 1}'
+                              : _shortPlotName(_regions[index].name),
+                        ),
+                      ),
+                    ),
+                    onChanged: _regions.isEmpty
+                        ? null
+                        : (value) => setState(() => _selectedPlotRegionIndex = value),
+                    decoration: const InputDecoration(
+                      hintText: 'Plot :',
+                      filled: true,
+                      fillColor: Color(0xFFF2F2F3),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(12)),
+                        borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: _isSubmitting ? null : _submitLevelPlots,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F1013),
+                        foregroundColor: AppColors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.send_rounded, size: 18),
+                      label: Text(
+                        _isSubmitting ? 'Saving...' : 'Submit',
+                        style: AppFonts.titleSmall(
+                          color: AppColors.white,
+                        ).copyWith(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),

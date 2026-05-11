@@ -69,6 +69,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _rememberMe = false;
   bool _hidePassword = true;
   bool _isSigningIn = false;
+  bool _isSendingOtp = false;
 
   static const _onboardingSlideCount = 3;
 
@@ -300,14 +301,37 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     if (!(_mobileOtpFormKey.currentState?.validate() ?? false)) {
       return;
     }
-    if (!mounted) return;
+    if (_isSendingOtp) return;
     final email = _emailController.text.trim();
-    context.push(
-      Uri(
-        path: OtpVerifyPage.path,
-        queryParameters: {'email': email},
-      ).toString(),
-    );
+    setState(() => _isSendingOtp = true);
+    try {
+      final client = ref.read(authApiClientProvider);
+      await client.sendOtp(
+        email: email,
+        extraFields: const {'purpose': 'login'},
+      );
+      if (!mounted) return;
+      context.push(
+        Uri(
+          path: OtpVerifyPage.path,
+          queryParameters: {'email': email},
+        ).toString(),
+      );
+    } on DioException catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromDioException(
+              e,
+              genericFallback: AppStrings.apiErrorSendOtp,
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSendingOtp = false);
+    }
   }
 
   void _goToMobileOtpPane() {
@@ -589,10 +613,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               height: 52,
               child: FilledButton(
                 key: LoginPage.sendOtpButtonKey,
-                onPressed: () => unawaited(_onSendOtp()),
+                onPressed: _isSendingOtp ? null : () => unawaited(_onSendOtp()),
                 style: FilledButton.styleFrom(
                   backgroundColor: _mobileDark,
                   foregroundColor: AppColors.white,
+                  disabledBackgroundColor: _mobileDark.withValues(alpha: 0.45),
+                  disabledForegroundColor: AppColors.white.withValues(
+                    alpha: 0.7,
+                  ),
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(11),
@@ -602,7 +630,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     fontSize: 16,
                   ),
                 ),
-                child: const Text(AppStrings.loginSendOtpCode),
+                child: Text(
+                  _isSendingOtp ? 'Sending…' : AppStrings.loginSendOtpCode,
+                ),
               ),
             ),
             const SizedBox(height: 12),

@@ -21,6 +21,21 @@ abstract final class AppApiUrls {
   /// `POST` [auth_token_refresh_create]
   static const String authTokenRefresh = '$_v1/auth/token/refresh/';
 
+  /// `POST` [auth_forgot-password_create]
+  static const String authForgotPassword = '$_v1/auth/forgot-password/';
+
+  /// `POST` [auth_invite-user_create]
+  static const String authInviteUser = '$_v1/auth/invite-user/';
+
+  /// `POST` [auth_send-otp_create]
+  static const String authSendOtp = '$_v1/auth/send-otp/';
+
+  /// `POST` [auth_resend-otp_create]
+  static const String authResendOtp = '$_v1/auth/resend-otp/';
+
+  /// `POST` [auth_verify-otp_create]
+  static const String authVerifyOtp = '$_v1/auth/verify-otp/';
+
   // ─── Clients ─────────────────────────────────────────────────────────────
 
   /// `GET` [clients_list] · `POST` [clients_create]
@@ -28,6 +43,14 @@ abstract final class AppApiUrls {
 
   /// `GET` [clients_read] · `PUT` [clients_update] · `PATCH` [clients_partial_update] · `DELETE` [clients_delete]
   static String clientsById(String id) => '$_v1/clients/$id/';
+
+  // ─── Contacts ─────────────────────────────────────────────────────────────
+
+  /// `GET` [contact_list] · `POST` [contact_create]
+  static const String contacts = '$_v1/contact/';
+
+  /// `GET` [contact_read] · `PUT` [contact_update] · `PATCH` [contact_partial_update] · `DELETE` [contact_delete]
+  static String contactById(String id) => '$_v1/contact/$id/';
 
   // ─── Composite item ──────────────────────────────────────────────────────
 
@@ -76,4 +99,12 @@ abstract final class AppApiUrls {
   /// `GET` [project_level_read] · `PUT` [project_level_update] · `PATCH` [project_level_partial_update] · `DELETE` [project_level_delete]
   static String projectLevelById(String projectId, String id) =>
       '$_v1/project/$projectId/level/$id/';
+
+  // ─── User profile ─────────────────────────────────────────────────────────
+
+  /// `GET` [user-profile_list]
+  static const String userProfiles = '$_v1/user-profile/';
+
+  /// `GET` [user-profile_read] · `PUT` [user-profile_update] · `PATCH` [user-profile_partial_update]
+  static String userProfileById(String id) => '$_v1/user-profile/$id/';
 }

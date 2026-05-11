@@ -1,28 +1,34 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/constants/app_image_string.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
 import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
 
 /// Request password reset email / OTP — same dark header + white sheet layout as login.
-class ForgotPasswordPage extends StatefulWidget {
+class ForgotPasswordPage extends ConsumerStatefulWidget {
   const ForgotPasswordPage({super.key});
 
   static const path = '/login/forgot-password';
   static const name = 'forgotPassword';
 
   @override
-  State<ForgotPasswordPage> createState() => _ForgotPasswordPageState();
+  ConsumerState<ForgotPasswordPage> createState() =>
+      _ForgotPasswordPageState();
 }
 
-class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
+class _ForgotPasswordPageState extends ConsumerState<ForgotPasswordPage> {
   static const _mobileDark = Color(0xFF111111);
   static const _mobileSubtextGray = Color(0xFF666666);
   static const _mobileBorder = Color(0xFFE0E0E0);
@@ -146,10 +152,15 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   Future<void> _onSendResetOtp() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_isSending) return;
+    final email = _emailController.text.trim();
     setState(() => _isSending = true);
     try {
+      final client = ref.read(authApiClientProvider);
+      await client.sendOtp(
+        email: email,
+        extraFields: const {'purpose': 'forgot'},
+      );
       if (!mounted) return;
-      final email = _emailController.text.trim();
       context.push(
         Uri(
           path: OtpVerifyPage.path,
@@ -158,6 +169,18 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             'flow': otpVerifyFlowForgotPasswordQueryValue,
           },
         ).toString(),
+      );
+    } on DioException catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromDioException(
+              e,
+              genericFallback: AppStrings.apiErrorForgotPassword,
+            ),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _isSending = false);

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hexcolor/hexcolor.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_under_development_view.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
 import 'package:red5/core/network/auth_api_client.dart';
@@ -15,6 +17,9 @@ import 'package:red5/features/dashboard/presentation/views/settings/settings_pag
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
 import 'package:red5/features/clients/presentation/views/clients_page.dart';
+import 'package:red5/features/contacts/presentation/views/contacts_page.dart';
+import 'package:red5/features/groups/presentation/views/groups_page.dart';
+import 'package:red5/features/sites/presentation/views/sites_page.dart';
 
 class DashboardPage extends ConsumerStatefulWidget {
   const DashboardPage({super.key});
@@ -36,6 +41,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   bool _isLoadingProjects = false;
   String? _projectsError;
   int _selectedIndex = 0;
+  bool _productsExpanded = true;
   PageRoute<dynamic>? _subscribedRoute;
 
   @override
@@ -137,7 +143,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     final title = switch (_selectedIndex) {
       0 => 'Home',
       1 => 'Client',
-      _ => 'Projects',
+      2 => 'Sites',
+      3 => 'Projects',
+      4 => 'Contacts',
+      5 => 'Groups',
+      _ => 'Home',
     };
     return Text(
       title,
@@ -186,10 +196,15 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
               ),
             ),
           ],
-          child: const CircleAvatar(
+          child: CircleAvatar(
             radius: 14,
             backgroundColor: Color(0xFF2A2A2A),
-            child: Icon(Icons.person, size: 16, color: AppColors.white),
+            child: Image.network(
+              "https://imageio.forbes.com/specials-images/imageserve/6996d0608fadf4b296e4f8d7/Comedy-Wildlife-Photography-Awards--A-cub-bear-smiles-for-the-camera-in-Finland-/0x0.jpg?crop=1345%2C1000%2Cx55%2Cy315%2Csafe&width=960&dpr=1.5",
+              height: 20,
+              width: 20,
+              color: AppColors.white,
+            ),
           ),
         ),
       ],
@@ -426,15 +441,297 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     );
   }
 
+  void _selectDrawerIndex(int index) {
+    setState(() => _selectedIndex = index);
+    Navigator.of(context).pop();
+    if (index == 3) {
+      _fetchProjects(silent: _projects.isNotEmpty);
+    }
+  }
+
+  void _showComingSoon(String label) {
+    Navigator.of(context).pop();
+    context.showTopSnackBar(
+      SnackBar(
+        content: Text('$label is coming soon'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildAppDrawer(BuildContext context) {
+    return Drawer(
+      backgroundColor: AppColors.white,
+      elevation: 1,
+      width: 260,
+      shape: const RoundedRectangleBorder(),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 12, 12),
+              child: Row(
+                children: [
+                  Text(
+                    'RED 5',
+                    style: AppFonts.titleLarge(
+                      color: AppColors.inkStrong,
+                    ).copyWith(fontWeight: FontWeight.w800, fontSize: 18),
+                  ),
+                  const Spacer(),
+                  InkWell(
+                    // visualDensity: VisualDensity.,
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Image.asset(
+                      "assets/images/Vector.png",
+                      color: Color(0xFF6B7280),
+                      height: 20,
+                      width: 20,
+                    ),
+                    // tooltip: 'Close menu',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                children: [
+                  _drawerItem(
+                    icon: "assets/images/home.png",
+                    label: 'Home',
+                    selected: _selectedIndex == 0,
+                    onTap: () => _selectDrawerIndex(0),
+                  ),
+                  _drawerItem(
+                    icon: "assets/images/clients.png",
+                    label: 'Clients',
+                    selected: _selectedIndex == 1,
+                    onTap: () => _selectDrawerIndex(1),
+                  ),
+                  _drawerItem(
+                    icon: "assets/images/sites.png",
+                    label: 'Sites',
+                    selected: _selectedIndex == 2,
+                    onTap: () => _selectDrawerIndex(2),
+                  ),
+                  _drawerItem(
+                    icon: "assets/images/contacts.png",
+                    label: 'Contacts',
+                    selected: _selectedIndex == 4,
+                    onTap: () => _selectDrawerIndex(4),
+                  ),
+                  _drawerItem(
+                    icon: "assets/images/projects.png",
+                    label: 'Projects',
+                    selected: _selectedIndex == 3,
+                    onTap: () => _selectDrawerIndex(3),
+                  ),
+                  _drawerItem(
+                    icon: "assets/images/groups.png",
+                    label: 'Groups',
+                    selected: _selectedIndex == 5,
+                    onTap: () => _selectDrawerIndex(5),
+                  ),
+                  _drawerExpandableItem(
+                    icon: "assets/images/products.png",
+                    label: 'Products',
+                    expanded: _productsExpanded,
+                    onTap: () =>
+                        setState(() => _productsExpanded = !_productsExpanded),
+                    children: [
+                      _drawerSubItem(
+                        'Items',
+                        () => _showComingSoon('Items'),
+                        false,
+                      ),
+                      _drawerSubItem(
+                        'Composite Items',
+                        () => _showComingSoon('Composite Items'),
+                        false,
+                      ),
+                    ],
+                  ),
+                  _drawerItem(
+                    icon: "assets/images/qoutations.png",
+                    label: 'Quotations',
+                    onTap: () => _showComingSoon('Quotations'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _drawerItem({
+    required String icon,
+    required String label,
+    bool selected = false,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Material(
+        color: selected ? const Color(0xFFEFEFF1) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                Image.asset(
+                  icon,
+                  width: 22,
+                  height: 22,
+                  color: selected ? AppColors.inkStrong : HexColor("#4B5563"),
+                ),
+                // Icon(icon, size: 18, color: AppColors.inkStrong),
+                const SizedBox(width: 14),
+                Text(
+                  label,
+                  style:
+                      AppFonts.titleMedium(
+                        color: selected
+                            ? AppColors.inkStrong
+                            : HexColor("#4B5563"),
+                      ).copyWith(
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _drawerExpandableItem({
+    required String icon,
+    required String label,
+    required bool expanded,
+    required VoidCallback onTap,
+    required List<Widget> children,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              child: Row(
+                children: [
+                  Image.asset(
+                    icon,
+                    width: 22,
+                    height: 22,
+                    color: AppColors.inkStrong,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: AppFonts.titleMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+                  ),
+                  Icon(
+                    expanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: const Color(0xFF6B7280),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (expanded) ...children,
+      ],
+    );
+  }
+
+  Widget _drawerSubItem(String label, VoidCallback onTap, bool selected) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(44, 9, 12, 9),
+          child: Text(
+            label,
+            style: AppFonts.titleMedium(
+              color: selected ? AppColors.inkStrong : HexColor("#4B5563"),
+            ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+        ),
+      ),
+    );
+  }
+
+  int get _bottomSelectedIndex {
+    return switch (_selectedIndex) {
+      0 => 0,
+      1 => 1,
+      3 => 2,
+      4 => 3,
+      _ => 0,
+    };
+  }
+
+  void _onBottomDestinationSelected(int index) {
+    final pageIndex = switch (index) {
+      0 => 0,
+      1 => 1,
+      2 => 3,
+      _ => 4,
+    };
+    setState(() => _selectedIndex = pageIndex);
+    if (pageIndex == 3) {
+      _fetchProjects(silent: _projects.isNotEmpty);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _backgroundColor,
+      drawer: _buildAppDrawer(context),
       appBar: AppBar(
         backgroundColor: _backgroundColor,
         elevation: 0,
         scrolledUnderElevation: 0,
-        titleSpacing: 16,
+        titleSpacing: 4,
+        leading: Builder(
+          builder: (context) => IconButton(
+            onPressed: () => Scaffold.of(context).openDrawer(),
+            icon: const Icon(Icons.menu_rounded, size: 24),
+            color: AppColors.inkStrong,
+            tooltip: 'Menu',
+          ),
+        ),
         title: _buildTopBarTitle(),
         actions: [_buildTopBarActions(), const SizedBox(width: 10)],
       ),
@@ -443,40 +740,101 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         children: [
           _buildHomeEmptyState(),
           const ClientsPage(),
+          const SitesPage(),
           _buildProjectsBody(),
+          const ContactsPage(),
+          const GroupsPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
-          if (index == 2) {
-            _fetchProjects(silent: _projects.isNotEmpty);
-          }
-        },
+        selectedIndex: _bottomSelectedIndex,
+        onDestinationSelected: _onBottomDestinationSelected,
         backgroundColor: _backgroundColor,
-        indicatorColor: const Color(0xFFECECEE),
+        indicatorColor: _selectedIndex == 2
+            ? Colors.transparent
+            : const Color(0xFFECECEE),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        destinations: const [
+        destinations: [
           NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
+            icon: Image.asset(
+              "assets/images/homes.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 0
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
+            selectedIcon: Image.asset(
+              "assets/images/homes.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 0
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
             label: 'Home',
           ),
           NavigationDestination(
-            icon: Icon(Icons.people_outline_rounded),
-            selectedIcon: Icon(Icons.people_rounded),
+            icon: Image.asset(
+              "assets/images/client.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 1
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
+            selectedIcon: Image.asset(
+              "assets/images/client.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 1
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
             label: 'Clients',
           ),
           NavigationDestination(
-            icon: Icon(Icons.folder_outlined),
-            selectedIcon: Icon(Icons.folder_rounded),
+            icon: Image.asset(
+              "assets/images/files.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 3
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
+            selectedIcon: Image.asset(
+              "assets/images/files.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 3
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
             label: 'Projects',
+          ),
+          NavigationDestination(
+            icon: Image.asset(
+              "assets/images/contacts.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 4
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
+            selectedIcon: Image.asset(
+              "assets/images/contacts.png",
+              width: 22,
+              height: 22,
+              color: _selectedIndex == 4
+                  ? AppColors.inkStrong
+                  : HexColor("#4B5563"),
+            ),
+            label: 'Contacts',
           ),
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: _selectedIndex == 2
+      floatingActionButton: _selectedIndex == 3
           ? FloatingActionButton(
               heroTag: 'dashboard_create_quote',
               onPressed: _openCreateQuoteProject,
