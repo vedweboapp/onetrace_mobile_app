@@ -83,6 +83,7 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
 
     await storage.remove(LocalStorageKeys.authAccessToken);
     await storage.remove(LocalStorageKeys.authRefreshToken);
+    await storage.remove(LocalStorageKeys.authUserId);
     if (!mounted) return;
     context.go(LoginPage.path);
   }

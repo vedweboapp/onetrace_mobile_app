@@ -5,6 +5,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/contacts/data/contact_models.dart';
 import 'package:red5/features/contacts/data/contacts_api_client.dart';
 import 'package:red5/features/contacts/presentation/views/add_contact_page.dart';
@@ -234,7 +235,12 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
           if (_contacts.isNotEmpty) _searchBar(),
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? Center(
+                    child: const AppSkeletonScreenBody(
+                      style: AppSkeletonScreenBodyStyle.listRows,
+                      listRowCount: 10,
+                    ),
+                  )
                 : _error != null
                 ? Center(
                     child: Padding(

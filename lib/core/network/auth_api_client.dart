@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/core/network/success_toast_interceptor.dart';
 
 /// Auth endpoints using Dio ([AppApiUrls] for paths).
 final class AuthApiClient {
@@ -47,6 +48,12 @@ final class AuthApiClient {
       AppApiUrls.authLogin,
       data: data,
       cancelToken: cancelToken,
+      options: Options(
+        extra: <String, dynamic>{
+          kDioExtraShowSuccessToast: true,
+          kDioExtraSuccessToastTitle: 'Successfully logged in',
+        },
+      ),
     );
   }
 
@@ -156,6 +163,16 @@ final class AuthApiClient {
     );
   }
 
+  Map<String, dynamic> _inviteSuccessToastExtra(Map<String, dynamic> data) {
+    final email = data['email']?.toString().trim() ?? '';
+    return <String, dynamic>{
+      kDioExtraShowSuccessToast: true,
+      kDioExtraSuccessToastTitle: 'Invite sent successfully',
+      if (email.isNotEmpty)
+        kDioExtraSuccessToastSubtitle: '$email will receive an email shortly.',
+    };
+  }
+
   /// Invite a new user. When [profilePhotoBytes] is provided the request is
   /// sent as `multipart/form-data` so the photo can be uploaded alongside
   /// [data]; otherwise it's a regular JSON POST.
@@ -178,13 +195,17 @@ final class AuthApiClient {
         AppApiUrls.authInviteUser,
         data: form,
         cancelToken: cancelToken,
-        options: Options(contentType: 'multipart/form-data'),
+        options: Options(
+          contentType: 'multipart/form-data',
+          extra: _inviteSuccessToastExtra(data),
+        ),
       );
     }
     return _dio.post<Map<String, dynamic>>(
       AppApiUrls.authInviteUser,
       data: data,
       cancelToken: cancelToken,
+      options: Options(extra: _inviteSuccessToastExtra(data)),
     );
   }
 }

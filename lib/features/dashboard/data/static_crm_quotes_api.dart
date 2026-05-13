@@ -11,16 +11,25 @@ class StaticCrmQuotesApi implements CrmQuotesApi {
       id: 'static-quote-1',
       quoteName: 'Demo residence — Oak block',
       quoteNumber: 'Q-24001',
+      clientName: 'Apex Structural Group',
+      projectName: 'Oak Street Tower',
+      contactPhone: '+1 (555) 124-8902',
     ),
     QuoteSummary(
       id: 'static-quote-2',
       quoteName: 'Sample tower — River view',
       quoteNumber: 'Q-24002',
+      clientName: 'Riverview Developments',
+      projectName: 'Downtown Phase 2',
+      contactPhone: '+1 (555) 200-4410',
     ),
     QuoteSummary(
       id: 'static-quote-3',
       quoteName: 'Static preview quote',
       quoteNumber: 'Q-24003',
+      clientName: 'Northwind LLC',
+      projectName: 'Warehouse retrofit',
+      contactPhone: '+1 (555) 981-0001',
     ),
   ];
 

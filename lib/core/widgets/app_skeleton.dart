@@ -4,7 +4,8 @@ import 'package:red5/core/theme/app_colors.dart';
 /// Skeleton / shimmer placeholders for loading states across the app.
 ///
 /// Compose [AppSkeletonBox], [AppSkeletonLine], [AppSkeletonCircle],
-/// [AppSkeletonListTile], etc., or wrap a custom shape in [AppSkeletonShimmer].
+/// [AppSkeletonListTile], [AppSkeletonGradientBox], [AppSkeletonToastBlock],
+/// [AppSkeletonScreenBody], etc., or wrap a custom shape in [AppSkeletonShimmer].
 abstract final class AppSkeleton {
   const AppSkeleton._();
 
@@ -287,6 +288,238 @@ final class AppSkeletonCard extends StatelessWidget {
           AppSkeletonLine(height: 12, widthFactor: 0.45),
         ],
       ),
+    );
+  }
+}
+
+// --- Gradient shimmer (LinearGradient sweep) + universal screen placeholders ---
+
+/// Animated rounded rectangle using a soft horizontal gradient sweep (Material-style shimmer).
+///
+/// Matches the common “pill + card” loading pattern; use inside bounded width when
+/// [width] is [double.infinity].
+final class AppSkeletonGradientBox extends StatefulWidget {
+  const AppSkeletonGradientBox({
+    required this.width,
+    required this.height,
+    required this.borderRadius,
+    super.key,
+    this.duration = const Duration(milliseconds: 1400),
+  });
+
+  final double width;
+  final double height;
+  final double borderRadius;
+  final Duration duration;
+
+  @override
+  State<AppSkeletonGradientBox> createState() => _AppSkeletonGradientBoxState();
+}
+
+final class _AppSkeletonGradientBoxState extends State<AppSkeletonGradientBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: widget.duration,
+  )..repeat();
+
+  late final Animation<double> _animation = Tween<double>(begin: -1.5, end: 2.0).animate(
+    CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+  );
+
+  @override
+  void didUpdateWidget(covariant AppSkeletonGradientBox oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.duration != oldWidget.duration) {
+      _controller.duration = widget.duration;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  static const List<Color> _colors = [
+    Color(0xFFEEEEEE),
+    Color(0xFFF8F8F8),
+    Color(0xFFEEEEEE),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, _) {
+        final v = _animation.value;
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              stops: [
+                (v - 0.4).clamp(0.0, 1.0),
+                v.clamp(0.0, 1.0),
+                (v + 0.4).clamp(0.0, 1.0),
+              ],
+              colors: _colors,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// One “label pill + tall card” block (toast-style skeleton row).
+final class AppSkeletonToastBlock extends StatelessWidget {
+  const AppSkeletonToastBlock({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const AppSkeletonGradientBox(width: 120, height: 14, borderRadius: 8),
+        const SizedBox(height: 10),
+        const AppSkeletonGradientBox(
+          width: double.infinity,
+          height: 72,
+          borderRadius: 14,
+        ),
+      ],
+    );
+  }
+}
+
+/// List-row placeholder: leading square + two lines (gradient shimmer).
+final class AppSkeletonListRowGradient extends StatelessWidget {
+  const AppSkeletonListRowGradient({
+    super.key,
+    this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  });
+
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const AppSkeletonGradientBox(
+            width: 48,
+            height: 48,
+            borderRadius: 12,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const AppSkeletonGradientBox(
+                  width: double.infinity,
+                  height: 16,
+                  borderRadius: 8,
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: 0.58,
+                    child: const AppSkeletonGradientBox(
+                      width: double.infinity,
+                      height: 13,
+                      borderRadius: 8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Layout preset for [AppSkeletonScreenBody].
+enum AppSkeletonScreenBodyStyle {
+  /// Stacked “pill + card” blocks (generic detail / form loading).
+  toastBlocks,
+
+  /// Repeated list rows (lists, directories, CRM tables).
+  listRows,
+}
+
+/// Default full-screen (or scroll-region) loading placeholder using gradient shimmer.
+///
+/// Use while fetching initial data: `body: loading ? AppSkeletonScreenBody(...) : content`.
+/// Set [scrollable] to `false` for simple `Scaffold` bodies that are not inside a scroll view.
+final class AppSkeletonScreenBody extends StatelessWidget {
+  const AppSkeletonScreenBody({
+    super.key,
+    this.style = AppSkeletonScreenBodyStyle.toastBlocks,
+    this.padding = const EdgeInsets.symmetric(horizontal: 20, vertical: 48),
+    this.scrollable = true,
+    this.physics,
+    this.toastBlockCount = 3,
+    this.listRowCount = 8,
+    this.spacing = 24,
+  });
+
+  final AppSkeletonScreenBodyStyle style;
+  final EdgeInsets padding;
+  final bool scrollable;
+  final ScrollPhysics? physics;
+  final int toastBlockCount;
+  final int listRowCount;
+  final double spacing;
+
+  List<Widget> _children() {
+    switch (style) {
+      case AppSkeletonScreenBodyStyle.toastBlocks:
+        final n = toastBlockCount.clamp(1, 12);
+        return [
+          for (var i = 0; i < n; i++) ...[
+            if (i > 0) SizedBox(height: spacing),
+            const AppSkeletonToastBlock(),
+          ],
+        ];
+      case AppSkeletonScreenBodyStyle.listRows:
+        final n = listRowCount.clamp(1, 24);
+        return [
+          for (var i = 0; i < n; i++) ...[
+            if (i > 0) const SizedBox(height: 4),
+            const AppSkeletonListRowGradient(),
+          ],
+        ];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final column = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
+      children: _children(),
+    );
+
+    final padded = Padding(padding: padding, child: column);
+
+    if (!scrollable) {
+      return padded;
+    }
+
+    return SingleChildScrollView(
+      physics: physics ?? const AlwaysScrollableScrollPhysics(),
+      child: padded,
     );
   }
 }

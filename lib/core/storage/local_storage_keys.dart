@@ -7,6 +7,9 @@ abstract final class LocalStorageKeys {
   static const authAccessToken = 'auth_access_token';
   static const authRefreshToken = 'auth_refresh_token';
 
+  /// Stringified `data.user.id` from login / verify-otp (for `/user-profile/{id}/`).
+  static const authUserId = 'auth_user_id';
+
   /// JSON: `{ "documents": [...], "selectedIndex": int }` (legacy; migrated on read)
   static const quoteSession = 'quote_session_v1';
 

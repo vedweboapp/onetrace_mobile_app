@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
@@ -247,7 +248,12 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: const AppSkeletonScreenBody(
+                scrollable: false,
+                toastBlockCount: 4,
+              ),
+            )
           : _error != null
           ? Center(
               child: Padding(

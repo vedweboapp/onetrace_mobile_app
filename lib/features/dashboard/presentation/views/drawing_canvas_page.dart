@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,82 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
+
+/// Route payload for [DrawingCanvasPage]. Use [toExtra] with GoRouter and
+/// [DrawingCanvasPage.push] so every entry point matches [AppRouter] parsing.
+@immutable
+class DrawingCanvasArgs {
+  const DrawingCanvasArgs({
+    required this.title,
+    this.filePath,
+    this.remoteDrawingUrl,
+    this.levelName,
+    this.projectName,
+    this.projectId,
+    this.levelId,
+  });
+
+  final String title;
+  final String? filePath;
+
+  /// Absolute URL or API path; passed to the route as `drawingUrl`.
+  final String? remoteDrawingUrl;
+  final String? levelName;
+  final String? projectName;
+  final String? projectId;
+  final String? levelId;
+
+  Map<String, dynamic> toExtra() {
+    final t = title.trim();
+    final fp = (filePath ?? '').trim();
+    final url = (remoteDrawingUrl ?? '').trim();
+    final ln = (levelName ?? '').trim();
+    final pn = (projectName ?? '').trim();
+    final pid = (projectId ?? '').trim();
+    final lid = (levelId ?? '').trim();
+    return <String, dynamic>{
+      if (t.isNotEmpty) 'title': t,
+      if (fp.isNotEmpty) 'filePath': fp,
+      if (url.isNotEmpty) 'drawingUrl': url,
+      if (ln.isNotEmpty) 'levelName': ln,
+      if (pn.isNotEmpty) 'projectName': pn,
+      if (pid.isNotEmpty) 'projectId': pid,
+      if (lid.isNotEmpty) 'levelId': lid,
+    };
+  }
+
+  /// Same field mapping used after [UploadDrawingPage] returns a result map.
+  factory DrawingCanvasArgs.fromUploadResult(
+    Map<String, dynamic> map, {
+    required String projectName,
+    required String projectId,
+  }) {
+    final fileName = (map['fileName'] ?? '').toString().trim();
+    final pdfName = (map['pdfName'] ?? '').toString().trim();
+    final filePath = (map['filePath'] ?? '').toString().trim();
+    final levelName = (map['levelName'] ?? '').toString().trim();
+    final uploadedProjectId = (map['projectId'] ?? '').toString().trim();
+    final levelId = (map['levelId'] ?? '').toString().trim();
+    final title = (pdfName.isNotEmpty ? pdfName : fileName).trim();
+    final resolvedPid =
+        uploadedProjectId.isEmpty ? projectId.trim() : uploadedProjectId;
+    return DrawingCanvasArgs(
+      title: title,
+      filePath: filePath.isEmpty ? null : filePath,
+      levelName: levelName.isEmpty ? null : levelName,
+      projectName: projectName.trim().isEmpty ? null : projectName.trim(),
+      projectId: resolvedPid.isEmpty ? null : resolvedPid,
+      levelId: levelId.isEmpty ? null : levelId,
+    );
+  }
+
+  static int uploadCountFromResult(Map<String, dynamic> map) {
+    final uploadCount = map['uploadCount'] is int
+        ? (map['uploadCount'] as int).clamp(1, 999)
+        : (((map['filePath'] ?? '').toString().trim().isNotEmpty) ? 1 : 0);
+    return uploadCount;
+  }
+}
 
 class DrawingCanvasPage extends ConsumerStatefulWidget {
   const DrawingCanvasPage({
@@ -31,6 +108,11 @@ class DrawingCanvasPage extends ConsumerStatefulWidget {
 
   static const path = '/drawing-canvas';
   static const name = 'drawing-canvas';
+
+  /// Opens the canvas with the same `extra` shape the router expects everywhere.
+  static Future<bool?> push(BuildContext context, DrawingCanvasArgs args) {
+    return context.push<bool>(path, extra: args.toExtra());
+  }
 
   final String title;
   final String? filePath;
@@ -55,7 +137,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   List<CompositeItemOption> _productOptions = const <CompositeItemOption>[];
   int? _selectedGroupId;
   int? _selectedCompositeItemId;
-  int? _selectedPlotRegionIndex;
+  /// Default for new pins; toggled on the drawing form before placing a pin.
+  bool _variationOn = false;
   bool _isLoadingGroups = false;
   bool _isLoadingCompositeItems = false;
   static const List<Color> _regionPalette = <Color>[
@@ -1028,21 +1111,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     final p = scenePoint;
     int? targetIndex;
-    final selectedPlotIndex = _selectedPlotRegionIndex;
-    if (selectedPlotIndex != null &&
-        selectedPlotIndex >= 0 &&
-        selectedPlotIndex < _regions.length) {
-      if (!_regionContainsPoint(_regions[selectedPlotIndex], p)) {
-        _showTopToast('Pin must be inside selected plot');
-        return;
-      }
-      targetIndex = selectedPlotIndex;
-    } else {
-      for (var i = _regions.length - 1; i >= 0; i--) {
-        if (_regionContainsPoint(_regions[i], p)) {
-          targetIndex = i;
-          break;
-        }
+    for (var i = _regions.length - 1; i >= 0; i--) {
+      if (_regionContainsPoint(_regions[i], p)) {
+        targetIndex = i;
+        break;
       }
     }
     if (targetIndex == null) {
@@ -1076,7 +1148,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             blockName: _blockController.text.trim(),
             levelName: _levelController.text.trim(),
             zoneName: (region.name ?? '').trim(),
-            variation: 'No',
+            variation: _variationOn ? 'Yes' : 'No',
             droppedAt: DateTime.now(),
             description: '',
           ),
@@ -2516,39 +2588,24 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    value: (_selectedPlotRegionIndex != null &&
-                            _selectedPlotRegionIndex! >= 0 &&
-                            _selectedPlotRegionIndex! < _regions.length)
-                        ? _selectedPlotRegionIndex
-                        : null,
-                    items: List<DropdownMenuItem<int>>.generate(
-                      _regions.length,
-                      (index) => DropdownMenuItem<int>(
-                        value: index,
-                        child: Text(
-                          _shortPlotName(_regions[index].name).trim().isEmpty
-                              ? 'Plot ${index + 1}'
-                              : _shortPlotName(_regions[index].name),
+                  Row(
+                    children: [
+                      Text(
+                        'VARIATION',
+                        style: AppFonts.labelMedium(
+                          color: AppColors.inkStrong,
+                        ).copyWith(
+                          letterSpacing: 1.0,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                    ),
-                    onChanged: _regions.isEmpty
-                        ? null
-                        : (value) => setState(() => _selectedPlotRegionIndex = value),
-                    decoration: const InputDecoration(
-                      hintText: 'Plot :',
-                      filled: true,
-                      fillColor: Color(0xFFF2F2F3),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                      const Spacer(),
+                      CupertinoSwitch(
+                        value: _variationOn,
+                        onChanged: (v) => setState(() => _variationOn = v),
+                        activeTrackColor: const Color(0xFF22C55E),
                       ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                      ),
-                    ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   SizedBox(
@@ -3349,30 +3406,14 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _sheetFieldLabel('Variation'),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  value: _variationOptions.contains(_variation)
-                      ? _variation
-                      : _variationOptions.first,
-                  items: _variationOptions
-                      .map(
-                        (v) =>
-                            DropdownMenuItem<String>(value: v, child: Text(v)),
-                      )
-                      .toList(),
-                  onChanged: (v) =>
-                      setState(() => _variation = v ?? _variation),
-                  decoration: const InputDecoration(
-                    filled: true,
-                    fillColor: Color(0xFFF3F3F4),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(12)),
-                      borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                    ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: CupertinoSwitch(
+                    value: _variation == 'Yes',
+                    onChanged: (v) =>
+                        setState(() => _variation = v ? 'Yes' : 'No'),
+                    activeTrackColor: const Color(0xFF22C55E),
                   ),
                 ),
               ],

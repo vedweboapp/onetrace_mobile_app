@@ -394,9 +394,6 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
       );
       await sl<InviteUserService>().invite(payload);
       if (!mounted) return;
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Invitation sent successfully')),
-      );
       context.pop();
     } catch (e) {
       if (!mounted) return;

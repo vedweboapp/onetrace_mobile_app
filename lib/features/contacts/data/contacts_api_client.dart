@@ -56,7 +56,7 @@ final class ContactsApiClient {
 
   Future<ContactModel> createContact({
     required String contactName,
-    required String clientName,
+    required String clientId,
     required String email,
     required String phone,
     required String addressLine1,
@@ -70,7 +70,7 @@ final class ContactsApiClient {
       AppApiUrls.contacts,
       data: _contactPayload(
         contactName: contactName,
-        clientName: clientName,
+        clientId: clientId,
         email: email,
         phone: phone,
         addressLine1: addressLine1,
@@ -91,7 +91,7 @@ final class ContactsApiClient {
   Future<ContactModel> updateContact({
     required String id,
     required String contactName,
-    required String clientName,
+    required String clientId,
     required String email,
     required String phone,
     required String addressLine1,
@@ -105,7 +105,7 @@ final class ContactsApiClient {
       AppApiUrls.contactById(id),
       data: _contactPayload(
         contactName: contactName,
-        clientName: clientName,
+        clientId: clientId,
         email: email,
         phone: phone,
         addressLine1: addressLine1,
@@ -124,7 +124,7 @@ final class ContactsApiClient {
 
   static Map<String, dynamic> _contactPayload({
     required String contactName,
-    required String clientName,
+    required String clientId,
     required String email,
     required String phone,
     required String addressLine1,
@@ -137,7 +137,7 @@ final class ContactsApiClient {
     return <String, dynamic>{
       'contact_name': contactName,
       'name': contactName,
-      'client_name': clientName,
+      'client': _clientJsonValue(clientId),
       'email': email,
       'phone': phone,
       'address_line_1': addressLine1,
@@ -147,6 +147,13 @@ final class ContactsApiClient {
       'state': state,
       'postal_code': postalCode,
     };
+  }
+
+  /// Backend expects a `client` FK; send int when the id is numeric, else raw string.
+  static Object _clientJsonValue(String clientId) {
+    final t = clientId.trim();
+    final asInt = int.tryParse(t);
+    return asInt ?? t;
   }
 
   static List<Map<String, dynamic>> _readRows(Map<String, dynamic> root) {

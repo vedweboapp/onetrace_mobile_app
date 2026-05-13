@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -5,15 +6,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
+import 'package:red5/features/user_profile/data/role_models.dart';
+import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
@@ -38,7 +44,6 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
 
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
-  final _roleController = TextEditingController();
   final _dobController = TextEditingController();
   final _addr1Controller = TextEditingController();
   final _addr2Controller = TextEditingController();
@@ -67,6 +72,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
   /// `/user-profile/` state.
   UserProfileModel? _profile;
   String? _profileId;
+  List<RoleModel> _roles = const [];
+  int? _selectedRoleId;
+  String? _pickedImageFilename;
   bool _loading = true;
   bool _saving = false;
   String? _loadError;
@@ -88,15 +96,48 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     });
     try {
       final api = ref.read(userProfileApiClientProvider);
-      final profile = await api.fetchCurrentProfile();
-      if (!mounted) return;
-      if (profile == null) {
-        setState(() {
-          _loading = false;
-          _loadError = 'No profile found.';
-        });
-        return;
+      final rolesApi = ref.read(rolesApiClientProvider);
+      final storage = ref.read(localStorageProvider);
+      final storedUserId =
+          storage.getString(LocalStorageKeys.authUserId)?.trim() ?? '';
+
+      List<RoleModel> roles = const [];
+      try {
+        roles = await rolesApi.fetchAllRoles();
+      } catch (_) {
+        roles = const [];
       }
+
+      UserProfileModel? profile;
+      if (storedUserId.isNotEmpty) {
+        try {
+          profile = await api.fetchProfile(storedUserId);
+        } catch (_) {
+          profile = null;
+        }
+      }
+      if (profile == null) {
+        final brief = await api.fetchCurrentProfile();
+        if (!mounted) return;
+        if (brief == null) {
+          setState(() {
+            _loading = false;
+            _loadError = 'No profile found.';
+          });
+          return;
+        }
+        profile = brief;
+        final id = brief.id.trim();
+        if (id.isNotEmpty) {
+          try {
+            profile = await api.fetchProfile(id);
+          } catch (_) {
+            profile = brief;
+          }
+        }
+      }
+      if (!mounted) return;
+      setState(() => _roles = roles);
       _applyProfile(profile);
       setState(() => _loading = false);
     } catch (e) {
@@ -113,28 +154,85 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     _profileId = profile.id;
     _firstNameController.text = profile.firstName;
     _lastNameController.text = profile.lastName;
-    _roleController.text = profile.role;
     _dobController.text = profile.dateOfBirth;
-    _addr1Controller.text = profile.addressLine1;
-    _addr2Controller.text = profile.addressLine2;
-    _cityController.text = profile.city;
-    _stateController.text = profile.state;
-    _zipController.text = profile.postalCode;
+    final rid = int.tryParse(profile.roleId.trim());
+    _selectedRoleId = rid;
 
-    _phoneControllers
-      ..forEach((c) => c.dispose())
-      ..clear();
-    final phone = profile.phoneNumber;
-    _phoneControllers.add(TextEditingController(text: phone));
+    for (final c in _phoneControllers) {
+      c.dispose();
+    }
+    _phoneControllers.clear();
+    for (final c in _emailControllers) {
+      c.dispose();
+    }
+    _emailControllers.clear();
 
-    _emailControllers
-      ..forEach((c) => c.dispose())
-      ..clear();
-    _emailControllers.add(TextEditingController(text: profile.email));
+    final comms = profile.communications;
+    if (comms.isEmpty) {
+      _phoneControllers.add(TextEditingController(text: profile.phoneNumber));
+      _emailControllers.add(TextEditingController(text: profile.email));
+    } else {
+      for (final c in comms) {
+        _phoneControllers.add(TextEditingController(text: c.phone));
+        _emailControllers.add(TextEditingController(text: c.email));
+      }
+      final n = math.max(_phoneControllers.length, _emailControllers.length);
+      while (_phoneControllers.length < n) {
+        _phoneControllers.add(TextEditingController());
+      }
+      while (_emailControllers.length < n) {
+        _emailControllers.add(TextEditingController());
+      }
+    }
+
+    final addrs = profile.addresses;
+    if (addrs.isEmpty) {
+      _addr1Controller.text = profile.addressLine1;
+      _addr2Controller.text = profile.addressLine2;
+      _cityController.text = profile.city;
+      _stateController.text = profile.state;
+      _zipController.text = profile.postalCode;
+      _showExtraAddress = false;
+      _extraAddr1.clear();
+      _extraAddr2.clear();
+      _extraCity.clear();
+      _extraState.clear();
+      _extraZip.clear();
+    } else {
+      final ordered = List<UserAddressModel>.from(addrs)
+        ..sort((a, b) {
+          if (a.isPrimary == b.isPrimary) return 0;
+          return a.isPrimary ? -1 : 1;
+        });
+      final primary = ordered.first;
+      _addr1Controller.text = primary.address1;
+      _addr2Controller.text = primary.address2;
+      _cityController.text = primary.city;
+      _stateController.text = primary.state;
+      _zipController.text = primary.pincode;
+      if (ordered.length > 1) {
+        _showExtraAddress = true;
+        final second = ordered[1];
+        _extraAddr1.text = second.address1;
+        _extraAddr2.text = second.address2;
+        _extraCity.text = second.city;
+        _extraState.text = second.state;
+        _extraZip.text = second.pincode;
+      } else {
+        _showExtraAddress = false;
+        _extraAddr1.clear();
+        _extraAddr2.clear();
+        _extraCity.clear();
+        _extraState.clear();
+        _extraZip.clear();
+      }
+    }
 
     final gender = profile.gender;
     if (_genderOptions.contains(gender)) {
       _gender = gender;
+    } else {
+      _gender = gender.isNotEmpty ? _genderOptions.last : _genderOptions.first;
     }
     _photoUrl = profile.userImage.isEmpty ? null : profile.userImage;
   }
@@ -145,7 +243,6 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
   void dispose() {
     _firstNameController.dispose();
     _lastNameController.dispose();
-    _roleController.dispose();
     _dobController.dispose();
     _addr1Controller.dispose();
     _addr2Controller.dispose();
@@ -201,38 +298,84 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     }
     if (_saving) return;
     FocusScope.of(context).unfocus();
+
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final gender = _gender.trim();
+    if (firstName.isEmpty || lastName.isEmpty || gender.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text('First name, last name, and gender are required.'),
+        ),
+      );
+      return;
+    }
+
+    String primaryEmail = '';
+    for (final c in _emailControllers) {
+      final t = c.text.trim();
+      if (t.isNotEmpty) {
+        primaryEmail = t;
+        break;
+      }
+    }
+    if (primaryEmail.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Email is required.')),
+      );
+      return;
+    }
+
+    String primaryPhone = '';
+    for (final c in _phoneControllers) {
+      final t = c.text.trim();
+      if (t.isNotEmpty) {
+        primaryPhone = t;
+        break;
+      }
+    }
+    if (primaryPhone.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Phone number is required.')),
+      );
+      return;
+    }
+
+    final roleInt = _selectedRoleId ?? int.tryParse(_profile?.roleId ?? '') ?? 0;
+    if (roleInt <= 0) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Select a role.')),
+      );
+      return;
+    }
+
     setState(() => _saving = true);
     try {
       final api = ref.read(userProfileApiClientProvider);
-      final phone = _phoneControllers.isEmpty
-          ? ''
-          : _phoneControllers.first.text.trim();
-      final email = _emailControllers.isEmpty
-          ? ''
-          : _emailControllers.first.text.trim();
-      final updated = await api.updateProfile(
+      final updated = await api.replaceProfile(
         id: profileId,
-        firstName: _firstNameController.text.trim(),
-        lastName: _lastNameController.text.trim(),
-        email: email,
-        phoneNumber: phone,
-        gender: _gender,
-        role: _roleController.text.trim(),
-        dateOfBirth: _dobController.text.trim(),
-        addressLine1: _addr1Controller.text.trim(),
-        addressLine2: _addr2Controller.text.trim(),
-        city: _cityController.text.trim(),
-        state: _stateController.text.trim(),
-        postalCode: _zipController.text.trim(),
+        email: primaryEmail,
+        firstName: firstName,
+        lastName: lastName,
+        phoneNumber: primaryPhone,
+        gender: gender,
+        role: roleInt,
+        address1: _addr1Controller.text.trim(),
+        address2: _addr2Controller.text.trim(),
+        profileImageBytes: _profilePhotoBytes?.toList(),
+        profileImageFilename: _pickedImageFilename,
       );
       if (!mounted) return;
       _applyProfile(updated);
       setState(() {
         _saving = false;
         _editable = false;
+        _profilePhotoBytes = null;
+        _pickedImageFilename = null;
       });
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Profile updated successfully')),
+      context.showSuccessTopPopup(
+        title: 'Profile updated successfully',
+        subtitle: 'Your changes have been saved.',
       );
     } catch (e) {
       if (!mounted) return;
@@ -298,7 +441,11 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
       if (!mounted || picked == null) return;
       final bytes = await picked.readAsBytes();
       if (!mounted) return;
-      setState(() => _profilePhotoBytes = bytes);
+      final name = picked.name.trim();
+      setState(() {
+        _profilePhotoBytes = bytes;
+        _pickedImageFilename = name.isEmpty ? 'profile.jpg' : name;
+      });
     } catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(
@@ -421,6 +568,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
                         Navigator.of(ctx).pop();
                         setState(() {
                           _profilePhotoBytes = null;
+                          _pickedImageFilename = null;
                           _photoUrl = null;
                         });
                       },
@@ -518,7 +666,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
           ),
           const SizedBox(width: 10),
           Text(
-            '$uppercaseTitle',
+            uppercaseTitle,
             style: AppFonts.labelMedium(color: _labelGrey).copyWith(
               fontWeight: FontWeight.w800,
               letterSpacing: 0.35,
@@ -757,6 +905,80 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
                     if (value != null) setState(() => _gender = value);
                   },
           ),
+        ),
+      ),
+    );
+  }
+
+  List<RoleModel> _rolesForMenu() {
+    final out = List<RoleModel>.from(_roles);
+    final sid = _selectedRoleId;
+    if (sid == null) return out;
+    final idStr = sid.toString();
+    if (out.any((r) => r.id == idStr)) return out;
+    final label = (_profile?.role ?? '').trim();
+    return [
+      RoleModel(
+        id: idStr,
+        roleName: label.isNotEmpty ? label : 'Role #$idStr',
+      ),
+      ...out,
+    ];
+  }
+
+  Widget _roleDropdown(bool enabled) {
+    final menu = _rolesForMenu();
+    if (menu.isEmpty) {
+      return InputDecorator(
+        decoration: _fieldDecoration(),
+        child: Text(
+          'No roles available',
+          style: _fieldTextStyle().copyWith(color: _labelGrey),
+        ),
+      );
+    }
+    final items = <DropdownMenuItem<int>>[];
+    for (final r in menu) {
+      final id = int.tryParse(r.id);
+      if (id == null) continue;
+      items.add(
+        DropdownMenuItem<int>(
+          value: id,
+          child: Text(r.roleName, style: _fieldTextStyle()),
+        ),
+      );
+    }
+    final value = _selectedRoleId != null &&
+            items.any((e) => e.value == _selectedRoleId)
+        ? _selectedRoleId
+        : null;
+    return InputDecorator(
+      decoration: _fieldDecoration(
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 12,
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          isDense: true,
+          isExpanded: true,
+          value: value,
+          hint: Text(
+            'Select role',
+            style: _fieldTextStyle().copyWith(color: _labelGrey),
+          ),
+          icon: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: Color(0xFF6B7280),
+          ),
+          style: _fieldTextStyle(),
+          dropdownColor: AppColors.white,
+          padding: EdgeInsets.zero,
+          items: items,
+          onChanged: !enabled
+              ? null
+              : (v) => setState(() => _selectedRoleId = v),
         ),
       ),
     );
@@ -1006,7 +1228,12 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: const AppSkeletonScreenBody(
+          scrollable: false,
+          toastBlockCount: 4,
+        ),
+      );
     }
     if (_loadError != null && _profile == null) {
       return Padding(
@@ -1076,12 +1303,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
           ),
           const SizedBox(height: 14),
           _label('Role'),
-          AppTextField(
-            controller: _roleController,
-            hintText: '',
-            enabled: enabled,
-            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-          ),
+          _roleDropdown(enabled),
           const SizedBox(height: 14),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

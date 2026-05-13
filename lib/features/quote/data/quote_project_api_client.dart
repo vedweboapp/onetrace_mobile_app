@@ -52,6 +52,23 @@ final class PinStatusItem {
   final bool isActive;
 }
 
+final class TagItem {
+  const TagItem({
+    required this.id,
+    required this.name,
+    required this.colourHex,
+    this.textColourHex,
+    required this.isActive,
+  });
+
+  final String id;
+  final String name;
+  /// Primary colour for chips (API: `colour` / `color` / `bg_colour`).
+  final String colourHex;
+  final String? textColourHex;
+  final bool isActive;
+}
+
 final class GroupItemOption {
   const GroupItemOption({required this.id, required this.name});
 
@@ -72,10 +89,7 @@ final class CompositeItemOption {
 }
 
 final class GroupCompositeCatalog {
-  const GroupCompositeCatalog({
-    required this.groups,
-    required this.items,
-  });
+  const GroupCompositeCatalog({required this.groups, required this.items});
 
   final List<GroupItemOption> groups;
   final List<CompositeItemOption> items;
@@ -126,7 +140,8 @@ final class QuoteProjectApiClient {
     );
     final root = _coerceMap(response.data);
     final body = _entityBody(root);
-    final id = _readString(body, const ['id', 'project_id']) ??
+    final id =
+        _readString(body, const ['id', 'project_id']) ??
         _readString(root, const ['id', 'project_id']);
     if (id == null || id.isEmpty) {
       throw DioException(
@@ -160,7 +175,9 @@ final class QuoteProjectApiClient {
     final root = _coerceMap(_normalizeResponseData(response.data));
     final rows = root['data'] is List
         ? (root['data'] as List<dynamic>)
-        : (root['results'] is List ? (root['results'] as List<dynamic>) : const <dynamic>[]);
+        : (root['results'] is List
+              ? (root['results'] as List<dynamic>)
+              : const <dynamic>[]);
 
     final clients = <ClientOption>[];
     for (final row in rows) {
@@ -168,10 +185,13 @@ final class QuoteProjectApiClient {
       final idRaw = map['id'] ?? map['client_id'];
       final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
       if (id == null) continue;
-      final name = _readString(
-            map,
-            const ['name', 'client_name', 'title', 'company_name'],
-          ) ??
+      final name =
+          _readString(map, const [
+            'name',
+            'client_name',
+            'title',
+            'company_name',
+          ]) ??
           'Client $id';
       clients.add(ClientOption(id: id, name: name));
     }
@@ -208,7 +228,8 @@ final class QuoteProjectApiClient {
 
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
-    var resolvedLevelId = _readString(body, const ['id', 'level_id']) ??
+    var resolvedLevelId =
+        _readString(body, const ['id', 'level_id']) ??
         _readString(root, const ['id', 'level_id']);
     if (!isCreate) {
       resolvedLevelId ??= levelId.trim();
@@ -251,8 +272,9 @@ final class QuoteProjectApiClient {
     if (name.isEmpty) return null;
     try {
       final levels = await fetchProjectLevels(projectId: projectId);
-      final matches =
-          levels.where((e) => e.name.trim() == name).toList(growable: false);
+      final matches = levels
+          .where((e) => e.name.trim() == name)
+          .toList(growable: false);
       if (matches.isEmpty) return null;
       int sortKey(ProjectLevelItem e) => int.tryParse(e.id) ?? 0;
       matches.sort((a, b) => sortKey(b).compareTo(sortKey(a)));
@@ -319,7 +341,9 @@ final class QuoteProjectApiClient {
   Future<List<ProjectLevelItem>> fetchProjectLevels({
     required String projectId,
   }) async {
-    final response = await _dio.get<dynamic>(AppApiUrls.projectLevels(projectId));
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.projectLevels(projectId),
+    );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final data = root['data'];
     final rows = data is List ? data : const <dynamic>[];
@@ -328,7 +352,10 @@ final class QuoteProjectApiClient {
       final map = _coerceMap(row);
       final id = _readString(map, const ['id', 'level_id']);
       final drawingFile = _readString(map, const ['drawing_file']);
-      if (id == null || id.isEmpty || drawingFile == null || drawingFile.isEmpty) {
+      if (id == null ||
+          id.isEmpty ||
+          drawingFile == null ||
+          drawingFile.isEmpty) {
         continue;
       }
       final name = _readString(map, const ['name']) ?? 'Level';
@@ -369,7 +396,9 @@ final class QuoteProjectApiClient {
         },
       );
       final root = _coerceMap(_normalizeResponseData(response.data));
-      final rows = root['data'] is List ? (root['data'] as List<dynamic>) : const <dynamic>[];
+      final rows = root['data'] is List
+          ? (root['data'] as List<dynamic>)
+          : const <dynamic>[];
       for (final row in rows) {
         final map = _coerceMap(row);
         final id = _readString(map, const ['id']) ?? '';
@@ -402,10 +431,7 @@ final class QuoteProjectApiClient {
   Future<List<GroupItemOption>> fetchGroups() async {
     final response = await _dio.get<dynamic>(
       AppApiUrls.groups,
-      queryParameters: const <String, dynamic>{
-        'page': 1,
-        'page_size': 20,
-      },
+      queryParameters: const <String, dynamic>{'page': 1, 'page_size': 20},
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final rows = root['data'] is List
@@ -420,7 +446,8 @@ final class QuoteProjectApiClient {
       final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
       if (id == null) continue;
       final name =
-          _readString(map, const ['name', 'group_name', 'title']) ?? 'Group $id';
+          _readString(map, const ['name', 'group_name', 'title']) ??
+          'Group $id';
       out.add(GroupItemOption(id: id, name: name));
     }
     return out;
@@ -452,7 +479,9 @@ final class QuoteProjectApiClient {
       final parsedGroupId = rawGroup is Map
           ? int.tryParse('${rawGroup['id'] ?? ''}')
           : (rawGroup is int ? rawGroup : int.tryParse('${rawGroup ?? ''}'));
-      if (groupId != null && parsedGroupId != null && parsedGroupId != groupId) {
+      if (groupId != null &&
+          parsedGroupId != null &&
+          parsedGroupId != groupId) {
         continue;
       }
       final name =
@@ -496,13 +525,19 @@ final class QuoteProjectApiClient {
         g['items'] ?? g['composite_items'] ?? g['products'] ?? g['line_items'],
       );
       for (final item in itemNodes) {
-        final itemIdRaw = item['id'] ?? item['item_id'] ?? item['composite_item_id'];
+        final itemIdRaw =
+            item['id'] ?? item['item_id'] ?? item['composite_item_id'];
         final itemId = itemIdRaw is int
             ? itemIdRaw
             : int.tryParse('${itemIdRaw ?? ''}');
         if (itemId == null || !seenItemIds.add(itemId)) continue;
         final name =
-            _readString(item, const ['name', 'item_name', 'title', 'product_name']) ??
+            _readString(item, const [
+              'name',
+              'item_name',
+              'title',
+              'product_name',
+            ]) ??
             'Item $itemId';
         final nestedGroupRaw = item['group'] ?? item['group_id'];
         final nestedGroupId = nestedGroupRaw is Map
@@ -604,7 +639,164 @@ final class QuoteProjectApiClient {
       statusName: name,
       bgColour: _readString(body, const ['bg_colour']) ?? bgColour,
       textColour: _readString(body, const ['text_colour']) ?? textColour,
-      isActive: body['is_active'] is bool ? body['is_active'] as bool : isActive,
+      isActive: body['is_active'] is bool
+          ? body['is_active'] as bool
+          : isActive,
+    );
+  }
+
+  Future<void> deletePinStatus(String statusId) async {
+    await _dio.delete<void>(AppApiUrls.pinStatusById(statusId));
+  }
+
+  Future<List<TagItem>> fetchTags({
+    int page = 1,
+    int pageSize = 50,
+  }) async {
+    final out = <TagItem>[];
+    var nextPage = page < 1 ? 1 : page;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.tags,
+        queryParameters: <String, dynamic>{
+          'page': nextPage,
+          'page_size': pageSize,
+        },
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = root['data'] is List
+          ? (root['data'] as List<dynamic>)
+          : const <dynamic>[];
+      for (final row in rows) {
+        final map = _coerceMap(row);
+        final id = _readString(map, const ['id', 'tag_id']) ?? '';
+        final name = _readString(map, const [
+              'name',
+              'tag_name',
+              'label',
+              'title',
+            ]) ??
+            '';
+        if (id.isEmpty || name.isEmpty) continue;
+        final colour = _readString(map, const [
+              'colour',
+              'color',
+              'bg_colour',
+              'hex',
+            ]) ??
+            '#3B82F6';
+        final textC = _readString(map, const ['text_colour', 'text_color']);
+        final isActiveRaw = map['is_active'];
+        final isActive = isActiveRaw is bool
+            ? isActiveRaw
+            : '${isActiveRaw ?? 'true'}'.toLowerCase() != 'false';
+        out.add(
+          TagItem(
+            id: id,
+            name: name,
+            colourHex: colour,
+            textColourHex: textC,
+            isActive: isActive,
+          ),
+        );
+      }
+      final pagination = _coerceMap(root['pagination']);
+      final hasNext = pagination['next'] != null;
+      if (!hasNext) break;
+      nextPage += 1;
+    }
+    return out;
+  }
+
+  Future<TagItem> createTag({
+    required String name,
+    required String colourHex,
+    String? textColourHex,
+    bool? isActive,
+  }) async {
+    final payload = <String, dynamic>{
+      'name': name,
+      'colour': colourHex,
+      if (textColourHex != null) 'text_colour': textColourHex,
+      if (isActive != null) 'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'createTag',
+      endpoint: AppApiUrls.tags,
+      payload: payload,
+    );
+    final response = await _dio.post<dynamic>(
+      AppApiUrls.tags,
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return _tagItemFromMap(body);
+  }
+
+  Future<TagItem> updateTag({
+    required String tagId,
+    required String name,
+    required String colourHex,
+    String? textColourHex,
+    required bool isActive,
+  }) async {
+    final payload = <String, dynamic>{
+      'name': name,
+      'colour': colourHex,
+      if (textColourHex != null) 'text_colour': textColourHex,
+      'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'updateTag',
+      endpoint: AppApiUrls.tagById(tagId),
+      payload: payload,
+    );
+    final response = await _dio.put<dynamic>(
+      AppApiUrls.tagById(tagId),
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return _tagItemFromMap(body, fallbackId: tagId);
+  }
+
+  Future<void> deleteTag(String tagId) async {
+    await _dio.delete<void>(AppApiUrls.tagById(tagId));
+  }
+
+  TagItem _tagItemFromMap(Map<String, dynamic> body, {String? fallbackId}) {
+    final id = _readString(body, const ['id', 'tag_id']) ?? fallbackId ?? '';
+    final name = _readString(body, const [
+          'name',
+          'tag_name',
+          'label',
+        ]) ??
+        '';
+    if (id.isEmpty || name.isEmpty) {
+      throw DioException(
+        requestOptions: RequestOptions(path: AppApiUrls.tags),
+        type: DioExceptionType.badResponse,
+        message: 'Tag response missing id or name.',
+      );
+    }
+    final colour = _readString(body, const [
+          'colour',
+          'color',
+          'bg_colour',
+        ]) ??
+        '#3B82F6';
+    final textC = _readString(body, const ['text_colour', 'text_color']);
+    final isActiveRaw = body['is_active'];
+    final isActive = isActiveRaw is bool
+        ? isActiveRaw
+        : '${isActiveRaw ?? 'true'}'.toLowerCase() != 'false';
+    return TagItem(
+      id: id,
+      name: name,
+      colourHex: colour,
+      textColourHex: textC,
+      isActive: isActive,
     );
   }
 
@@ -672,9 +864,7 @@ final class QuoteProjectApiClient {
   }) {
     if (!kDebugMode) return;
     final prettyPayload = const JsonEncoder.withIndent('  ').convert(payload);
-    debugPrint(
-      '[API PAYLOAD] $methodName -> $endpoint\n$prettyPayload',
-    );
+    debugPrint('[API PAYLOAD] $methodName -> $endpoint\n$prettyPayload');
   }
 }
 

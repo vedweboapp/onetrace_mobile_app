@@ -19,6 +19,32 @@ abstract final class AuthSession {
     return _readFirstString(payload, const ['refresh', 'refresh_token']);
   }
 
+  /// `data.user.id` (or top-level `user.id`) from login / verify-otp JSON.
+  static String? readUserId(Map<String, dynamic>? payload) {
+    if (payload == null) return null;
+    String? fromMap(Map<String, dynamic> map) {
+      final u = map['user'];
+      if (u is! Map) return null;
+      final id = u['id'];
+      if (id == null) return null;
+      final s = id.toString().trim();
+      if (s.isEmpty || s == 'null') return null;
+      return s;
+    }
+
+    final fromRoot = fromMap(payload);
+    if (fromRoot != null) return fromRoot;
+
+    final nested = payload['data'];
+    if (nested is Map) {
+      final dataMap = Map<String, dynamic>.from(
+        nested.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      return fromMap(dataMap);
+    }
+    return null;
+  }
+
   static bool isJwtValid(String? token, {Duration skew = const Duration(seconds: 20)}) {
     final trimmed = token?.trim();
     if (trimmed == null || trimmed.isEmpty) return false;

@@ -8,6 +8,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/app_under_development_view.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
@@ -337,20 +338,12 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     if (result is! Map) return;
 
     final map = Map<String, dynamic>.from(result);
-    final uploadCount = map['uploadCount'] is int
-        ? (map['uploadCount'] as int).clamp(1, 999)
-        : (((map['filePath'] ?? '').toString().trim().isNotEmpty) ? 1 : 0);
+    final uploadCount = DrawingCanvasArgs.uploadCountFromResult(map);
 
     if (uploadCount > 0 && _drawingSearchController.text.trim().isNotEmpty) {
       // Clear any active search so newly uploaded drawings are visible.
       setState(() => _drawingSearchController.clear());
     }
-
-    final fileName = (map['fileName'] ?? '').toString().trim();
-    final pdfName = (map['pdfName'] ?? '').toString().trim();
-    final levelName = (map['levelName'] ?? '').toString().trim();
-    final filePath = (map['filePath'] ?? '').toString().trim();
-    final title = (pdfName.isNotEmpty ? pdfName : fileName).trim();
 
     // Always refresh from API so every uploaded level appears in the list.
     await _loadProjectDrawings();
@@ -360,38 +353,29 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
       return;
     }
 
-    if (title.isEmpty || filePath.isEmpty) return;
-    await _openDrawingCanvas(
-      _DrawingItem(
-        code: 'NEW',
-        title: title,
-        meta: levelName.isEmpty ? 'Level • N/A' : 'Level • $levelName',
-        updated: 'Just now',
-        accent: _accentForDrawing('$title|$levelName|new'),
-        localFilePath: filePath,
-        remoteDrawingUrl: null,
-        levelName: levelName.isEmpty ? null : levelName,
-        projectId: widget.project.id,
-        levelId: (map['levelId'] ?? '').toString().trim().isEmpty
-            ? null
-            : (map['levelId'] ?? '').toString().trim(),
-      ),
+    final args = DrawingCanvasArgs.fromUploadResult(
+      map,
+      projectName: widget.project.quoteName,
+      projectId: widget.project.id,
     );
+    if (args.title.trim().isEmpty || (args.filePath ?? '').trim().isEmpty) {
+      return;
+    }
+    await DrawingCanvasPage.push(context, args);
   }
 
   Future<void> _openDrawingCanvas(_DrawingItem item) async {
-    final result = await context.push<bool>(
-      DrawingCanvasPage.path,
-      extra: <String, dynamic>{
-        'title': item.title,
-        'filePath': item.localFilePath,
-        if ((item.remoteDrawingUrl ?? '').trim().isNotEmpty)
-          'drawingUrl': item.remoteDrawingUrl!.trim(),
-        'levelName': item.levelName,
-        'projectName': widget.project.quoteName,
-        'projectId': item.projectId ?? widget.project.id,
-        'levelId': item.levelId,
-      },
+    final result = await DrawingCanvasPage.push(
+      context,
+      DrawingCanvasArgs(
+        title: item.title,
+        filePath: item.localFilePath,
+        remoteDrawingUrl: item.remoteDrawingUrl,
+        levelName: item.levelName,
+        projectName: widget.project.quoteName,
+        projectId: (item.projectId ?? widget.project.id).trim(),
+        levelId: item.levelId,
+      ),
     );
     if (!mounted) return;
     if (result == true) {
@@ -457,7 +441,12 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               child: RefreshIndicator(
                 onRefresh: _loadProjectDrawings,
                 child: _isLoadingDrawings
-                    ? const Center(child: CircularProgressIndicator())
+                    ? Center(
+                        child: const AppSkeletonScreenBody(
+                          style: AppSkeletonScreenBodyStyle.listRows,
+                          listRowCount: 10,
+                        ),
+                      )
                     : _drawingsError != null
                     ? Center(
                         child: Padding(

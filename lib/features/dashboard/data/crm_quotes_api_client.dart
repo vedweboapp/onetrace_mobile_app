@@ -119,17 +119,148 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
         'reference',
         'number',
       ], fallback: '—'),
-      'client_name': read(const [
-        'client_name',
-        'client',
-        'client_title',
-        'organization',
-        'company_name',
-      ]),
+      'client_name': _readProjectClientDisplayName(row),
+      'project_name': _readListProjectLabel(row, read),
+      'contact_phone': _readListContactPhone(row, read),
       'description': read(const ['description', 'details', 'summary']),
       'start_date': read(const ['start_date', 'project_start', 'created_at']),
       'end_date': read(const ['end_date', 'project_end', 'valid_till']),
     };
+  }
+
+  /// Second-line “project” context: site, property, deal — not the quote title.
+  static String _readListProjectLabel(
+    Map<String, dynamic> row,
+    String Function(List<String> keys, {String fallback}) read,
+  ) {
+    final site = _readNestedName(row['site'], const [
+      'name',
+      'title',
+      'site_name',
+    ]);
+    if (site.isNotEmpty) return site;
+    final deal = read(const ['deal_name', 'deal', 'opportunity_name']);
+    if (deal.isNotEmpty) return deal;
+    return read(const [
+      'property',
+      'address',
+      'location',
+      'venue',
+      'project_site',
+    ]);
+  }
+
+  static String _readNestedName(dynamic raw, List<String> keys) {
+    if (raw is! Map) return '';
+    final m = Map<String, dynamic>.from(
+      raw.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    for (final key in keys) {
+      final v = m[key];
+      if (v == null || v is Map || v is List) continue;
+      final t = v.toString().trim();
+      if (t.isNotEmpty && t != 'null') return t;
+    }
+    return '';
+  }
+
+  static String _readListContactPhone(
+    Map<String, dynamic> row,
+    String Function(List<String> keys, {String fallback}) read,
+  ) {
+    final flat = read(const [
+      'contact_phone',
+      'phone',
+      'mobile',
+      'telephone',
+      'Phone',
+      'Mobile',
+      'work_phone',
+    ]);
+    if (flat.isNotEmpty) return flat;
+    final contact = row['contact'];
+    if (contact is Map) {
+      final m = Map<String, dynamic>.from(
+        contact.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      for (final key in const [
+        'phone',
+        'mobile',
+        'telephone',
+        'work_phone',
+        'phone_number',
+      ]) {
+        final v = m[key];
+        if (v == null || v is Map || v is List) continue;
+        final t = v.toString().trim();
+        if (t.isNotEmpty && t != 'null') return t;
+      }
+    }
+    return '';
+  }
+
+  /// List API nests `client` as `{ id, name, ... }`. Using [read] on that map
+  /// would stringify the whole object; only surface the client's [name].
+  static String _readProjectClientDisplayName(Map<String, dynamic> row) {
+    final clientRaw = row['client'];
+    if (clientRaw is Map) {
+      final m = Map<String, dynamic>.from(
+        clientRaw.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      for (final key in const [
+        'name',
+        'client_name',
+        'title',
+        'company_name',
+      ]) {
+        final v = m[key];
+        if (v == null || v is Map || v is List) continue;
+        final text = v.toString().trim();
+        if (text.isNotEmpty && text != 'null') return text;
+      }
+    }
+    String readFlat(List<String> keys, {String fallback = ''}) {
+      for (final key in keys) {
+        final value = row[key];
+        if (value == null || value is Map || value is List) continue;
+        final text = value.toString().trim();
+        if (text.isNotEmpty && text != 'null') return text;
+      }
+      return fallback;
+    }
+
+    return readFlat(const [
+      'client_name',
+      'client_title',
+      'organization',
+      'company_name',
+    ]);
+  }
+
+  static String? _readContactNameForQuotePayload(
+    Map<String, dynamic> quoteMap,
+  ) {
+    final explicit = _readString(
+      quoteMap,
+      const ['contact_name', 'customer_name', 'client_name'],
+    );
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+    final nested = _readProjectClientDisplayName(quoteMap);
+    return nested.isEmpty ? null : nested;
+  }
+
+  /// Same as [_readProjectClientDisplayName] for project detail payloads where
+  /// `client` may be a nested map.
+  static String? _readClientLabelForQuotePayload(
+    Map<String, dynamic> quoteMap,
+  ) {
+    final nested = _readProjectClientDisplayName(quoteMap);
+    if (nested.isNotEmpty) return nested;
+    final raw = quoteMap['client'];
+    if (raw is Map || raw is List) return null;
+    if (raw == null) return null;
+    final t = raw.toString().trim();
+    return t.isEmpty ? null : t;
   }
 
   Map<String, dynamic> _normalizeQuotePayload(Map<String, dynamic> root) {
@@ -192,10 +323,7 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
           'download_link',
           'pdf_download_url',
         ]),
-        'contact_name': _readString(
-          quoteMap,
-          const ['contact_name', 'customer_name', 'client_name'],
-        ),
+        'contact_name': _readContactNameForQuotePayload(quoteMap),
         'created_by': createdByText,
         'modified_by': modifiedByText,
         'layout': _readString(quoteMap, const ['layout']),
@@ -205,7 +333,7 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
         'start_date': _readString(quoteMap, const ['start_date']),
         'end_date': _readString(quoteMap, const ['end_date']),
         'organization': _readString(quoteMap, const ['organization']),
-        'client': _readString(quoteMap, const ['client']),
+        'client': _readClientLabelForQuotePayload(quoteMap),
         'created_at': _readString(quoteMap, const ['created_at']),
         'modified_at': _readString(quoteMap, const ['modified_at']),
         'deleted_at': _readString(quoteMap, const ['deleted_at']),

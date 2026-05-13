@@ -84,6 +84,14 @@ abstract final class AppApiUrls {
   /// `GET` [pin-status_read] · `PUT` [pin-status_update] · `PATCH` [pin-status_partial_update] · `DELETE` [pin-status_delete]
   static String pinStatusById(String id) => '$_v1/pin-status/$id/';
 
+  // ─── Tags (quotations metadata) ───────────────────────────────────────────
+
+  /// `GET` [tag_list] · `POST` [tag_create]
+  static const String tags = '$_v1/tag/';
+
+  /// `GET` [tag_read] · `PUT` [tag_update] · `PATCH` [tag_partial_update] · `DELETE` [tag_delete]
+  static String tagById(String id) => '$_v1/tag/$id/';
+
   // ─── Project ───────────────────────────────────────────────────────────────
 
   /// `GET` [project_list] · `POST` [project_create]
@@ -91,6 +99,12 @@ abstract final class AppApiUrls {
 
   /// `GET` [project_read] · `PUT` [project_update] · `PATCH` [project_partial_update] · `DELETE` [project_delete]
   static String projectById(String id) => '$_v1/project/$id/';
+
+  /// `GET` [quotations_list] · `POST` [quotations_create]
+  static const String quotations = '$_v1/quotations/';
+
+  /// `GET` [quotations_read] · `PUT` [quotations_update] · `PATCH` [quotations_partial_update] · `DELETE` [quotations_delete]
+  static String quotationById(String id) => '$_v1/quotations/$id/';
 
   /// `GET` [project_level_list] · `POST` [project_level_create]
   static String projectLevels(String projectId) =>
@@ -101,6 +115,9 @@ abstract final class AppApiUrls {
       '$_v1/project/$projectId/level/$id/';
 
   // ─── User profile ─────────────────────────────────────────────────────────
+
+  /// `GET` [role_list] · `POST` [role_create]
+  static const String roles = '$_v1/role/';
 
   /// `GET` [user-profile_list]
   static const String userProfiles = '$_v1/user-profile/';

@@ -276,6 +276,12 @@ class _OtpVerifyPageState extends ConsumerState<OtpVerifyPage> {
           refreshToken,
         );
       }
+      final userId = AuthSession.readUserId(response.data);
+      if (userId != null && userId.isNotEmpty) {
+        await storage.setString(LocalStorageKeys.authUserId, userId);
+      } else {
+        await storage.remove(LocalStorageKeys.authUserId);
+      }
       if (!mounted) return;
       context.go(DashboardPage.path);
     } on DioException catch (e) {

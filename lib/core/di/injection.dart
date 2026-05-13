@@ -5,18 +5,28 @@ import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/network/auth_bearer_interceptor.dart';
 import 'package:red5/core/network/dio_multipart_transfer.dart';
+import 'package:red5/core/network/success_toast_interceptor.dart';
 import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
 import 'package:red5/features/contacts/data/contacts_api_client.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api.dart';
 import 'package:red5/features/groups/data/groups_api_client.dart';
+import 'package:red5/features/items/data/items_api_client.dart';
+import 'package:red5/features/quotations/data/quotations_api_client.dart';
 import 'package:red5/features/dashboard/data/invite_user_service.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
+import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 
 final GetIt sl = GetIt.instance;
+
+List<Interceptor> _authorizedDioInterceptors(LocalStorage storage) => [
+  AuthBearerInterceptor(storage),
+  ApiDioLogInterceptor(),
+  SuccessToastInterceptor(),
+];
 
 /// Registers app-wide singletons. Call once after [LocalStorage] is ready
 /// (e.g. from [main] after `SharedPreferencesStorage.create()`).
@@ -40,10 +50,7 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
             status != null && status >= 200 && status < 300,
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return AuthApiClient(dio: dio);
   });
 
@@ -61,10 +68,7 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         },
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return CrmQuotesApiClient(dio: dio);
   });
 
@@ -82,10 +86,7 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         },
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return ClientsApiClient(dio: dio);
   });
 
@@ -103,10 +104,7 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         },
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return SitesApiClient(dio: dio);
   });
 
@@ -124,10 +122,7 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         },
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return ContactsApiClient(dio: dio);
   });
 
@@ -145,32 +140,11 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         },
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return GroupsApiClient(dio: dio);
   });
 
-  sl.registerLazySingleton<QuoteProjectApiClient>(() {
-    final storage = sl<LocalStorage>();
-    final dio = Dio(
-      BaseOptions(
-        baseUrl: AppApiUrls.baseUrl,
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 120),
-        sendTimeout: const Duration(seconds: 120),
-        headers: const {Headers.acceptHeader: Headers.jsonContentType},
-      ),
-    );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
-    return QuoteProjectApiClient(dio: dio);
-  });
-
-  sl.registerLazySingleton<UserProfileApiClient>(() {
+  sl.registerLazySingleton<ItemsApiClient>(() {
     final storage = sl<LocalStorage>();
     final dio = Dio(
       BaseOptions(
@@ -184,10 +158,73 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         },
       ),
     );
-    dio.interceptors.addAll([
-      AuthBearerInterceptor(storage),
-      ApiDioLogInterceptor(),
-    ]);
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return ItemsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<QuotationsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return QuotationsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<QuoteProjectApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 120),
+        sendTimeout: const Duration(seconds: 120),
+        headers: const {Headers.acceptHeader: Headers.jsonContentType},
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return QuoteProjectApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<RolesApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return RolesApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<UserProfileApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {Headers.acceptHeader: Headers.jsonContentType},
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return UserProfileApiClient(dio: dio);
   });
 

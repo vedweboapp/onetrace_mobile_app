@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/groups/data/group_date_format.dart';
 import 'package:red5/features/groups/data/group_models.dart';
 import 'package:red5/features/groups/data/groups_api_client.dart';
@@ -231,61 +232,75 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
         ),
       );
     }
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-      children: [
-        Text(
-          g.name.isEmpty ? 'Group Name' : g.name,
-          style: AppFonts.headlineSmall(
-            color: AppColors.inkStrong,
-          ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Composite items',
-          style: AppFonts.bodyMedium(
-            color: AppColors.muted,
-          ).copyWith(fontSize: 15),
-        ),
-        const SizedBox(height: 8),
-        Align(alignment: Alignment.centerLeft, child: _statusPill(g.isActive)),
-        const SizedBox(height: 18),
-        const Divider(height: 1, color: Color(0xFFE2E2E4)),
-        _sectionHeader('Basic Info'),
-        _labelValue('Group Name', g.name),
-        const SizedBox(height: 16),
-        const Divider(height: 1, color: Color(0xFFE2E2E4)),
-        _sectionHeader('Composite items'),
-        ...compositeBlocks,
-        const SizedBox(height: 4),
-        const Divider(height: 1, color: Color(0xFFE2E2E4)),
-        _sectionHeader('Record'),
-        _labelValue('Created At', formatGroupDate(g.createdAt)),
-        const SizedBox(height: 14),
-        _labelValue('Updated At', formatGroupDate(g.updatedAt)),
-        const SizedBox(height: 14),
-        Text(
-          'CREATED BY',
-          style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-            fontSize: 11,
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    g.name.isEmpty ? 'Group Name' : g.name,
+                    style: AppFonts.headlineSmall(
+                      color: AppColors.inkStrong,
+                    ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Composite items',
+                    style: AppFonts.bodyMedium(
+                      color: AppColors.muted,
+                    ).copyWith(fontSize: 15),
+                  ),
+                ],
+              ),
+              // const SizedBox(height: 8),
+              Align(alignment: Alignment.centerLeft, child: _statusPill(g.isActive)),
+            ],
           ),
-        ),
-        const SizedBox(height: 6),
-        _createdBy(g),
-        const SizedBox(height: 14),
-        Text(
-          'MODIFIED BY',
-          style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-            fontSize: 11,
+
+          const SizedBox(height: 18),
+          const Divider(height: 1, color: Color(0xFFE2E2E4)),
+          _sectionHeader('Basic Info'),
+          _labelValue('Group Name', g.name),
+          const SizedBox(height: 16),
+          const Divider(height: 1, color: Color(0xFFE2E2E4)),
+          _sectionHeader('Composite items'),
+          ...compositeBlocks,
+          const SizedBox(height: 4),
+          const Divider(height: 1, color: Color(0xFFE2E2E4)),
+          _sectionHeader('Record'),
+          _labelValue('Created At', formatGroupDate(g.createdAt)),
+          const SizedBox(height: 14),
+          _labelValue('Updated At', formatGroupDate(g.updatedAt)),
+          const SizedBox(height: 14),
+          Text(
+            'CREATED BY',
+            style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
+              fontSize: 11,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        _modifiedBy(g),
-      ],
+          const SizedBox(height: 6),
+          _createdBy(g),
+          const SizedBox(height: 14),
+          Text(
+            'MODIFIED BY',
+            style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _modifiedBy(g),
+        ],
+      ),
     );
   }
 
@@ -338,7 +353,12 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: const AppSkeletonScreenBody(
+                scrollable: false,
+                toastBlockCount: 4,
+              ),
+            )
           : _error != null
           ? Center(
               child: Padding(

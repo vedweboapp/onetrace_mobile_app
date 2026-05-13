@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/core/auth/auth_session.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/widgets/app_navigator_key.dart';
 import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
@@ -32,6 +33,12 @@ import 'package:red5/features/contacts/presentation/views/add_contact_page.dart'
 import 'package:red5/features/contacts/presentation/views/contact_detail_page.dart';
 import 'package:red5/features/groups/presentation/views/add_group_page.dart';
 import 'package:red5/features/groups/presentation/views/group_detail_page.dart';
+import 'package:red5/features/items/data/item_models.dart';
+import 'package:red5/features/composite_items/presentation/view/add_composite_item_page.dart';
+import 'package:red5/features/items/presentation/views/add_item_page.dart';
+import 'package:red5/features/items/presentation/views/item_detail_page.dart';
+import 'package:red5/features/quotations/presentation/views/add_quotation_page.dart';
+import 'package:red5/features/quotations/presentation/views/quotation_detail_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
@@ -59,6 +66,7 @@ List<QuoteCompositeItemGroup> _compositeGroupsFromExtra(
 final appRouterProvider = Provider<GoRouter>((ref) {
   // Splash first; static preview (dart-define) only switches quote API, not entry route.
   return GoRouter(
+    navigatorKey: appRootNavigatorKey,
     initialLocation: SplashPage.path,
     observers: <NavigatorObserver>[appRouteObserver],
     redirect: (context, state) {
@@ -257,6 +265,93 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return _animatedPage(
             state: state,
             child: GroupDetailPage(groupId: groupId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: AddItemPage.path,
+        name: AddItemPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddItemPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: AddCompositeItemPage.path,
+        name: AddCompositeItemPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddCompositeItemPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: AddQuotationPage.path,
+        name: AddQuotationPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddQuotationPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${QuotationDetailPage.pathPrefix}/:quotationId',
+        name: QuotationDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['quotationId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: QuotationDetailPage(quotationId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ItemDetailPage.pathPrefix}/:itemId/edit',
+        name: AddItemPage.editName,
+        pageBuilder: (context, state) {
+          final itemId = (state.pathParameters['itemId'] ?? '').trim();
+          final extra = state.extra;
+          final prefill = extra is ItemDetailModel ? extra : null;
+          return _animatedPage(
+            state: state,
+            child: AddItemPage(
+              editItemId: itemId,
+              prefill: prefill,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ItemDetailPage.pathPrefix}/:itemId/edit-composite',
+        name: AddCompositeItemPage.editName,
+        pageBuilder: (context, state) {
+          final itemId = (state.pathParameters['itemId'] ?? '').trim();
+          final extra = state.extra;
+          final prefill = extra is ItemDetailModel ? extra : null;
+          return _animatedPage(
+            state: state,
+            child: AddCompositeItemPage(
+              editItemId: itemId,
+              prefill: prefill,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ItemDetailPage.pathPrefix}/:itemId',
+        name: ItemDetailPage.name,
+        pageBuilder: (context, state) {
+          final itemId = (state.pathParameters['itemId'] ?? '').trim();
+          return _animatedPage(
+            state: state,
+            child: ItemDetailPage(itemId: itemId),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -586,7 +681,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: PinStatusSettingsPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: const PinStatusSettingsPage(),
+          child: PinStatusSettingsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),
@@ -595,7 +690,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: TagsSettingsPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: const TagsSettingsPage(),
+          child: TagsSettingsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),

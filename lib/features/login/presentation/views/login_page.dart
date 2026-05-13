@@ -265,6 +265,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       } else {
         await storage.remove(LocalStorageKeys.authRefreshToken);
       }
+      final userId = AuthSession.readUserId(response.data);
+      if (userId != null && userId.isNotEmpty) {
+        await storage.setString(LocalStorageKeys.authUserId, userId);
+      } else {
+        await storage.remove(LocalStorageKeys.authUserId);
+      }
       if (_rememberMe) {
         await storage.setBool(LocalStorageKeys.authRememberMe, true);
         await storage.setString(

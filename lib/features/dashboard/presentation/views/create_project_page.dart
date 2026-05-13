@@ -217,44 +217,33 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
         endDate: _formatForApi(_endDate!),
       );
       if (!mounted) return;
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Project created successfully')),
+      context.showSuccessTopPopup(
+        title: 'Project created successfully',
+        subtitle: 'You can upload drawings in the next step.',
       );
       final uploadResult = await context.push<dynamic>(
         UploadDrawingPage.path,
         extra: <String, dynamic>{'projectId': projectId},
       );
-      if (!mounted || uploadResult is! Map) {
+      if (!mounted) return;
+      if (uploadResult is! Map) {
         context.pop();
         return;
       }
 
       final map = Map<String, dynamic>.from(uploadResult);
-      final uploadCount = map['uploadCount'] is int
-          ? (map['uploadCount'] as int).clamp(1, 999)
-          : (((map['filePath'] ?? '').toString().trim().isNotEmpty) ? 1 : 0);
-      final fileName = (map['fileName'] ?? '').toString().trim();
-      final pdfName = (map['pdfName'] ?? '').toString().trim();
-      final filePath = (map['filePath'] ?? '').toString().trim();
-      final levelName = (map['levelName'] ?? '').toString().trim();
-      final uploadedProjectId = (map['projectId'] ?? '').toString().trim();
-      final levelId = (map['levelId'] ?? '').toString().trim();
-      final title = (pdfName.isNotEmpty ? pdfName : fileName).trim();
-
-      if (uploadCount == 1 && title.isNotEmpty && filePath.isNotEmpty) {
-        await context.push<bool>(
-          DrawingCanvasPage.path,
-          extra: <String, dynamic>{
-            'title': title,
-            'filePath': filePath,
-            'levelName': levelName,
-            'projectName': _projectNameController.text.trim(),
-            'projectId': uploadedProjectId.isEmpty
-                ? projectId
-                : uploadedProjectId,
-            'levelId': levelId,
-          },
+      final uploadCount = DrawingCanvasArgs.uploadCountFromResult(map);
+      if (uploadCount == 1) {
+        final args = DrawingCanvasArgs.fromUploadResult(
+          map,
+          projectName: _projectNameController.text.trim(),
+          projectId: projectId,
         );
+        if (args.title.trim().isNotEmpty &&
+            (args.filePath ?? '').trim().isNotEmpty) {
+          if (!mounted) return;
+          await DrawingCanvasPage.push(context, args);
+        }
       }
       if (mounted) context.pop();
     } catch (e) {

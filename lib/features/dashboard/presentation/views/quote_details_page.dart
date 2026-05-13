@@ -234,33 +234,11 @@ class _QuoteDetailsPageState extends ConsumerState<QuoteDetailsPage> {
           ),
         ),
         body: AppScreenStack(
-          child: ListView(
+          child: AppSkeletonScreenBody(
             padding: EdgeInsets.fromLTRB(16, listTopPad, 16, 24),
-            children: [
-              AppSkeletonBox(height: 28, width: 220, borderRadius: 8),
-              const SizedBox(height: 22),
-              ...List.generate(
-                11,
-                (i) => Padding(
-                  padding: EdgeInsets.only(bottom: i == 10 ? 20 : 16),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 40,
-                        child: AppSkeletonLine(height: 15, widthFactor: 1),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 60,
-                        child: AppSkeletonLine(height: 15, widthFactor: 1),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              AppSkeletonBox(height: 50, borderRadius: 12),
-            ],
+            style: AppSkeletonScreenBodyStyle.listRows,
+            listRowCount: 12,
+            spacing: 0,
           ),
         ),
       );

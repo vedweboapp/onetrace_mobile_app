@@ -100,13 +100,19 @@ final class GroupsApiClient {
 
   /// Fetches the list of available composite items used to populate
   /// the [AddGroupPage] dropdown. Walks all pages so the picker shows everything.
+  ///
+  /// Uses `GET /api/v1/item/?is_composite=true` (same catalog as items list).
   Future<List<CompositeItemRef>> fetchCompositeItemOptions() async {
     final results = <String, CompositeItemRef>{};
     int page = 1;
     while (true) {
       final response = await _dio.get<Map<String, dynamic>>(
-        AppApiUrls.compositeItems,
-        queryParameters: <String, dynamic>{'page': page},
+        AppApiUrls.items,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'page_size': 20,
+          'is_composite': true,
+        },
       );
       final root = response.data ?? const <String, dynamic>{};
       final rows = _readRows(root);

@@ -5,6 +5,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/groups/data/group_date_format.dart';
 import 'package:red5/features/groups/data/group_models.dart';
 import 'package:red5/features/groups/data/groups_api_client.dart';
@@ -275,7 +276,12 @@ class _GroupsPageState extends ConsumerState<GroupsPage> {
           if (_groups.isNotEmpty) _searchBar(),
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? Center(
+                    child: const AppSkeletonScreenBody(
+                      style: AppSkeletonScreenBodyStyle.listRows,
+                      listRowCount: 10,
+                    ),
+                  )
                 : _error != null
                 ? Center(
                     child: Padding(

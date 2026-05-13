@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,10 +7,11 @@ import 'package:hexcolor/hexcolor.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_under_development_view.dart';
-import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
+import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
@@ -16,10 +19,31 @@ import 'package:red5/features/dashboard/presentation/views/create_project_page.d
 import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/features/dashboard/presentation/views/quotations_list_page.dart';
+import 'package:red5/features/quotations/data/quotation_models.dart';
+import 'package:red5/features/quotations/presentation/quotation_list_refresh.dart';
+import 'package:red5/features/quotations/presentation/views/add_quotation_page.dart';
 import 'package:red5/features/clients/presentation/views/clients_page.dart';
 import 'package:red5/features/contacts/presentation/views/contacts_page.dart';
 import 'package:red5/features/groups/presentation/views/groups_page.dart';
+import 'package:red5/features/composite_items/presentation/view/composite_item_page.dart';
+import 'package:red5/features/items/presentation/views/items_page.dart';
 import 'package:red5/features/sites/presentation/views/sites_page.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+
+String? _absoluteProfileImageUrl(String imageFromApi) {
+  final raw = imageFromApi.trim();
+  if (raw.isEmpty) return null;
+  final parsed = Uri.tryParse(raw);
+  if (parsed != null &&
+      parsed.hasScheme &&
+      (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+    return raw;
+  }
+  return Uri.parse(AppApiUrls.baseUrl)
+      .resolve(raw.startsWith('/') ? raw : '/$raw')
+      .toString();
+}
 
 class DashboardPage extends ConsumerStatefulWidget {
   const DashboardPage({super.key});
@@ -43,12 +67,14 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   int _selectedIndex = 0;
   bool _productsExpanded = true;
   PageRoute<dynamic>? _subscribedRoute;
+  String? _profileAvatarUrl;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(() => setState(() {}));
     _fetchProjects();
+    unawaited(_loadProfileAvatar());
   }
 
   @override
@@ -82,6 +108,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     }
     await storage.remove(LocalStorageKeys.authAccessToken);
     await storage.remove(LocalStorageKeys.authRefreshToken);
+    await storage.remove(LocalStorageKeys.authUserId);
     if (!mounted) return;
     GoRouter.of(context).go('/');
   }
@@ -90,6 +117,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   @override
   void didPopNext() {
     _fetchProjects(silent: _projects.isNotEmpty);
+    unawaited(_loadProfileAvatar());
   }
 
   Future<void> _fetchProjects({bool silent = false}) async {
@@ -122,8 +150,32 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     }
   }
 
-  void _openCreateQuoteProject() {
-    GoRouter.of(context).push(CreateProjectPage.path);
+  Future<void> _loadProfileAvatar() async {
+    try {
+      final api = ref.read(userProfileApiClientProvider);
+      final profile = await api.fetchCurrentProfile();
+      if (!mounted) return;
+      final raw = profile?.userImage.trim() ?? '';
+      setState(() {
+        _profileAvatarUrl =
+            raw.isEmpty ? null : _absoluteProfileImageUrl(raw);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _profileAvatarUrl = null);
+    }
+  }
+
+  void _openCreateQuoteProject() async {
+    if (_selectedIndex == 8) {
+      final created = await context.push<QuotationListItem>(AddQuotationPage.path);
+      if (!mounted) return;
+      if (created != null) {
+        ref.read(quotationListRefreshTickProvider.notifier).state++;
+      }
+    } else {
+      GoRouter.of(context).push(CreateProjectPage.path);
+    }
   }
 
   void _openSettings() {
@@ -147,6 +199,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       3 => 'Projects',
       4 => 'Contacts',
       5 => 'Groups',
+      6 => 'Items',
+      7 => 'Composite items',
+      8 => 'Quotation',
       _ => 'Home',
     };
     return Text(
@@ -196,18 +251,34 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
               ),
             ),
           ],
-          child: CircleAvatar(
-            radius: 14,
-            backgroundColor: Color(0xFF2A2A2A),
-            child: Image.network(
-              "https://imageio.forbes.com/specials-images/imageserve/6996d0608fadf4b296e4f8d7/Comedy-Wildlife-Photography-Awards--A-cub-bear-smiles-for-the-camera-in-Finland-/0x0.jpg?crop=1345%2C1000%2Cx55%2Cy315%2Csafe&width=960&dpr=1.5",
-              height: 20,
-              width: 20,
-              color: AppColors.white,
-            ),
-          ),
+          child: _buildProfileMenuAvatar(),
         ),
       ],
+    );
+  }
+
+  /// [CircleAvatar] only allows [onBackgroundImageError] when [backgroundImage] is non-null.
+  Widget _buildProfileMenuAvatar() {
+    final url = _profileAvatarUrl?.trim();
+    if (url == null || url.isEmpty) {
+      return const CircleAvatar(
+        radius: 16,
+        backgroundColor: Color(0xFFE5E7EB),
+        child: Icon(
+          Icons.person_rounded,
+          size: 20,
+          color: AppColors.textFieldHint,
+        ),
+      );
+    }
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: const Color(0xFFE5E7EB),
+      backgroundImage: NetworkImage(url),
+      onBackgroundImageError: (Object exception, StackTrace? stackTrace) {
+        if (!mounted) return;
+        setState(() => _profileAvatarUrl = null);
+      },
     );
   }
 
@@ -318,7 +389,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         if (_isLoadingProjects) {
           return _projectsBodyWithRefresh(
             constraints: constraints,
-            child: const Center(child: CircularProgressIndicator()),
+            child: Center(
+              child: const AppSkeletonScreenBody(
+                style: AppSkeletonScreenBodyStyle.listRows,
+                listRowCount: 10,
+              ),
+            ),
           );
         }
         if (_projectsError != null) {
@@ -449,16 +525,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     }
   }
 
-  void _showComingSoon(String label) {
-    Navigator.of(context).pop();
-    context.showTopSnackBar(
-      SnackBar(
-        content: Text('$label is coming soon'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
   Widget _buildAppDrawer(BuildContext context) {
     return Drawer(
       backgroundColor: AppColors.white,
@@ -547,20 +613,36 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
                     children: [
                       _drawerSubItem(
                         'Items',
-                        () => _showComingSoon('Items'),
-                        false,
+                        () {
+                          Navigator.of(context).pop();
+                          setState(() {
+                            _selectedIndex = 6;
+                            _productsExpanded = true;
+                          });
+                        },
+                        _selectedIndex == 6,
                       ),
                       _drawerSubItem(
                         'Composite Items',
-                        () => _showComingSoon('Composite Items'),
-                        false,
+                        () {
+                          Navigator.of(context).pop();
+                          setState(() {
+                            _selectedIndex = 7;
+                            _productsExpanded = true;
+                          });
+                        },
+                        _selectedIndex == 7,
                       ),
                     ],
                   ),
                   _drawerItem(
                     icon: "assets/images/qoutations.png",
                     label: 'Quotations',
-                    onTap: () => _showComingSoon('Quotations'),
+                    selected: _selectedIndex == 8,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      setState(() => _selectedIndex = 8);
+                    },
                   ),
                 ],
               ),
@@ -716,11 +798,14 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
 
   @override
   Widget build(BuildContext context) {
+    final quotationTab = _selectedIndex == 8;
+    final shellBg = quotationTab ? AppColors.white : _backgroundColor;
+
     return Scaffold(
-      backgroundColor: _backgroundColor,
+      backgroundColor: shellBg,
       drawer: _buildAppDrawer(context),
       appBar: AppBar(
-        backgroundColor: _backgroundColor,
+        backgroundColor: shellBg,
         elevation: 0,
         scrolledUnderElevation: 0,
         titleSpacing: 4,
@@ -744,12 +829,15 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
           _buildProjectsBody(),
           const ContactsPage(),
           const GroupsPage(),
+          const ItemsPage(),
+          const CompositeItemPage(),
+          const QuotationsListPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _bottomSelectedIndex,
         onDestinationSelected: _onBottomDestinationSelected,
-        backgroundColor: _backgroundColor,
+        backgroundColor: shellBg,
         indicatorColor: _selectedIndex == 2
             ? Colors.transparent
             : const Color(0xFFECECEE),
@@ -834,9 +922,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: _selectedIndex == 3
+      floatingActionButton: (_selectedIndex == 3 || _selectedIndex == 8)
           ? FloatingActionButton(
-              heroTag: 'dashboard_create_quote',
+              heroTag: _selectedIndex == 8
+                  ? 'dashboard_quotation_create_fab'
+                  : 'dashboard_create_quote',
               onPressed: _openCreateQuoteProject,
               backgroundColor: const Color(0xFF121212),
               foregroundColor: AppColors.white,

@@ -6,6 +6,8 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/clients/data/client_models.dart';
+import 'package:red5/features/clients/data/clients_api_client.dart';
 import 'package:red5/features/contacts/data/contact_models.dart';
 import 'package:red5/features/contacts/data/contacts_api_client.dart';
 
@@ -27,7 +29,6 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
   final _formKey = GlobalKey<FormState>();
 
   final _contactName = TextEditingController();
-  final _clientName = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
   final _address1 = TextEditingController();
@@ -38,6 +39,11 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
 
   String _country = 'United States';
   bool _isSubmitting = false;
+
+  final List<ClientModel> _clients = <ClientModel>[];
+  bool _clientsLoading = true;
+  String? _clientsError;
+  String? _selectedClientId;
 
   bool get _isEditing => widget.existing != null;
 
@@ -55,7 +61,8 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
     final existing = widget.existing;
     if (existing != null) {
       _contactName.text = existing.contactName;
-      _clientName.text = existing.clientName;
+      final cid = existing.client.id.trim();
+      if (cid.isNotEmpty) _selectedClientId = cid;
       _email.text = existing.email;
       _phone.text = existing.phone;
       _address1.text = existing.addressLine1;
@@ -68,12 +75,100 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
         _country = _countries.contains(country) ? country : _countries.first;
       }
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadClients());
+  }
+
+  Future<void> _loadClients() async {
+    setState(() {
+      _clientsLoading = true;
+      _clientsError = null;
+    });
+    try {
+      final api = ref.read(clientsApiClientProvider);
+      final all = <ClientModel>[];
+      var page = 1;
+      var totalPages = 1;
+      do {
+        final result = await api.fetchClientsPage(page: page);
+        all.addAll(result.items);
+        totalPages = result.totalPages;
+        page++;
+      } while (page <= totalPages && page <= 50);
+
+      if (!mounted) return;
+      setState(() {
+        _clients
+          ..clear()
+          ..addAll(all);
+        _clientsLoading = false;
+        _clientsError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _clientsLoading = false;
+        _clientsError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load clients',
+        );
+      });
+    }
+  }
+
+  List<DropdownMenuItem<String>> _clientDropdownItems() {
+    final existing = widget.existing;
+    final items = <DropdownMenuItem<String>>[];
+    final seen = <String>{};
+
+    if (existing != null) {
+      final id = existing.client.id.trim();
+      if (id.isNotEmpty && !_clients.any((c) => c.id == id)) {
+        items.add(
+          DropdownMenuItem<String>(
+            value: id,
+            child: Text(
+              existing.clientName.trim().isEmpty
+                  ? 'Client #$id'
+                  : existing.clientName,
+            ),
+          ),
+        );
+        seen.add(id);
+      }
+    }
+
+    for (final c in _clients) {
+      if (seen.contains(c.id)) continue;
+      items.add(
+        DropdownMenuItem<String>(
+          value: c.id,
+          child: Text(c.name.trim().isEmpty ? 'Client #${c.id}' : c.name),
+        ),
+      );
+      seen.add(c.id);
+    }
+    return items;
+  }
+
+  String? _clientDropdownValidator(String? value) {
+    if ((value ?? '').trim().isEmpty) return 'Select a client';
+    return null;
+  }
+
+  /// Value shown in the client dropdown must match an [DropdownMenuItem.value].
+  String? _effectiveClientDropdownValue() {
+    final id = _selectedClientId?.trim();
+    if (id == null || id.isEmpty) return null;
+    final allowed = _clientDropdownItems()
+        .map((e) => e.value)
+        .whereType<String>()
+        .toSet();
+    return allowed.contains(id) ? id : null;
   }
 
   @override
   void dispose() {
     _contactName.dispose();
-    _clientName.dispose();
     _email.dispose();
     _phone.dispose();
     _address1.dispose();
@@ -115,15 +210,39 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
 
   Future<void> _submit() async {
     if (_isSubmitting) return;
+    if (_clientsLoading) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Still loading clients. Please wait.')),
+      );
+      return;
+    }
+    if (_clientsError != null) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Fix client loading before saving.')),
+      );
+      return;
+    }
+    if (_clientDropdownItems().isEmpty) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text('Create a client in Clients before adding a contact.'),
+        ),
+      );
+      return;
+    }
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _isSubmitting = true);
     try {
       final api = ref.read(contactsApiClientProvider);
       final existing = widget.existing;
+      final clientId = (_selectedClientId ?? '').trim();
       final saved = existing == null
           ? await api.createContact(
               contactName: _contactName.text.trim(),
-              clientName: _clientName.text.trim(),
+              clientId: clientId,
               email: _email.text.trim(),
               phone: _phone.text.trim(),
               addressLine1: _address1.text.trim(),
@@ -136,7 +255,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
           : await api.updateContact(
               id: existing.id,
               contactName: _contactName.text.trim(),
-              clientName: _clientName.text.trim(),
+              clientId: clientId,
               email: _email.text.trim(),
               phone: _phone.text.trim(),
               addressLine1: _address1.text.trim(),
@@ -275,13 +394,58 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
                       validator: _requiredField('Contact Name'),
                     ),
                     const SizedBox(height: 14),
-                    _label('Client Name', required: true),
+                    _label('Client', required: true),
                     const SizedBox(height: 8),
-                    AppTextField(
-                      controller: _clientName,
-                      hintText: 'e.g. Apex Structural Group',
-                      validator: _requiredField('Client Name'),
-                    ),
+                    if (_clientsLoading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.4),
+                          ),
+                        ),
+                      )
+                    else if (_clientsError != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _clientsError!,
+                            style: AppFonts.bodySmall(
+                              color: const Color(0xFFE53935),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _isSubmitting ? null : _loadClients,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      )
+                    else if (_clientDropdownItems().isEmpty)
+                      Text(
+                        'No clients found. Create a client first.',
+                        style: AppFonts.bodySmall(
+                          color: const Color(0xFF8A8A8A),
+                        ),
+                      )
+                    else
+                      DropdownButtonFormField<String>(
+                        key: ValueKey<String>(
+                          '${_selectedClientId ?? ''}|${_clients.length}',
+                        ),
+                        initialValue: _effectiveClientDropdownValue(),
+                        items: _clientDropdownItems(),
+                        onChanged: _isSubmitting
+                            ? null
+                            : (value) => setState(
+                                () => _selectedClientId = value,
+                              ),
+                        validator: _clientDropdownValidator,
+                        decoration: _dropdownDecoration(),
+                        hint: const Text('Select client'),
+                      ),
                     _sectionLabel('Primary Contact'),
                     _label('Email', required: true),
                     const SizedBox(height: 8),

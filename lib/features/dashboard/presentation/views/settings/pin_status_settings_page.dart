@@ -1,23 +1,148 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_brand_color_sheet.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
-/// Module and Field → Pin Status categories (static UI for now).
-class PinStatusSettingsPage extends StatelessWidget {
+/// Module and Field → Pin Status (`GET/POST /api/v1/pin-status/`, `PUT/DELETE …/{id}/`).
+class PinStatusSettingsPage extends ConsumerStatefulWidget {
   const PinStatusSettingsPage({super.key});
 
   static const path = '/settings/metadata/pin-status';
   static const name = 'settings-pin-status';
 
-  static const _statusItems = <_PinStatusUi>[
-    _PinStatusUi(label: 'Open', color: AppColors.plotPinBlue),
-    _PinStatusUi(label: 'In Progress', color: AppColors.plotPinAmber),
-    _PinStatusUi(label: 'On Hold', color: AppColors.plotPinViolet),
-    _PinStatusUi(label: 'Resolved', color: AppColors.plotPinGreen),
-    _PinStatusUi(label: 'Closed', color: AppColors.plotPinRose),
-  ];
+  @override
+  ConsumerState<PinStatusSettingsPage> createState() =>
+      _PinStatusSettingsPageState();
+}
+
+class _PinStatusSettingsPageState extends ConsumerState<PinStatusSettingsPage> {
+  List<PinStatusItem>? _items;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final api = ref.read(quoteProjectApiClientProvider);
+      final list = await api.fetchPinStatuses();
+      if (!mounted) return;
+      setState(() {
+        _items = list;
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load pin statuses',
+        );
+      });
+    }
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _confirmDelete(PinStatusItem item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete status?'),
+        content: Text('Remove “${item.statusName}”? This may affect existing pins.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB91C1C),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await ref.read(quoteProjectApiClientProvider).deletePinStatus(item.id);
+      if (!mounted) return;
+      _toast('Status deleted');
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      _toast(
+        ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Delete failed',
+        ),
+      );
+    }
+  }
+
+  void _openActions(PinStatusItem item) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showStatusEditorSheet(editing: item);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Color(0xFFB91C1C)),
+              title: const Text('Delete', style: TextStyle(color: Color(0xFFB91C1C))),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmDelete(item);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showStatusEditorSheet({PinStatusItem? editing}) {
+    _showPinStatusFormSheet(
+      context: context,
+      ref: ref,
+      editing: editing,
+      onSaved: _load,
+      onMessage: _toast,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,6 +162,25 @@ class PinStatusSettingsPage extends StatelessWidget {
           ).copyWith(fontWeight: FontWeight.w700),
         ),
         centerTitle: true,
+        actions: [
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: _load,
+              icon: const Icon(Icons.refresh, color: AppColors.inkStrong),
+            ),
+        ],
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
           child: Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -44,7 +188,7 @@ class PinStatusSettingsPage extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
-        onPressed: () => _showAddStatusSheet(context),
+        onPressed: () => _showStatusEditorSheet(),
         backgroundColor: const Color(0xFF111111),
         foregroundColor: Colors.white,
         child: const Icon(Icons.add, size: 28),
@@ -56,7 +200,37 @@ class PinStatusSettingsPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _StatusCard(items: _statusItems),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    _error!,
+                    style: AppFonts.bodyMedium(color: const Color(0xFFB91C1C)),
+                  ),
+                ),
+              if (_loading && (_items == null || _items!.isEmpty))
+                const Expanded(
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_items != null && _items!.isEmpty)
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      'No pin statuses yet.\nTap + to create one.',
+                      textAlign: TextAlign.center,
+                      style: AppFonts.bodyMedium(color: AppColors.muted),
+                    ),
+                  ),
+                )
+              else if (_items != null)
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: _StatusCard(
+                      items: _items!,
+                      onMore: _openActions,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 16),
               const _VisibilityInfoCard(),
               const SizedBox(height: 16),
@@ -68,239 +242,15 @@ class PinStatusSettingsPage extends StatelessWidget {
   }
 }
 
-String _toHexRgb(Color color) {
-  final rgb = color.value.toRadixString(16).padLeft(8, '0').substring(2);
-  return '#${rgb.toUpperCase()}';
-}
-
-Color? _parseHexColor(String raw) {
-  final normalized = raw.trim().replaceAll('#', '');
-  if (normalized.length != 6) return null;
-  final value = int.tryParse(normalized, radix: 16);
-  if (value == null) return null;
-  return Color(0xFF000000 | value);
-}
-
-Future<Color?> _showCustomColorSheet(
-  BuildContext context, {
-  required Color initialColor,
-}) async {
-  final controller = TextEditingController(text: _toHexRgb(initialColor));
-  var selected = initialColor;
-  const palette = <Color>[
-    Color(0xFF3B82F6),
-    Color(0xFF4F46E5),
-    Color(0xFF7C3AED),
-    Color(0xFF059669),
-    Color(0xFFF59E0B),
-    Color(0xFFEA580C),
-    Color(0xFFE11D48),
-    Color(0xFF1E293B),
-    Color(0xFF38BDF8),
-    Color(0xFF84CC16),
-  ];
-
-  return showModalBottomSheet<Color>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (ctx) {
-      final bottomInset = MediaQuery.viewInsetsOf(ctx).bottom;
-      return Padding(
-        padding: EdgeInsets.only(bottom: bottomInset),
-        child: StatefulBuilder(
-          builder: (context, setState) {
-            return SafeArea(
-              top: false,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 44,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE5E7EB),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Text(
-                          'Brand Color',
-                          style: AppFonts.titleMedium(
-                            color: AppColors.inkStrong,
-                          ).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const Spacer(),
-                        InkWell(
-                          onTap: () => Navigator.of(ctx).pop(),
-                          borderRadius: BorderRadius.circular(999),
-                          child: const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Icon(
-                              Icons.close_rounded,
-                              color: Color(0xFF9CA3AF),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF3F4F6),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 22,
-                            height: 22,
-                            decoration: BoxDecoration(
-                              color: selected,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: AppTextField(
-                              controller: controller,
-                              hintText: '#3B82F6',
-                              onChanged: (value) {
-                                final parsed = _parseHexColor(value);
-                                if (parsed != null) {
-                                  setState(() => selected = parsed);
-                                }
-                              },
-                              dense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'CUSTOM',
-                            style: AppFonts.labelSmall(
-                              color: const Color(0xFF2563EB),
-                            ).copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        InkWell(
-                          onTap: () {
-                            final parsed = _parseHexColor(controller.text);
-                            if (parsed != null) {
-                              setState(() => selected = parsed);
-                            }
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: selected,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(0xFF93C5FD),
-                                width: 2.6,
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.tune_rounded,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                          ),
-                        ),
-                        for (final color in palette)
-                          InkWell(
-                            onTap: () {
-                              setState(() {
-                                selected = color;
-                                controller.text = _toHexRgb(color);
-                              });
-                            },
-                            borderRadius: BorderRadius.circular(12),
-                            child: Container(
-                              width: 34,
-                              height: 34,
-                              decoration: BoxDecoration(
-                                color: color,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: selected.value == color.value
-                                      ? const Color(0xFF93C5FD)
-                                      : Colors.transparent,
-                                  width: 2.6,
-                                ),
-                              ),
-                              child: selected.value == color.value
-                                  ? const Icon(
-                                      Icons.check_rounded,
-                                      color: Colors.white,
-                                      size: 18,
-                                    )
-                                  : null,
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      height: 46,
-                      child: FilledButton(
-                        onPressed: () => Navigator.of(ctx).pop(selected),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF0F172A),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          'Apply Color',
-                          style: AppFonts.labelLarge(
-                            color: Colors.white,
-                          ).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      );
-    },
-  );
-}
-
-void _showAddStatusSheet(BuildContext context) {
-  final controller = TextEditingController();
+void _showPinStatusFormSheet({
+  required BuildContext context,
+  required WidgetRef ref,
+  required Future<void> Function() onSaved,
+  required void Function(String) onMessage,
+  PinStatusItem? editing,
+}) {
+  final api = ref.read(quoteProjectApiClientProvider);
+  final controller = TextEditingController(text: editing?.statusName ?? '');
   const colors = <Color>[
     AppColors.plotPinBlue,
     AppColors.plotPinGreen,
@@ -309,8 +259,18 @@ void _showAddStatusSheet(BuildContext context) {
     AppColors.plotPinViolet,
   ];
   var selectedIndex = 0;
-  var customColor = colors[selectedIndex];
+  var customColor =
+      parseHexColor(editing?.bgColour ?? '') ?? colors[0];
   var isCustomSelected = false;
+  if (editing != null) {
+    final matchIdx = colors.indexWhere((c) => colorsEqual(c, customColor));
+    if (matchIdx >= 0) {
+      selectedIndex = matchIdx;
+      isCustomSelected = false;
+    } else {
+      isCustomSelected = true;
+    }
+  }
 
   showModalBottomSheet<void>(
     context: context,
@@ -318,12 +278,61 @@ void _showAddStatusSheet(BuildContext context) {
     backgroundColor: Colors.transparent,
     builder: (ctx) {
       final bottomInset = MediaQuery.viewInsetsOf(ctx).bottom;
+      var saving = false;
+
       return Padding(
         padding: EdgeInsets.only(bottom: bottomInset),
         child: SafeArea(
           top: false,
           child: StatefulBuilder(
-            builder: (context, setState) {
+            builder: (context, setSheetState) {
+              Future<void> submit() async {
+                final name = controller.text.trim();
+                if (name.isEmpty) {
+                  onMessage('Please enter a status name');
+                  return;
+                }
+                final bgHex = toHexRgb(customColor);
+                final textHex = contrastTextHexForBg(customColor);
+                setSheetState(() => saving = true);
+                try {
+                  if (editing == null) {
+                    await api.createPinStatus(
+                      statusName: name,
+                      bgColour: bgHex,
+                      textColour: textHex,
+                      isActive: true,
+                    );
+                  } else {
+                    await api.updatePinStatus(
+                      statusId: editing.id,
+                      statusName: name,
+                      bgColour: bgHex,
+                      textColour: textHex,
+                      isActive: editing.isActive,
+                    );
+                  }
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                  await onSaved();
+                  if (context.mounted) {
+                    onMessage(editing == null ? 'Status created' : 'Status updated');
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    onMessage(
+                      ApiResponseMessage.fromAnyError(
+                        e,
+                        genericFallback: 'Save failed',
+                      ),
+                    );
+                  }
+                } finally {
+                  if (context.mounted) {
+                    setSheetState(() => saving = false);
+                  }
+                }
+              }
+
               return Container(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 decoration: const BoxDecoration(
@@ -348,20 +357,20 @@ void _showAddStatusSheet(BuildContext context) {
                     Row(
                       children: [
                         Text(
-                          'Add Status',
+                          editing == null ? 'Add Status' : 'Edit Status',
                           style: AppFonts.labelMedium(
                             color: AppColors.inkStrong,
                           ).copyWith(fontWeight: FontWeight.w700, fontSize: 18),
                         ),
                         const Spacer(),
                         Container(
-                          padding: EdgeInsets.all(4),
+                          padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
                             color: Colors.grey[300],
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: InkWell(
-                            onTap: () => Navigator.of(ctx).pop(),
+                            onTap: saving ? null : () => Navigator.of(ctx).pop(),
                             borderRadius: BorderRadius.circular(999),
                             child: const Padding(
                               padding: EdgeInsets.all(6),
@@ -405,11 +414,13 @@ void _showAddStatusSheet(BuildContext context) {
                               right: i == colors.length - 1 ? 0 : 12,
                             ),
                             child: InkWell(
-                              onTap: () => setState(() {
-                                selectedIndex = i;
-                                customColor = colors[i];
-                                isCustomSelected = false;
-                              }),
+                              onTap: saving
+                                  ? null
+                                  : () => setSheetState(() {
+                                        selectedIndex = i;
+                                        customColor = colors[i];
+                                        isCustomSelected = false;
+                                      }),
                               borderRadius: BorderRadius.circular(999),
                               child: Container(
                                 width: 30,
@@ -418,12 +429,12 @@ void _showAddStatusSheet(BuildContext context) {
                                   shape: BoxShape.circle,
                                   color: colors[i],
                                   border: Border.all(
-                                    color: i == selectedIndex
+                                    color: i == selectedIndex && !isCustomSelected
                                         ? Colors.white
                                         : Colors.transparent,
                                     width: 2,
                                   ),
-                                  boxShadow: i == selectedIndex
+                                  boxShadow: i == selectedIndex && !isCustomSelected
                                       ? const [
                                           BoxShadow(
                                             color: Color(0x33000000),
@@ -433,7 +444,7 @@ void _showAddStatusSheet(BuildContext context) {
                                         ]
                                       : null,
                                 ),
-                                child: i == selectedIndex
+                                child: i == selectedIndex && !isCustomSelected
                                     ? const Icon(
                                         Icons.check_rounded,
                                         size: 16,
@@ -445,17 +456,19 @@ void _showAddStatusSheet(BuildContext context) {
                           ),
                         const SizedBox(width: 8),
                         InkWell(
-                          onTap: () async {
-                            final picked = await _showCustomColorSheet(
-                              ctx,
-                              initialColor: customColor,
-                            );
-                            if (picked == null) return;
-                            setState(() {
-                              customColor = picked;
-                              isCustomSelected = true;
-                            });
-                          },
+                          onTap: saving
+                              ? null
+                              : () async {
+                                  final picked = await showBrandColorBottomSheet(
+                                    ctx,
+                                    initialColor: customColor,
+                                  );
+                                  if (picked == null) return;
+                                  setSheetState(() {
+                                    customColor = picked;
+                                    isCustomSelected = true;
+                                  });
+                                },
                           borderRadius: BorderRadius.circular(999),
                           child: Container(
                             width: 30,
@@ -506,7 +519,7 @@ void _showAddStatusSheet(BuildContext context) {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            _toHexRgb(customColor),
+                            toHexRgb(customColor),
                             style: AppFonts.bodySmall(
                               color: AppColors.inkStrong,
                             ).copyWith(fontWeight: FontWeight.w700),
@@ -525,10 +538,7 @@ void _showAddStatusSheet(BuildContext context) {
                     SizedBox(
                       height: 48,
                       child: FilledButton(
-                        onPressed: () {
-                          // TODO: hook into create-pin-status API.
-                          Navigator.of(ctx).pop();
-                        },
+                        onPressed: saving ? null : submit,
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF020617),
                           foregroundColor: Colors.white,
@@ -536,12 +546,21 @@ void _showAddStatusSheet(BuildContext context) {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        child: Text(
-                          'Save Status',
-                          style: AppFonts.labelLarge(
-                            color: Colors.white,
-                          ).copyWith(fontWeight: FontWeight.w700),
-                        ),
+                        child: saving
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                editing == null ? 'Save Status' : 'Update Status',
+                                style: AppFonts.labelLarge(
+                                  color: Colors.white,
+                                ).copyWith(fontWeight: FontWeight.w700),
+                              ),
                       ),
                     ),
                   ],
@@ -552,20 +571,20 @@ void _showAddStatusSheet(BuildContext context) {
         ),
       );
     },
-  );
-}
-
-class _PinStatusUi {
-  const _PinStatusUi({required this.label, required this.color});
-
-  final String label;
-  final Color color;
+  ).whenComplete(controller.dispose);
 }
 
 class _StatusCard extends StatelessWidget {
-  const _StatusCard({required this.items});
+  const _StatusCard({
+    required this.items,
+    required this.onMore,
+  });
 
-  final List<_PinStatusUi> items;
+  final List<PinStatusItem> items;
+  final void Function(PinStatusItem) onMore;
+
+  Color _dotColor(PinStatusItem s) =>
+      parseHexColor(s.bgColour) ?? AppColors.plotPinBlue;
 
   @override
   Widget build(BuildContext context) {
@@ -586,7 +605,7 @@ class _StatusCard extends StatelessWidget {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: items.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             const Divider(height: 1, color: Color(0xFFF1F5F9)),
         itemBuilder: (context, index) {
           final item = items[index];
@@ -598,14 +617,14 @@ class _StatusCard extends StatelessWidget {
                   width: 8,
                   height: 8,
                   decoration: BoxDecoration(
-                    color: item.color,
+                    color: _dotColor(item),
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    item.label,
+                    item.statusName,
                     style: AppFonts.bodyLarge(
                       color: AppColors.inkStrong,
                     ).copyWith(fontWeight: FontWeight.w600),
@@ -617,9 +636,7 @@ class _StatusCard extends StatelessWidget {
                     color: AppColors.mutedLight,
                     size: 20,
                   ),
-                  onPressed: () {
-                    // TODO: per-status actions (edit / delete) menu.
-                  },
+                  onPressed: () => onMore(item),
                 ),
               ],
             ),
