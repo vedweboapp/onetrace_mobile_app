@@ -27,7 +27,39 @@ class AppStrings {
   static const loginSendOtpCode = 'Send code';
   static const loginBackToPasswordSignIn = 'Sign in with password';
   static const loginNoAccountQuestion = "Don't Have An Account?";
+  static const loginSignUpLink = 'Sign up';
   static const loginRequestAccessArrow = 'Request Access →';
+  static const signupCreateAccountTitle = 'Create Your Account';
+  static const signupFirstName = 'First Name';
+  static const signupMiddleName = 'Middle Name';
+  static const signupLastName = 'Last Name';
+  static const signupEmailLabel = 'Email';
+  static const signupPhoneLabel = 'Phone Number';
+  static const signupEmailHint = 'name@company.com';
+  static const signupPhoneHint = '+1 (555) 000-0000';
+  static const signupVerify = 'VERIFY';
+  static const signupButton = 'SIGN UP';
+  static const signupOrSignUpWith = 'OR SIGN UP WITH';
+  static const signupFieldRequired = 'This field is required';
+  static const signupEmailInvalid = 'Please enter a valid email';
+  static const signupPasswordMinLength = 'Password must be at least 6 characters';
+  static const signupVerifyEmailInvalid = 'Enter a valid email to verify';
+  static String signupVerifySentTo(String email) =>
+      'Verification link sent to $email';
+  static const signupSuccessMessage = 'Account created successfully';
+  static const signupSubmitting = 'Signing up…';
+  static const signupGoogleComingSoon = 'Google sign up coming soon';
+  static const signupMicrosoftComingSoon = 'Microsoft sign up coming soon';
+  static const signupFacebookComingSoon = 'Facebook sign up coming soon';
+  static const signupOtpRequired = 'Enter the 6-digit verification code';
+  static const signupOtpInvalid = 'Verification code must be 6 digits';
+  static const signupEmailVerified = 'VERIFIED';
+  static const signupEmailNotVerified = 'Please verify your email first';
+  static const signupVerifyingOtp = 'Verifying code…';
+  static const signupEmailVerifiedMessage = 'Email verified successfully';
+  static const signupSendingOtp = 'Sending code…';
+  static const signupAlreadyHaveAccount = 'Already have an account? ';
+  static const signupLogIn = 'Log In';
   static const otpVerifyTitle = 'Enter Code';
   /// Forgot-password OTP step (same sheet as sign-in OTP, different labels).
   static const otpForgotPasswordVerifyTitle = 'Verify Code';
@@ -113,4 +145,6 @@ class AppStrings {
       'Could not send the password reset code. Please try again.';
   static const apiErrorInviteUser =
       'Could not send invitation. Please try again.';
+  static const apiErrorSignup =
+      'Could not create your account. Please try again.';
 }

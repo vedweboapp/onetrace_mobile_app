@@ -128,6 +128,20 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
     }
   }
 
+  void _onDuplicateQuotation() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Duplicate is not available yet.')),
+    );
+  }
+
+  void _onDuplicateManyQuotations() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Duplicate many is not available yet.')),
+    );
+  }
+
   Future<void> _exportToPdf() async {
     final d = _detail;
     if (d == null) return;
@@ -364,26 +378,96 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
         centerTitle: true,
         actions: [
           if (!_loading && _error == null && _detail != null)
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, color: AppColors.inkStrong),
-              onSelected: (value) {
-                if (value == 'delete') _confirmDelete();
-                if (value == 'export') _exportToPdf();
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'export',
-                  child: Text('Export to Pdf'),
+            Theme(
+              data: Theme.of(context).copyWith(
+                splashColor: Colors.black12,
+                highlightColor: Colors.transparent,
+              ),
+              child: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: AppColors.inkStrong),
+                color: AppColors.white,
+                elevation: 8,
+                shadowColor: Colors.black.withValues(alpha: 0.12),
+                surfaceTintColor: AppColors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: Color(0xFFE5E7EB)),
                 ),
-                const PopupMenuDivider(),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Text(
-                    'Delete',
-                    style: TextStyle(color: Color(0xFFB91C1C)),
+                menuPadding: const EdgeInsets.symmetric(vertical: 8),
+                offset: const Offset(0, 44),
+                constraints: const BoxConstraints(minWidth: 200),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'duplicate':
+                      _onDuplicateQuotation();
+                      break;
+                    case 'duplicate_many':
+                      _onDuplicateManyQuotations();
+                      break;
+                    case 'delete':
+                      _confirmDelete();
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem<String>(
+                    value: 'duplicate',
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    child: Text(
+                      'Duplicate',
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
+                    ),
                   ),
-                ),
-              ],
+                  PopupMenuItem<String>(
+                    value: 'duplicate_many',
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    child: Text(
+                      'Duplicate Many',
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
+                    ),
+                  ),
+                  const PopupMenuDivider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 12,
+                    endIndent: 12,
+                    color: Color(0xFFE5E7EB),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'delete',
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_outline,
+                          size: 22,
+                          color: const Color(0xFFB91C1C),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Delete',
+                          style: AppFonts.bodyMedium(
+                            color: const Color(0xFFB91C1C),
+                          ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
         ],
         bottom: PreferredSize(
@@ -394,6 +478,10 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
               if (!_loading && _error == null && _detail != null)
                 TabBar(
                   controller: _tabController,
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  padding: const EdgeInsets.only(left: 20, right: 8),
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 10),
                   labelColor: AppColors.inkStrong,
                   unselectedLabelColor: AppColors.muted,
                   indicatorColor: AppColors.inkStrong,
@@ -461,7 +549,9 @@ double _scopeParseDouble(dynamic v) {
 
 Map<String, dynamic> _scopeAsMap(dynamic raw) {
   if (raw is Map) {
-    return Map<String, dynamic>.from(raw.map((k, v) => MapEntry(k.toString(), v)));
+    return Map<String, dynamic>.from(
+      raw.map((k, v) => MapEntry(k.toString(), v)),
+    );
   }
   return const {};
 }
@@ -472,7 +562,10 @@ class _ScopePricingTab extends StatelessWidget {
 
   final QuotationDetailModel detail;
 
-  static final NumberFormat _gbp = NumberFormat.currency(locale: 'en_GB', symbol: '£');
+  static final NumberFormat _gbp = NumberFormat.currency(
+    locale: 'en_GB',
+    symbol: '£',
+  );
 
   String _fmt(num n) => _gbp.format(n);
 
@@ -498,7 +591,9 @@ class _ScopePricingTab extends StatelessWidget {
 
     final blockBoxName = parsedBlocks.isEmpty
         ? '—'
-        : (parsedBlocks.first.name.trim().isEmpty ? '—' : parsedBlocks.first.name.trim());
+        : (parsedBlocks.first.name.trim().isEmpty
+              ? '—'
+              : parsedBlocks.first.name.trim());
 
     final allLineMaps = <Map<String, dynamic>>[];
     for (final pb in parsedBlocks) {
@@ -513,11 +608,9 @@ class _ScopePricingTab extends StatelessWidget {
       children: [
         Text(
           'Project',
-          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w800,
-            fontSize: 18,
-            height: 1.2,
-          ),
+          style: AppFonts.titleMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800, fontSize: 18, height: 1.2),
         ),
         const SizedBox(height: 14),
         Text(
@@ -539,24 +632,31 @@ class _ScopePricingTab extends StatelessWidget {
           ),
           child: Text(
             blockBoxName,
-            style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-              fontWeight: FontWeight.w600,
-              fontSize: 16,
-            ),
+            style: AppFonts.bodyMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
           ),
         ),
         const SizedBox(height: 28),
         if (parsedBlocks.isEmpty) ...[
-          _ScopeQuotedItemsTitle(barColor: barBlue, title: _quotedItemsHeading('')),
+          _ScopeQuotedItemsTitle(
+            barColor: barBlue,
+            title: _quotedItemsHeading(''),
+          ),
           const SizedBox(height: 12),
           Text(
             'No scope & pricing data for this quotation yet.',
-            style: AppFonts.bodyMedium(color: AppColors.muted).copyWith(fontSize: 15, height: 1.45),
+            style: AppFonts.bodyMedium(
+              color: AppColors.muted,
+            ).copyWith(fontSize: 15, height: 1.45),
           ),
         ] else
           for (final pb in parsedBlocks) ...[
             for (final sec in pb.sections) ...[
-              _ScopeQuotedItemsTitle(barColor: barBlue, title: _quotedItemsHeading(sec.name)),
+              _ScopeQuotedItemsTitle(
+                barColor: barBlue,
+                title: _quotedItemsHeading(sec.name),
+              ),
               const SizedBox(height: 12),
               if (sec.lines.isEmpty)
                 Padding(
@@ -574,7 +674,11 @@ class _ScopePricingTab extends StatelessWidget {
             ],
           ],
         if (parsedBlocks.isNotEmpty) ...[
-          Divider(height: 1, thickness: 1, color: AppColors.borderLight.withValues(alpha: 0.9)),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: AppColors.borderLight.withValues(alpha: 0.9),
+          ),
           const SizedBox(height: 4),
           _ScopePricingSummary(
             totals: totals,
@@ -605,7 +709,10 @@ class _ScopeParsedBlock {
     if (sections.isEmpty) {
       sections.add(_ScopeParsedSection(name: '', lines: const []));
     }
-    return _ScopeParsedBlock(name: name.isEmpty ? 'Block' : name, sections: sections);
+    return _ScopeParsedBlock(
+      name: name.isEmpty ? 'Block' : name,
+      sections: sections,
+    );
   }
 }
 
@@ -625,7 +732,10 @@ class _ScopeParsedSection {
         if (im.isNotEmpty) lines.add(im);
       }
     }
-    return _ScopeParsedSection(name: name.isEmpty ? 'Section' : name, lines: lines);
+    return _ScopeParsedSection(
+      name: name.isEmpty ? 'Section' : name,
+      lines: lines,
+    );
   }
 }
 
@@ -654,7 +764,9 @@ class _ScopeTotals {
       tax += _scopeParseDouble(m['tax'] ?? m['tax_amount']);
       final qtyRaw = _scopeParseDouble(m['quantity'] ?? m['qty']);
       final qty = qtyRaw > 0 ? qtyRaw : 1.0;
-      final list = _scopeParseDouble(m['list_price'] ?? m['listPrice'] ?? m['unit_price']);
+      final list = _scopeParseDouble(
+        m['list_price'] ?? m['listPrice'] ?? m['unit_price'],
+      );
       final amt = _scopeParseDouble(m['amount']);
       final tot = _scopeParseDouble(m['total'] ?? m['line_total']);
 
@@ -688,10 +800,7 @@ class _ScopeTotals {
 }
 
 class _ScopeQuotedItemsTitle extends StatelessWidget {
-  const _ScopeQuotedItemsTitle({
-    required this.barColor,
-    required this.title,
-  });
+  const _ScopeQuotedItemsTitle({required this.barColor, required this.title});
 
   final Color barColor;
   final String title;
@@ -713,11 +822,9 @@ class _ScopeQuotedItemsTitle extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-              height: 1.2,
-            ),
+            style: AppFonts.titleMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w800, fontSize: 16, height: 1.2),
           ),
         ),
       ],
@@ -726,16 +833,19 @@ class _ScopeQuotedItemsTitle extends StatelessWidget {
 }
 
 class _ScopeQuotedLineCard extends StatelessWidget {
-  const _ScopeQuotedLineCard({
-    required this.line,
-    required this.formatMoney,
-  });
+  const _ScopeQuotedLineCard({required this.line, required this.formatMoney});
 
   final Map<String, dynamic> line;
   final String Function(num) formatMoney;
 
   String _productTitle() {
-    for (final k in const ['product_name', 'description', 'name', 'label', 'title']) {
+    for (final k in const [
+      'product_name',
+      'description',
+      'name',
+      'label',
+      'title',
+    ]) {
       final v = line[k];
       if (v != null && v is! Map && v is! List) {
         final t = v.toString().trim();
@@ -750,15 +860,19 @@ class _ScopeQuotedLineCard extends StatelessWidget {
     return q > 0 ? q : 1;
   }
 
-  double _listPrice() => _scopeParseDouble(line['list_price'] ?? line['listPrice'] ?? line['unit_price']);
+  double _listPrice() => _scopeParseDouble(
+    line['list_price'] ?? line['listPrice'] ?? line['unit_price'],
+  );
 
   double _amount() => _scopeParseDouble(line['amount'] ?? line['line_total']);
 
-  double _discount() => _scopeParseDouble(line['discount'] ?? line['discount_amount']);
+  double _discount() =>
+      _scopeParseDouble(line['discount'] ?? line['discount_amount']);
 
   double _tax() => _scopeParseDouble(line['tax'] ?? line['tax_amount']);
 
-  double _lineTotal() => _scopeParseDouble(line['total'] ?? line['line_total'] ?? line['amount']);
+  double _lineTotal() =>
+      _scopeParseDouble(line['total'] ?? line['line_total'] ?? line['amount']);
 
   @override
   Widget build(BuildContext context) {
@@ -775,18 +889,41 @@ class _ScopeQuotedLineCard extends StatelessWidget {
         children: [
           Text(
             _productTitle(),
-            style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-              fontWeight: FontWeight.w800,
-              fontSize: 15,
-            ),
+            style: AppFonts.titleMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w800, fontSize: 15),
           ),
           const SizedBox(height: 12),
-          _ScopeMetricRow(label: 'Qty', value: _qty().toStringAsFixed(2), valueBlue: false),
-          _ScopeMetricRow(label: 'List Price', value: formatMoney(_listPrice()), valueBlue: false),
-          _ScopeMetricRow(label: 'Amount', value: formatMoney(_amount()), valueBlue: true),
-          _ScopeMetricRow(label: 'Discount', value: formatMoney(_discount()), valueBlue: true),
-          _ScopeMetricRow(label: 'Tax', value: formatMoney(_tax()), valueBlue: true),
-          _ScopeMetricRow(label: 'Total', value: formatMoney(_lineTotal()), valueBlue: true),
+          _ScopeMetricRow(
+            label: 'Qty',
+            value: _qty().toStringAsFixed(2),
+            valueBlue: false,
+          ),
+          _ScopeMetricRow(
+            label: 'List Price',
+            value: formatMoney(_listPrice()),
+            valueBlue: false,
+          ),
+          _ScopeMetricRow(
+            label: 'Amount',
+            value: formatMoney(_amount()),
+            valueBlue: true,
+          ),
+          _ScopeMetricRow(
+            label: 'Discount',
+            value: formatMoney(_discount()),
+            valueBlue: true,
+          ),
+          _ScopeMetricRow(
+            label: 'Tax',
+            value: formatMoney(_tax()),
+            valueBlue: true,
+          ),
+          _ScopeMetricRow(
+            label: 'Total',
+            value: formatMoney(_lineTotal()),
+            valueBlue: true,
+          ),
         ],
       ),
     );
@@ -816,20 +953,16 @@ class _ScopeMetricRow extends StatelessWidget {
           Expanded(
             child: Text(
               '$label:',
-              style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-                fontWeight: FontWeight.w500,
-                fontSize: 15,
-              ),
+              style: AppFonts.bodyMedium(
+                color: AppColors.inkStrong,
+              ).copyWith(fontWeight: FontWeight.w500, fontSize: 15),
             ),
           ),
           Text(
             value,
             style: AppFonts.bodyMedium(
               color: valueBlue ? _linkBlue : AppColors.inkStrong,
-            ).copyWith(
-              fontWeight: FontWeight.w600,
-              fontSize: 15,
-            ),
+            ).copyWith(fontWeight: FontWeight.w600, fontSize: 15),
           ),
         ],
       ),
@@ -866,12 +999,13 @@ class _ScopePricingSummary extends StatelessWidget {
             ),
             Text(
               value,
-              style: AppFonts.bodyMedium(
-                color: grand ? linkBlue : AppColors.inkStrong,
-              ).copyWith(
-                fontWeight: grand ? FontWeight.w800 : FontWeight.w600,
-                fontSize: grand ? 16 : 14,
-              ),
+              style:
+                  AppFonts.bodyMedium(
+                    color: grand ? linkBlue : AppColors.inkStrong,
+                  ).copyWith(
+                    fontWeight: grand ? FontWeight.w800 : FontWeight.w600,
+                    fontSize: grand ? 16 : 14,
+                  ),
             ),
           ],
         ),
@@ -885,7 +1019,11 @@ class _ScopePricingSummary extends StatelessWidget {
         row('Discount', formatMoney(totals.discount)),
         row('Tax', formatMoney(totals.tax)),
         row('Adjustment', formatMoney(totals.adjustment)),
-        Divider(height: 1, thickness: 1, color: AppColors.borderLight.withValues(alpha: 0.9)),
+        Divider(
+          height: 1,
+          thickness: 1,
+          color: AppColors.borderLight.withValues(alpha: 0.9),
+        ),
         row('Grand Total', formatMoney(totals.grandTotal), grand: true),
       ],
     );

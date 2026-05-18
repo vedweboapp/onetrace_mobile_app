@@ -5,23 +5,33 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_date_picker_dialog.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/quotation_description_rich_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
+import 'package:red5/features/contacts/data/contact_models.dart';
+import 'package:red5/features/contacts/data/contacts_api_client.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
+import 'package:red5/features/dashboard/data/quote_list_page_result.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/quotations/data/quotations_api_client.dart';
 import 'package:red5/features/quotations/presentation/widgets/quotation_block_sections_panel.dart';
+import 'package:red5/features/quotations/presentation/widgets/quotation_map_block_sheet.dart';
 import 'package:red5/features/sites/data/site_models.dart';
-import 'package:red5/features/sites/data/sites_api_client.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
 /// `POST /api/v1/quotations/` — create quotation (field names aligned with common REST payloads).
 class AddQuotationPage extends ConsumerStatefulWidget {
-  const AddQuotationPage({super.key});
+  const AddQuotationPage({super.key, this.initialProjectId});
+
+  /// When set (e.g. opened from project details), project dropdown is pre-filled.
+  final String? initialProjectId;
 
   static const pathPrefix = '/quotations';
   static const name = 'add-quotation';
@@ -35,33 +45,24 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   final _formKey = GlobalKey<FormState>();
   final _quoteName = TextEditingController();
   final _costCentre = TextEditingController();
-  final _primary = TextEditingController();
-  final _secondary = TextEditingController();
-  final _siteContact = TextEditingController();
-  final _tags = TextEditingController();
   final _orderNo = TextEditingController();
   final _dueDate = TextEditingController();
-  final _projectManager = TextEditingController();
-  final _technicians = TextEditingController();
-  final _salesPerson = TextEditingController();
   final _blockName = TextEditingController();
   final _sectionName = TextEditingController();
 
-  List<QuotationPlotGroup> _plotGroups = [
-    const QuotationPlotGroup(
-      name: 'No Plot',
-      lines: [
-        QuotationPlotLine(label: 'Quotation Map', quantityMultiplier: 4, amount: 0),
-        QuotationPlotLine(label: 'Quotation Map', amount: 0),
-        QuotationPlotLine(label: 'Quotation Map', amount: 0),
-      ],
-    ),
-  ];
-  bool _blockExpanded = true;
+  List<QuotationPlotGroup> _plotGroups = [];
+
+  /// True after levels load and at least one plot has pins (UI block cards shown).
+  bool _showProjectPlotPanels = false;
+
+  /// Expanded state for each block card (same order as [_plotGroups]).
+  List<bool> _blockExpandedList = [];
+
+  /// Block names that have at least one plot with pins (for a short hint under Project).
+  String? _loadedLevelSummary;
 
   late final QuillController _descriptionQuill = QuillController.basic();
   final _descriptionFocus = FocusNode();
-  final _descriptionScroll = ScrollController();
 
   ClientModel? _client;
   SiteModel? _site;
@@ -70,8 +71,28 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   List<ClientModel> _clients = const [];
   List<SiteModel> _sites = const [];
   List<QuoteSummary> _projects = const [];
+  List<ContactModel> _contacts = const [];
+  List<UserProfileModel> _userProfiles = const [];
+
+  ContactModel? _primaryContact;
+  ContactModel? _secondaryContact;
+  ContactModel? _siteContactPerson;
+
+  UserProfileModel? _projectManagerUser;
+  UserProfileModel? _salespersonUser;
+  List<UserProfileModel> _selectedTechnicians = const [];
+
+  /// Active tags from `fetchTags()` (dropdown source).
+  List<TagItem> _tagCatalog = const [];
+
+  /// Tags attached to this new quotation (chips + payload).
+  List<TagItem> _selectedTags = const [];
 
   bool _loadingOptions = false;
+
+  /// True while loading group / item / site / contact / level APIs for the selected project.
+  bool _loadingProjectDeps = false;
+  int _projectDepsSeq = 0;
   bool _submitting = false;
 
   @override
@@ -84,18 +105,10 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   void dispose() {
     _quoteName.dispose();
     _costCentre.dispose();
-    _primary.dispose();
-    _secondary.dispose();
-    _siteContact.dispose();
-    _tags.dispose();
     _orderNo.dispose();
     _dueDate.dispose();
-    _projectManager.dispose();
-    _technicians.dispose();
-    _salesPerson.dispose();
     _descriptionQuill.dispose();
     _descriptionFocus.dispose();
-    _descriptionScroll.dispose();
     _blockName.dispose();
     _sectionName.dispose();
     super.dispose();
@@ -105,18 +118,32 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     setState(() => _loadingOptions = true);
     try {
       final clientsApi = ref.read(clientsApiClientProvider);
-      final sitesApi = ref.read(sitesApiClientProvider);
       final quotesApi = ref.read(crmQuotesApiProvider);
-      final clients = await clientsApi.fetchClientsPage(page: 1);
-      final sites = await sitesApi.fetchSitesPage(page: 1);
-      final quotes = await quotesApi.fetchQuotesPage(1);
+      final quoteProjectApi = ref.read(quoteProjectApiClientProvider);
+      final userProfileApi = ref.read(userProfileApiClientProvider);
+
+      final results = await Future.wait<dynamic>([
+        clientsApi.fetchClientsPage(page: 1),
+        quotesApi.fetchQuotesPage(1),
+        quoteProjectApi.fetchTags(),
+        userProfileApi.fetchAllUserProfiles(),
+      ]);
       if (!mounted) return;
+      final clients = results[0] as ClientsPageResult;
+      final quotes = results[1] as QuoteListPageResult;
+      final tags = results[2] as List<TagItem>;
+      final profiles = results[3] as List<UserProfileModel>;
       setState(() {
         _clients = clients.items;
-        _sites = sites.items;
         _projects = quotes.summaries;
+        _tagCatalog =
+            tags.where((t) => t.isActive).toList(growable: false);
+        _userProfiles = profiles;
+        _sites = const [];
+        _site = null;
         _loadingOptions = false;
       });
+      _applyInitialProjectIfNeeded();
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingOptions = false);
@@ -133,33 +160,362 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     }
   }
 
-  Map<String, dynamic> _plotGroupToJson(QuotationPlotGroup g) {
-    double sub = 0;
-    for (final l in g.lines) {
-      if (l.selected) sub += l.amount;
+  void _applyInitialProjectIfNeeded() {
+    final want = widget.initialProjectId?.trim();
+    if (want == null || want.isEmpty) return;
+    for (final p in _projects) {
+      if (p.id.trim() == want) {
+        setState(() => _project = p);
+        _loadProjectDependencies(p.id);
+        return;
+      }
     }
+  }
+
+  /// After a project is chosen: project `sites[]`, `contact/`, `project/{id}/level/`.
+  Future<void> _loadProjectDependencies(String projectId) async {
+    final id = projectId.trim();
+    if (id.isEmpty) return;
+    final seq = ++_projectDepsSeq;
+    setState(() => _loadingProjectDeps = true);
+    try {
+      final quoteProjectApi = ref.read(quoteProjectApiClientProvider);
+      final contactsApi = ref.read(contactsApiClientProvider);
+
+      final results = await Future.wait<dynamic>([
+        quoteProjectApi.fetchProjectSites(projectId: id),
+        contactsApi.fetchContactsPage(page: 1),
+        quoteProjectApi.fetchProjectLevels(projectId: id),
+      ]);
+      if (!mounted || seq != _projectDepsSeq || _project?.id != id) return;
+      final levels = results[2] as List<ProjectLevelItem>;
+      final newGroups = _plotGroupsFromLevels(levels);
+      final hasPinnedPlots = newGroups.isNotEmpty;
+      final summary = hasPinnedPlots ? _levelSummaryFromLevels(levels) : null;
+      final singleBlockName = hasPinnedPlots && levels.length == 1
+          ? levels.first.name
+          : null;
+      setState(() {
+        _sites = List<SiteModel>.from(results[0] as List<SiteModel>);
+        _contacts = (results[1] as ContactsPageResult).items;
+        _site = null;
+        _primaryContact = null;
+        _secondaryContact = null;
+        _siteContactPerson = null;
+        _plotGroups = newGroups;
+        _showProjectPlotPanels = hasPinnedPlots;
+        _blockExpandedList = hasPinnedPlots
+            ? List<bool>.filled(newGroups.length, true)
+            : <bool>[];
+        _loadedLevelSummary = summary;
+        if (singleBlockName != null) {
+          _blockName.text = singleBlockName;
+        } else {
+          _blockName.clear();
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      if (seq == _projectDepsSeq && _project?.id == id) {
+        setState(() {
+          _sites = const [];
+          _contacts = const [];
+          _site = null;
+          _primaryContact = null;
+          _secondaryContact = null;
+          _siteContactPerson = null;
+          _plotGroups = [];
+          _showProjectPlotPanels = false;
+          _blockExpandedList = [];
+          _loadedLevelSummary = null;
+          _blockName.clear();
+        });
+      }
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: 'Failed to load project data',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted && seq == _projectDepsSeq) {
+        setState(() => _loadingProjectDeps = false);
+      }
+    }
+  }
+
+  static int _quotationPinCountFromPlot(Map<String, dynamic> plot) {
+    final pins = plot['pins'];
+    if (pins is! List) return 0;
+    return pins.length;
+  }
+
+  static List<QuotationDesignPin> _quotationDesignPinsFromPlot(
+    Map<String, dynamic> plot,
+  ) {
+    final pins = plot['pins'];
+    if (pins is! List) return const [];
+    final out = <QuotationDesignPin>[];
+    for (final raw in pins) {
+      if (raw is! Map) continue;
+      final m = Map<String, dynamic>.from(raw);
+      final id = '${m['id'] ?? ''}'.trim();
+
+      Map<String, dynamic>? item;
+      final idetail = m['item_detail'];
+      if (idetail is Map) item = Map<String, dynamic>.from(idetail);
+
+      Map<String, dynamic>? status;
+      final sd = m['status_detail'];
+      if (sd is Map) status = Map<String, dynamic>.from(sd);
+
+      var name = 'Item';
+      if (item != null) {
+        final n = item['name']?.toString().trim();
+        if (n != null && n.isNotEmpty && n != 'null') name = n;
+      }
+
+      String? sku;
+      if (item != null) {
+        final s = item['sku']?.toString().trim();
+        if (s != null && s.isNotEmpty && s != 'null') sku = s;
+      }
+
+      var qty = 1;
+      final q = m['quantity'];
+      if (q is int) {
+        qty = q;
+      } else if (q != null) {
+        qty = int.tryParse('$q') ?? 1;
+      }
+
+      String? statusLabel;
+      String? statusBg;
+      String? statusFg;
+      if (status != null) {
+        final sl = status['status_name']?.toString().trim();
+        if (sl != null && sl.isNotEmpty) statusLabel = sl;
+        statusBg = status['bg_colour']?.toString();
+        statusFg = status['text_colour']?.toString();
+      }
+
+      double? selling;
+      if (item != null) {
+        final sp = item['selling_price'];
+        if (sp is num) {
+          selling = sp.toDouble();
+        } else if (sp != null) {
+          selling = double.tryParse('$sp');
+        }
+      }
+
+      int? compositeItemId;
+      if (item != null) {
+        final rawComp = item['composite_item_id'] ??
+            item['composite_item'] ??
+            item['item_id'] ??
+            item['id'];
+        if (rawComp is int) {
+          compositeItemId = rawComp;
+        } else if (rawComp is Map) {
+          final compMap = Map<String, dynamic>.from(
+            rawComp.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          final cid = compMap['id'];
+          compositeItemId =
+              cid is int ? cid : int.tryParse('${cid ?? ''}');
+        } else {
+          compositeItemId = int.tryParse('${rawComp ?? ''}');
+        }
+      }
+      if (compositeItemId == null) {
+        final top = m['composite_item_id'] ?? m['composite_item'];
+        if (top is int) {
+          compositeItemId = top;
+        } else if (top is Map) {
+          final topMap = Map<String, dynamic>.from(
+            top.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          compositeItemId = int.tryParse('${topMap['id'] ?? ''}');
+        } else {
+          compositeItemId = int.tryParse('${top ?? ''}');
+        }
+      }
+
+      out.add(
+        QuotationDesignPin(
+          id: id.isEmpty ? '${out.length + 1}' : id,
+          itemName: name,
+          sku: sku,
+          quantity: qty,
+          statusLabel: statusLabel,
+          statusBgHex: statusBg,
+          statusTextHex: statusFg,
+          sellingPrice: selling,
+          compositeItemId: compositeItemId,
+        ),
+      );
+    }
+    return out;
+  }
+
+  static int _quotationPlotSortKey(Map<String, dynamic> plot) {
+    final id = plot['id'];
+    if (id is int) return id;
+    return int.tryParse('$id') ?? 0;
+  }
+
+  static String _quotationPlotLabelFrom(Map<String, dynamic> plot) {
+    for (final key in ['name', 'plot_name', 'title', 'label']) {
+      final v = plot[key];
+      if (v == null || v is Map || v is List) continue;
+      final t = v.toString().trim();
+      if (t.isNotEmpty && t != 'null') return t;
+    }
+    final id = plot['id'];
+    return id != null ? 'Plot $id' : 'Plot';
+  }
+
+  List<QuotationPlotGroup> _plotGroupsFromLevels(
+    List<ProjectLevelItem> levels,
+  ) {
+    final sorted = [...levels]
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    final groups = <QuotationPlotGroup>[];
+    for (final level in sorted) {
+      final lines = <QuotationPlotLine>[];
+      final plotList = [...level.plots]
+        ..sort(
+          (a, b) =>
+              _quotationPlotSortKey(a).compareTo(_quotationPlotSortKey(b)),
+        );
+      for (final plot in plotList) {
+        final n = _quotationPinCountFromPlot(plot);
+        if (n <= 0) continue;
+        final plotIdStr = '${plot['id'] ?? ''}'.trim();
+        lines.add(
+          QuotationPlotLine(
+            label: _quotationPlotLabelFrom(plot),
+            quantityMultiplier: n,
+            amount: 0,
+            plotId: plotIdStr.isEmpty ? null : plotIdStr,
+            designPins: _quotationDesignPinsFromPlot(plot),
+          ),
+        );
+      }
+      if (lines.isEmpty) continue;
+      groups.add(
+        QuotationPlotGroup(
+          name: level.name,
+          levelId: level.id,
+          lines: lines,
+        ),
+      );
+    }
+    if (groups.isEmpty) {
+      return [];
+    }
+    return groups;
+  }
+
+  String? _levelSummaryFromLevels(List<ProjectLevelItem> levels) {
+    final names = <String>[];
+    for (final l in levels) {
+      if (l.plots.any((p) => _quotationPinCountFromPlot(p) > 0)) {
+        names.add(l.name);
+      }
+    }
+    if (names.isEmpty) return null;
+    return names.join(' · ');
+  }
+
+  Map<String, dynamic> _siteSnapshotMap() {
+    final s = _site;
+    if (s == null) return <String, dynamic>{};
     return <String, dynamic>{
-      'name': g.name,
-      'line_items': g.lines.map((l) => _plotLineToJson(l)).toList(),
-      'subtotal': sub,
-      'tax': 0.0,
-      'total': sub,
+      'id': _jsonPk(s.id),
+      'site_name': s.siteName,
+      'address_line_1': s.addressLine1,
+      'address_line_2': s.addressLine2,
+      'city': s.city,
+      'state': s.state,
+      'country': s.country,
+      'pincode': s.postalCode,
+      'site_contact': _siteContactPerson != null
+          ? _jsonPk(_siteContactPerson!.id)
+          : null,
     };
   }
 
-  Map<String, dynamic> _plotLineToJson(QuotationPlotLine l) {
-    final desc = (l.quantityMultiplier != null && l.quantityMultiplier! > 0)
-        ? '${l.label} (x${l.quantityMultiplier})'
-        : l.label;
-    return <String, dynamic>{
-      'description': desc,
-      'amount': l.amount,
-      'selected': l.selected,
-    };
+  List<Map<String, dynamic>> _buildQuoteSections() {
+    final sections = <Map<String, dynamic>>[];
+    var sectionOrder = 0;
+    for (final g in _plotGroups) {
+      final levelId = int.tryParse(g.levelId?.trim() ?? '');
+      if (levelId == null) continue;
+
+      final plots = <Map<String, dynamic>>[];
+      var plotOrder = 0;
+      var sectionTotal = 0;
+
+      for (final line in g.lines) {
+        if (!line.selected) continue;
+        final plotId = int.tryParse(line.plotId?.trim() ?? '');
+        if (plotId == null) continue;
+
+        final pins = <Map<String, dynamic>>[];
+        var pinsOrder = 0;
+        var plotTotal = 0;
+
+        for (final p in line.designPins) {
+          final cid = p.compositeItemId;
+          if (cid == null) continue;
+          final qty = p.quantity < 1 ? 1 : p.quantity;
+          final sp = (p.sellingPrice ?? 0).toDouble();
+          final pinsTotal = (qty * sp).round();
+          plotTotal += pinsTotal;
+          pins.add(<String, dynamic>{
+            'pins_order': pinsOrder++,
+            'pin_id': null,
+            'composite_item_id': cid,
+            'name': p.itemName,
+            'quantity': qty,
+            'selling_price': p.sellingPrice ?? 0,
+            'pins_total': pinsTotal,
+          });
+        }
+        if (pins.isEmpty) continue;
+
+        plots.add(<String, dynamic>{
+          'plot_order': plotOrder++,
+          'plot_id': plotId,
+          'name': line.label,
+          'pins': pins,
+          'plot_total': plotTotal,
+        });
+        sectionTotal += plotTotal;
+      }
+
+      if (plots.isEmpty) continue;
+
+      sections.add(<String, dynamic>{
+        'section_order': sectionOrder++,
+        'level_id': levelId,
+        'name': g.name,
+        'plots': plots,
+        'section_total': sectionTotal,
+      });
+    }
+    return sections;
   }
 
   void _addPlotSection() {
     if (_submitting) return;
+    if (!_showProjectPlotPanels) return;
     final name = _sectionName.text.trim();
     if (name.isEmpty) return;
     setState(() {
@@ -167,17 +523,36 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
         ..._plotGroups,
         QuotationBlockSectionsPanel.emptyGroupFromSectionName(name),
       ];
+      _blockExpandedList = [..._blockExpandedList, true];
       _sectionName.clear();
     });
   }
 
   void _removePlotGroup(int index) {
     if (_submitting) return;
-    if (_plotGroups.length <= 1) return;
+    if (index < 0 || index >= _plotGroups.length) return;
     setState(() {
       _plotGroups = [
         for (var i = 0; i < _plotGroups.length; i++)
           if (i != index) _plotGroups[i],
+      ];
+      _blockExpandedList = [
+        for (var i = 0; i < _blockExpandedList.length; i++)
+          if (i != index) _blockExpandedList[i],
+      ];
+      if (_plotGroups.isEmpty) {
+        _showProjectPlotPanels = false;
+      }
+    });
+  }
+
+  void _setBlockExpandedAt(int blockIndex, bool expanded) {
+    if (_submitting) return;
+    if (blockIndex < 0 || blockIndex >= _blockExpandedList.length) return;
+    setState(() {
+      _blockExpandedList = [
+        for (var i = 0; i < _blockExpandedList.length; i++)
+          i == blockIndex ? expanded : _blockExpandedList[i],
       ];
     });
   }
@@ -200,36 +575,407 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     };
   }
 
+  Iterable<ContactModel> get _contactsForPicker {
+    return _contacts.where((c) {
+      if (!c.isActive) return false;
+      if (_client == null) return true;
+      return c.clientId == _client!.id;
+    });
+  }
+
+  static String _contactLabel(ContactModel c) {
+    final phone = c.phone.trim();
+    if (phone.isNotEmpty) return '${c.contactName} · $phone';
+    return c.contactName;
+  }
+
+  static String _userLabel(UserProfileModel u) {
+    final name = '${u.firstName} ${u.lastName}'.trim();
+    if (name.isNotEmpty) return name;
+    final e = u.email.trim();
+    return e.isNotEmpty ? e : 'User #${u.id}';
+  }
+
+  /// DRF-friendly PK: integer when the id is numeric.
+  static Object _jsonPk(String id) {
+    final t = id.trim();
+    final n = int.tryParse(t);
+    return n ?? t;
+  }
+
+  Widget _contactDropdown({
+    required Object fieldKey,
+    required String hint,
+    required ContactModel? value,
+    required ValueChanged<ContactModel?> onChanged,
+  }) {
+    final rows = _contactsForPicker.toList();
+    return DropdownButtonFormField<ContactModel?>(
+      key: ValueKey<String>(
+        'cq_${fieldKey}_${value?.id ?? 'none'}_${rows.length}',
+      ),
+      initialValue: value,
+      isExpanded: true,
+      hint: Text(hint, style: AppFonts.bodySmall(color: AppColors.muted)),
+      decoration: _dropdownDecoration(),
+      items: <DropdownMenuItem<ContactModel?>>[
+        const DropdownMenuItem<ContactModel?>(
+          value: null,
+          child: Text('— None —'),
+        ),
+        ...rows.map(
+          (c) => DropdownMenuItem<ContactModel?>(
+            value: c,
+            child: Text(
+              _contactLabel(c),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
+      onChanged: _submitting ? null : onChanged,
+    );
+  }
+
+  String _formatDueDateForDisplay(DateTime value) {
+    final mm = value.month.toString().padLeft(2, '0');
+    final dd = value.day.toString().padLeft(2, '0');
+    final yyyy = value.year.toString().padLeft(4, '0');
+    return '$mm/$dd/$yyyy';
+  }
+
+  String _formatDueDateForApi(DateTime value) {
+    final mm = value.month.toString().padLeft(2, '0');
+    final dd = value.day.toString().padLeft(2, '0');
+    final yyyy = value.year.toString().padLeft(4, '0');
+    return '$yyyy-$mm-$dd';
+  }
+
+  DateTime? _parseDueDateField(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    final parts = t.split('/');
+    if (parts.length == 3) {
+      final m = int.tryParse(parts[0]);
+      final d = int.tryParse(parts[1]);
+      final y = int.tryParse(parts[2]);
+      if (m != null && d != null && y != null) {
+        try {
+          return DateTime(y, m, d);
+        } catch (_) {}
+      }
+    }
+    final iso = DateTime.tryParse(t);
+    if (iso != null) return DateTime(iso.year, iso.month, iso.day);
+    return null;
+  }
+
+  String _dueDatePayloadValue() {
+    final t = _dueDate.text.trim();
+    if (t.isEmpty) return '';
+    final dt = _parseDueDateField(t);
+    if (dt != null) return _formatDueDateForApi(dt);
+    return t;
+  }
+
+  Future<void> _pickDueDate() async {
+    if (_submitting) return;
+    final initial = _parseDueDateField(_dueDate.text) ?? DateTime.now();
+    final picked = await showAppDatePickerDialog(
+      context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      helpText: 'Select due date',
+    );
+    if (picked == null || !mounted) return;
+    final normalized = DateTime(picked.year, picked.month, picked.day);
+    setState(() => _dueDate.text = _formatDueDateForDisplay(normalized));
+  }
+
+  Widget _dateField({
+    required TextEditingController controller,
+    required String hint,
+    required VoidCallback? onTap,
+    String? Function(String?)? validator,
+    bool enabled = true,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AbsorbPointer(
+        child: AppTextField(
+          controller: controller,
+          hintText: hint,
+          readOnly: true,
+          enabled: enabled,
+          validator: validator,
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(
+                Icons.calendar_month_outlined,
+                size: 18,
+                color: AppColors.inkStrong,
+              ),
+              SizedBox(width: 8),
+              Icon(Icons.date_range_outlined, size: 18, color: AppColors.muted),
+              SizedBox(width: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<UserProfileModel> get _techniciansAvailableToAdd {
+    final chosen = _selectedTechnicians.map((u) => u.id).toSet();
+    return _userProfiles
+        .where((u) => u.id.isNotEmpty && !chosen.contains(u.id))
+        .toList();
+  }
+
+  void _addTechnician(UserProfileModel u) {
+    if (_submitting) return;
+    if (_selectedTechnicians.any((x) => x.id == u.id)) return;
+    setState(() => _selectedTechnicians = [..._selectedTechnicians, u]);
+  }
+
+  void _removeTechnician(UserProfileModel u) {
+    if (_submitting) return;
+    setState(
+      () => _selectedTechnicians = _selectedTechnicians
+          .where((x) => x.id != u.id)
+          .toList(growable: false),
+    );
+  }
+
+  Widget _buildTechniciansField() {
+    if (_loadingOptions && _userProfiles.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+        child: Text(
+          'Loading team…',
+          style: AppFonts.bodySmall(color: AppColors.muted),
+        ),
+      );
+    }
+    final available = _techniciansAvailableToAdd;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_selectedTechnicians.isNotEmpty) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final u in _selectedTechnicians)
+                InputChip(
+                  label: Text(
+                    _userLabel(u),
+                    style: AppFonts.bodySmall(color: AppColors.inkStrong)
+                        .copyWith(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                  backgroundColor: AppColors.surface,
+                  deleteIconColor: AppColors.inkStrong,
+                  onDeleted: _submitting ? null : () => _removeTechnician(u),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
+        DropdownButtonFormField<String>(
+          key: ValueKey<String>(
+            'tech_add_${_selectedTechnicians.length}_${available.length}',
+          ),
+          isExpanded: true,
+          hint: Text(
+            available.isEmpty
+                ? (_userProfiles.isEmpty ? 'No users loaded' : 'No more to add')
+                : 'Add technician',
+            style: AppFonts.bodySmall(color: AppColors.muted),
+          ),
+          decoration: _dropdownDecoration(),
+          items: available
+              .map(
+                (u) => DropdownMenuItem<String>(
+                  value: u.id,
+                  child: Text(
+                    _userLabel(u),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (_submitting || available.isEmpty)
+              ? null
+              : (id) {
+                  if (id == null) return;
+                  final u = _userProfiles.firstWhere((e) => e.id == id);
+                  _addTechnician(u);
+                },
+        ),
+      ],
+    );
+  }
+
+  List<TagItem> get _tagsAvailableToAdd {
+    final chosen = _selectedTags.map((t) => t.id).toSet();
+    return _tagCatalog.where((t) => !chosen.contains(t.id)).toList();
+  }
+
+  void _addTag(TagItem tag) {
+    if (_submitting) return;
+    if (_selectedTags.any((t) => t.id == tag.id)) return;
+    setState(() => _selectedTags = [..._selectedTags, tag]);
+  }
+
+  void _removeTag(TagItem tag) {
+    if (_submitting) return;
+    setState(
+      () => _selectedTags =
+          _selectedTags.where((t) => t.id != tag.id).toList(growable: false),
+    );
+  }
+
+  static Color _tagChipBackground(TagItem t) {
+    var s = t.colourHex.trim();
+    if (s.startsWith('#')) s = s.substring(1);
+    if (s.length == 6) s = 'FF$s';
+    if (s.length == 8) {
+      try {
+        return Color(int.parse(s, radix: 16));
+      } catch (_) {}
+    }
+    return const Color(0xFFE5E7EB);
+  }
+
+  Widget _buildTagsField() {
+    if (_loadingOptions && _tagCatalog.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+        child: Text(
+          'Loading tags…',
+          style: AppFonts.bodySmall(color: AppColors.muted),
+        ),
+      );
+    }
+    final available = _tagsAvailableToAdd;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_selectedTags.isNotEmpty) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final t in _selectedTags)
+                InputChip(
+                  label: Text(
+                    t.name,
+                    style: AppFonts.bodySmall(color: AppColors.inkStrong)
+                        .copyWith(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                  backgroundColor:
+                      _tagChipBackground(t).withValues(alpha: 0.28),
+                  deleteIconColor: AppColors.inkStrong,
+                  onDeleted:
+                      _submitting ? null : () => _removeTag(t),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
+        DropdownButtonFormField<String>(
+          key: ValueKey<String>(
+            'quotation_tag_add_${_selectedTags.length}_${available.length}',
+          ),
+          isExpanded: true,
+          hint: Text(
+            available.isEmpty
+                ? (_tagCatalog.isEmpty ? 'No tags available' : 'No more tags')
+                : 'Add tag',
+            style: AppFonts.bodySmall(color: AppColors.muted),
+          ),
+          decoration: _dropdownDecoration(),
+          items: available
+              .map(
+                (t) => DropdownMenuItem<String>(
+                  value: t.id,
+                  child: Text(
+                    t.name,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (_submitting || available.isEmpty)
+              ? null
+              : (id) {
+                  if (id == null) return;
+                  final tag = _tagCatalog.firstWhere((e) => e.id == id);
+                  _addTag(tag);
+                },
+        ),
+      ],
+    );
+  }
+
   Map<String, dynamic> _buildPayload() {
+    final quoteSections = _buildQuoteSections();
+    final levels = quoteSections
+        .map((s) => s['level_id'])
+        .whereType<int>()
+        .toList();
+    final grandTotal = quoteSections.fold<int>(
+      0,
+      (sum, sec) =>
+          sum + ((sec['section_total'] as num?)?.round() ?? 0),
+    );
+
     final body = <String, dynamic>{
+      'customer': _jsonPk(_client!.id),
+      'site': _jsonPk(_site!.id),
       'quote_name': _quoteName.text.trim(),
-      'cost_centre': _costCentre.text.trim(),
-      'primary_customer_contact': _primary.text.trim(),
-      'secondary_customer_contact': _secondary.text.trim(),
-      'site_contact': _siteContact.text.trim(),
-      'tags': _tags.text.trim(),
-      'order_no': _orderNo.text.trim(),
-      'due_date': _dueDate.text.trim(),
-      'project_manager': _projectManager.text.trim(),
-      'technicians': _technicians.text.trim(),
-      'sales_person': _salesPerson.text.trim(),
+      'tags': _selectedTags
+          .map((t) => int.tryParse(t.id.trim()) ?? t.id.trim())
+          .toList(),
+      'order_number': _orderNo.text.trim(),
+      'due_date': _dueDatePayloadValue(),
       'description': _descriptionQuill.document.toPlainText().trim(),
+      'project': _jsonPk(_project!.id),
+      'levels': levels,
+      'select_all_levels': false,
+      'quote_sections': quoteSections,
+      'grand_total': grandTotal,
+      'site_snapshot': _siteSnapshotMap(),
     };
-    if (_client != null) body['client'] = _client!.id;
-    if (_site != null) body['site'] = _site!.id;
-    if (_project != null) body['project'] = _project!.id;
-    final block = _blockName.text.trim();
-    body['blocks'] = block.isEmpty
-        ? <dynamic>[]
-        : <Map<String, dynamic>>[
-            <String, dynamic>{
-              'name': block,
-              'sections': _plotGroups.map((g) => _plotGroupToJson(g)).toList(),
-            },
-          ];
+
+    if (_primaryContact != null) {
+      body['primary_customer_contact'] = _jsonPk(_primaryContact!.id);
+    }
+    if (_secondaryContact != null) {
+      body['additional_customer_contact'] = _jsonPk(_secondaryContact!.id);
+    }
+    if (_salespersonUser != null) {
+      body['salesperson'] = _jsonPk(_salespersonUser!.id);
+    }
+    if (_projectManagerUser != null) {
+      body['project_manager'] = _jsonPk(_projectManagerUser!.id);
+    }
+    if (_selectedTechnicians.isNotEmpty) {
+      body['technicians'] =
+          _selectedTechnicians.map((u) => _jsonPk(u.id)).toList();
+    }
+
     body.removeWhere((key, value) {
-      if (key == 'blocks') return false;
+      if (key == 'quote_sections' ||
+          key == 'levels' ||
+          key == 'tags' ||
+          key == 'site_snapshot') {
+        return false;
+      }
       if (value is String && value.trim().isEmpty) return true;
+      if (value is List && value.isEmpty) return true;
       return false;
     });
     return body;
@@ -239,7 +985,9 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     if (_submitting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_project == null) {
-      context.showTopSnackBar(const SnackBar(content: Text('Select a project')));
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Select a project')),
+      );
       return;
     }
     if (_client == null) {
@@ -248,6 +996,32 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     }
     if (_site == null) {
       context.showTopSnackBar(const SnackBar(content: Text('Select a site')));
+      return;
+    }
+    if (_sites.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text(
+            'This project has no linked sites. Link sites on the project, then try again.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (_buildQuoteSections().isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text(
+            'No quotable sections: ensure each level has plots with pins and composite items. Deselect empty plots if needed.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (_salespersonUser == null) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Select salesperson')),
+      );
       return;
     }
     setState(() => _submitting = true);
@@ -311,10 +1085,9 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
             ),
         ],
       ),
-      style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
-        fontWeight: FontWeight.w700,
-        fontSize: 13,
-      ),
+      style: AppFonts.bodySmall(
+        color: AppColors.inkStrong,
+      ).copyWith(fontWeight: FontWeight.w700, fontSize: 13),
     );
   }
 
@@ -332,10 +1105,9 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
         ),
         title: Text(
           'Add Quotation',
-          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w800,
-            fontSize: 18,
-          ),
+          style: AppFonts.titleMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800, fontSize: 18),
         ),
         centerTitle: true,
         bottom: PreferredSize(
@@ -360,9 +1132,12 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                 child: Column(
                   children: [
                     Expanded(
-                      child: ListView(
+                      child: SingleChildScrollView(
+                        physics: const ClampingScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                        children: [
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                           _sectionLabel('Basic info'),
                           _label('Quote Name', required: true),
                           const SizedBox(height: 8),
@@ -376,7 +1151,9 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                           _label('Project Name', required: true),
                           const SizedBox(height: 8),
                           DropdownButtonFormField<QuoteSummary>(
-                            key: ValueKey(_project?.id ?? 'none'),
+                            key: ValueKey<String>(
+                              'quotation_project_${_project?.id ?? 'none'}',
+                            ),
                             initialValue: _project,
                             isExpanded: true,
                             hint: const Text('e.g. John Doe'),
@@ -394,13 +1171,53 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                                 .toList(),
                             onChanged: _submitting
                                 ? null
-                                : (v) => setState(() => _project = v),
+                                : (v) {
+                                    setState(() {
+                                      _project = v;
+                                      _site = null;
+                                      _sites = const [];
+                                      _contacts = const [];
+                                      _primaryContact = null;
+                                      _secondaryContact = null;
+                                      _siteContactPerson = null;
+                                      _loadedLevelSummary = null;
+                                      _plotGroups = [];
+                                      _showProjectPlotPanels = false;
+                                      _blockExpandedList = [];
+                                      _blockName.clear();
+                                    });
+                                    if (v != null) {
+                                      _loadProjectDependencies(v.id);
+                                    }
+                                  },
                           ),
+                          if (_loadingProjectDeps) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Loading sites and project data…',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ).copyWith(fontSize: 12),
+                            ),
+                          ],
+                          if (!_loadingProjectDeps &&
+                              _loadedLevelSummary != null &&
+                              _loadedLevelSummary!.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Blocks: $_loadedLevelSummary',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ).copyWith(fontSize: 12),
+                            ),
+                          ],
                           const SizedBox(height: 14),
                           _label('Client Name', required: true),
                           const SizedBox(height: 8),
                           DropdownButtonFormField<ClientModel>(
-                            key: ValueKey(_client?.id ?? 'none'),
+                            key: ValueKey<String>(
+                              'quotation_client_${_client?.id ?? 'none'}',
+                            ),
                             initialValue: _client,
                             isExpanded: true,
                             hint: const Text('e.g. Apex Structural Group'),
@@ -409,35 +1226,66 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                                 .map(
                                   (c) => DropdownMenuItem<ClientModel>(
                                     value: c,
-                                    child: Text(c.name, overflow: TextOverflow.ellipsis),
+                                    child: Text(
+                                      c.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 )
                                 .toList(),
                             onChanged: _submitting
                                 ? null
-                                : (v) => setState(() => _client = v),
+                                : (v) => setState(() {
+                                    _client = v;
+                                    _primaryContact = null;
+                                    _secondaryContact = null;
+                                    _siteContactPerson = null;
+                                  }),
                           ),
                           const SizedBox(height: 14),
                           _label('Site', required: true),
                           const SizedBox(height: 8),
                           DropdownButtonFormField<SiteModel>(
-                            key: ValueKey(_site?.id ?? 'none'),
+                            key: ValueKey<String>(
+                              'quotation_site_${_site?.id ?? 'none'}',
+                            ),
                             initialValue: _site,
                             isExpanded: true,
-                            hint: const Text('e.g. Apex Structural Group'),
+                            hint: Text(
+                              _project == null
+                                  ? 'Select a project first'
+                                  : 'e.g. Apex Structural Group',
+                            ),
                             decoration: _dropdownDecoration(),
                             items: _sites
                                 .map(
                                   (s) => DropdownMenuItem<SiteModel>(
                                     value: s,
-                                    child: Text(s.siteName, overflow: TextOverflow.ellipsis),
+                                    child: Text(
+                                      s.siteName,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 )
                                 .toList(),
-                            onChanged: _submitting
+                            onChanged:
+                                (_submitting ||
+                                    _project == null ||
+                                    _loadingProjectDeps)
                                 ? null
                                 : (v) => setState(() => _site = v),
                           ),
+                          if (_project != null &&
+                              !_loadingProjectDeps &&
+                              _sites.isEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'This project has no linked sites. Add or link sites on the project in the CRM, then reopen this form.',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ).copyWith(fontSize: 12, height: 1.35),
+                            ),
+                          ],
                           const SizedBox(height: 14),
                           _label('Cost Centre', required: true),
                           const SizedBox(height: 8),
@@ -450,38 +1298,37 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                           _sectionLabel('Contact'),
                           _label('Primary Customer Contact'),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _primary,
-                            hintText: '+1 (555) 000-0000',
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
+                          _contactDropdown(
+                            fieldKey: 'primary_customer',
+                            hint: 'Select contact (optional)',
+                            value: _primaryContact,
+                            onChanged: (c) =>
+                                setState(() => _primaryContact = c),
                           ),
                           const SizedBox(height: 14),
                           _label('Secondary Customer Contact'),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _secondary,
-                            hintText: '+1 (555) 000-0000',
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
+                          _contactDropdown(
+                            fieldKey: 'secondary_customer',
+                            hint: 'Select contact (optional)',
+                            value: _secondaryContact,
+                            onChanged: (c) =>
+                                setState(() => _secondaryContact = c),
                           ),
                           const SizedBox(height: 14),
                           _label('Site Contact'),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _siteContact,
-                            hintText: '+1 (555) 000-0000',
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
+                          _contactDropdown(
+                            fieldKey: 'site_contact',
+                            hint: 'Select contact (optional)',
+                            value: _siteContactPerson,
+                            onChanged: (c) =>
+                                setState(() => _siteContactPerson = c),
                           ),
                           _sectionLabel('Additional information'),
                           _label('Tags'),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _tags,
-                            hintText: 'Tags',
-                            textInputAction: TextInputAction.next,
-                          ),
+                          _buildTagsField(),
                           const SizedBox(height: 14),
                           _label('Order No.'),
                           const SizedBox(height: 8),
@@ -493,34 +1340,126 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                           const SizedBox(height: 14),
                           _label('Due Date'),
                           const SizedBox(height: 8),
-                          AppTextField(
+                          _dateField(
                             controller: _dueDate,
-                            hintText: 'YYYY-MM-DD',
-                            textInputAction: TextInputAction.next,
+                            hint: 'mm/dd/yyyy',
+                            onTap: _submitting ? null : _pickDueDate,
+                            enabled: !_submitting,
                           ),
                           const SizedBox(height: 14),
                           _label('Project Manager'),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _projectManager,
-                            hintText: 'Suite, unit, etc. (optional)',
-                            textInputAction: TextInputAction.next,
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<
+                                    UserProfileModel?>(
+                                  key: ValueKey<String>(
+                                    'pm_${_projectManagerUser?.id ?? 'none'}',
+                                  ),
+                                  initialValue: _projectManagerUser,
+                                  isExpanded: true,
+                                  hint: Text(
+                                    'Select user (optional)',
+                                    style: AppFonts.bodySmall(
+                                      color: AppColors.muted,
+                                    ),
+                                  ),
+                                  decoration: _dropdownDecoration(),
+                                  items: <DropdownMenuItem<
+                                      UserProfileModel?>>[
+                                    const DropdownMenuItem<
+                                        UserProfileModel?>(
+                                      value: null,
+                                      child: Text('— None —'),
+                                    ),
+                                    ..._userProfiles.map(
+                                      (u) => DropdownMenuItem<
+                                          UserProfileModel?>(
+                                        value: u,
+                                        child: Text(
+                                          _userLabel(u),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                  onChanged: _submitting
+                                      ? null
+                                      : (u) => setState(
+                                            () => _projectManagerUser = u,
+                                          ),
+                                ),
+                              ),
+                              if (_projectManagerUser != null) ...[
+                                const SizedBox(width: 8),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: TextButton(
+                                    onPressed: _submitting
+                                        ? null
+                                        : () => setState(
+                                              () => _projectManagerUser =
+                                                  null,
+                                            ),
+                                    child: const Text('Clear'),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                           const SizedBox(height: 14),
                           _label('Technicians'),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _technicians,
-                            hintText: 'Technicians',
-                            textInputAction: TextInputAction.next,
-                          ),
+                          _buildTechniciansField(),
                           const SizedBox(height: 14),
-                          _label('Sales Person'),
+                          _label('Salesperson', required: true),
                           const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _salesPerson,
-                            hintText: 'Sales Person',
-                            textInputAction: TextInputAction.next,
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<
+                                    UserProfileModel?>(
+                                  key: ValueKey<String>(
+                                    'sp_${_salespersonUser?.id ?? 'none'}',
+                                  ),
+                                  initialValue: _salespersonUser,
+                                  isExpanded: true,
+                                  hint: Text(
+                                    'Select salesperson',
+                                    style: AppFonts.bodySmall(
+                                      color: AppColors.muted,
+                                    ),
+                                  ),
+                                  decoration: _dropdownDecoration(),
+                                  items: <DropdownMenuItem<
+                                      UserProfileModel?>>[
+                                    const DropdownMenuItem<
+                                        UserProfileModel?>(
+                                      value: null,
+                                      child: Text('— Select —'),
+                                    ),
+                                    ..._userProfiles.map(
+                                      (u) => DropdownMenuItem<
+                                          UserProfileModel?>(
+                                        value: u,
+                                        child: Text(
+                                          _userLabel(u),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                  onChanged: _submitting
+                                      ? null
+                                      : (u) => setState(
+                                            () => _salespersonUser = u,
+                                          ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 14),
                           _label('Description'),
@@ -528,36 +1467,65 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                           IgnorePointer(
                             ignoring: _submitting,
                             child: buildQuotationDescriptionRichField(
+                              key: const ValueKey<Object>(
+                                'add_quotation_description_editor',
+                              ),
                               quillController: _descriptionQuill,
                               editorFocusNode: _descriptionFocus,
-                              editorScrollController: _descriptionScroll,
                             ),
                           ),
                           _sectionLabel('Project'),
-                          _label('Block name'),
-                          const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _blockName,
-                            hintText: 'Optional block label',
-                            textInputAction: TextInputAction.next,
-                          ),
-                          const SizedBox(height: 14),
-                          QuotationBlockSectionsPanel(
-                            blockNameController: _blockName,
-                            sectionNameController: _sectionName,
-                            plotGroups: _plotGroups,
-                            blockExpanded: _blockExpanded,
-                            onBlockExpandedChanged: (v) {
-                              if (_submitting) return;
-                              setState(() => _blockExpanded = v);
-                            },
-                            onAddSection: _addPlotSection,
-                            onLineSelectionChanged: _setLineSelected,
-                            onRemovePlotGroup: _removePlotGroup,
-                            submitting: _submitting,
-                          ),
+                          if (_project == null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Select a project. Block cards load from its drawing levels and appear only when at least one plot has pins.',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ).copyWith(fontSize: 12, height: 1.35),
+                            ),
+                          ] else if (_loadingProjectDeps) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Loading levels and sites…',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ).copyWith(fontSize: 12),
+                            ),
+                          ] else if (!_showProjectPlotPanels) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'No plots with pins in the loaded levels for this project. When levels include pinned plots, each level becomes its own block card below.',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ).copyWith(fontSize: 12, height: 1.35),
+                            ),
+                          ] else ...[
+                            if (_plotGroups.length > 1) ...[
+                              _label('Block name (quotation)'),
+                              const SizedBox(height: 8),
+                              AppTextField(
+                                controller: _blockName,
+                                hintText:
+                                    'Optional — defaults to level names below',
+                                textInputAction: TextInputAction.next,
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            QuotationBlockSectionsPanel(
+                              blockNameController: _blockName,
+                              sectionNameController: _sectionName,
+                              plotGroups: _plotGroups,
+                              blockExpandedList: _blockExpandedList,
+                              onBlockExpandedAt: _setBlockExpandedAt,
+                              onAddSection: _addPlotSection,
+                              onLineSelectionChanged: _setLineSelected,
+                              onRemovePlotGroup: _removePlotGroup,
+                              submitting: _submitting,
+                            ),
+                          ],
                         ],
                       ),
+                    ),
                     ),
                     Padding(
                       padding: EdgeInsets.fromLTRB(
@@ -589,8 +1557,13 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                                 )
                               : Text(
                                   'Create',
-                                  style: AppFonts.titleMedium(color: AppColors.white)
-                                      .copyWith(fontWeight: FontWeight.w800, fontSize: 16),
+                                  style:
+                                      AppFonts.titleMedium(
+                                        color: AppColors.white,
+                                      ).copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
+                                      ),
                                 ),
                         ),
                       ),

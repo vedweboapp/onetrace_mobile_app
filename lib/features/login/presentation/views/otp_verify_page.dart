@@ -282,6 +282,15 @@ class _OtpVerifyPageState extends ConsumerState<OtpVerifyPage> {
       } else {
         await storage.remove(LocalStorageKeys.authUserId);
       }
+      final organizationId = AuthSession.readOrganizationId(response.data);
+      if (organizationId != null) {
+        await storage.setInt(
+          LocalStorageKeys.authOrganizationId,
+          organizationId,
+        );
+      } else {
+        await storage.remove(LocalStorageKeys.authOrganizationId);
+      }
       if (!mounted) return;
       context.go(DashboardPage.path);
     } on DioException catch (e) {

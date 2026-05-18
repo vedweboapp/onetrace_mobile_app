@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
 import 'package:red5/features/quotations/data/quotations_api_client.dart';
@@ -138,9 +139,9 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
       ),
       child: TextField(
         controller: _searchController,
-        style: AppFonts.bodyLarge(color: AppColors.inkStrong).copyWith(
-          fontSize: 16,
-        ),
+        style: AppFonts.bodyLarge(
+          color: AppColors.inkStrong,
+        ).copyWith(fontSize: 16),
         decoration: InputDecoration(
           hintText: '',
           border: InputBorder.none,
@@ -148,11 +149,19 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
             horizontal: 12,
             vertical: 14,
           ),
-          prefixIcon: const Icon(Icons.search, color: Color(0xFF8A8A8A), size: 20),
+          prefixIcon: const Icon(
+            Icons.search,
+            color: Color(0xFF8A8A8A),
+            size: 20,
+          ),
           suffixIcon: hasQuery
               ? IconButton(
                   onPressed: () => _searchController.clear(),
-                  icon: const Icon(Icons.cancel, color: Color(0xFF8A8A8A), size: 18),
+                  icon: const Icon(
+                    Icons.cancel,
+                    color: Color(0xFF8A8A8A),
+                    size: 18,
+                  ),
                 )
               : null,
         ),
@@ -160,13 +169,13 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
     );
   }
 
-  Widget _metaLine(IconData icon, String text) {
+  Widget _metaLine(String icon, String text) {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16, color: _muted),
+          Image.asset(icon, height: 16, width: 16, color: _muted),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -203,17 +212,19 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
             children: [
               Text(
                 q.quoteName,
-                style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 16,
-                  height: 1.2,
-                ),
+                style: AppFonts.titleMedium(color: AppColors.inkStrong)
+                    .copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      height: 1.2,
+                    ),
               ),
-              _metaLine(Icons.person_outline_rounded, _clientLine(q)),
-              _metaLine(Icons.work_outline_rounded, _projectLine(q)),
-              if (q.siteName != null && q.siteName!.trim().isNotEmpty)
-                _metaLine(Icons.place_outlined, _siteLine(q)),
-              _metaLine(Icons.phone_outlined, _phoneLine(q)),
+              vGap(10),
+              _metaLine("assets/images/inperson.png", _clientLine(q)),
+              _metaLine("assets/images/projects.png", _projectLine(q)),
+              // if (q.siteName != null && q.siteName!.trim().isNotEmpty)
+              //   _metaLine(Icons.place_outlined, _siteLine(q)),
+              _metaLine("assets/images/call.png", _phoneLine(q)),
             ],
           ),
         ),
@@ -246,10 +257,9 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
             Text(
               'No quotations yet',
               textAlign: TextAlign.center,
-              style: AppFonts.headlineSmall(color: AppColors.inkStrong).copyWith(
-                fontWeight: FontWeight.w800,
-                fontSize: 24,
-              ),
+              style: AppFonts.headlineSmall(
+                color: AppColors.inkStrong,
+              ).copyWith(fontWeight: FontWeight.w800, fontSize: 24),
             ),
             const SizedBox(height: 8),
             Text(
@@ -292,10 +302,10 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
                 'SEARCH RESULTS (${filtered.length})',
                 style: AppFonts.labelLarge(color: const Color(0xFF8A8A8A))
                     .copyWith(
-                  letterSpacing: 0.7,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                ),
+                      letterSpacing: 0.7,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
               ),
             ),
           Expanded(
@@ -356,7 +366,9 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
                             return const Padding(
                               padding: EdgeInsets.all(16),
                               child: Center(
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               ),
                             );
                           }

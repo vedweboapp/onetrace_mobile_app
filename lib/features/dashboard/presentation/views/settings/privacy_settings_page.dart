@@ -5,6 +5,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/change_password_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
@@ -52,6 +53,7 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
         onCompany: () => _closeDrawerPush(CompanySettingsPage.path),
         onPrivacy: () => _scaffoldKey.currentState?.closeDrawer(),
         onMetadata: () => _closeDrawerPush(MetadataSettingsPage.path),
+        onIntegration: () => _closeDrawerPush(IntegrationSettingsPage.path),
       ),
       appBar: AppBar(
         backgroundColor: AppColors.white,
@@ -282,6 +284,7 @@ class _PrivacyDrawer extends StatelessWidget {
     required this.onCompany,
     required this.onPrivacy,
     required this.onMetadata,
+    required this.onIntegration,
   });
 
   final VoidCallback onExit;
@@ -290,6 +293,7 @@ class _PrivacyDrawer extends StatelessWidget {
   final VoidCallback onCompany;
   final VoidCallback onPrivacy;
   final VoidCallback onMetadata;
+  final VoidCallback onIntegration;
 
   @override
   Widget build(BuildContext context) {
@@ -361,6 +365,13 @@ class _PrivacyDrawer extends StatelessWidget {
                     iconAsset: 'assets/images/database (1).png',
                     selected: false,
                     onTap: onMetadata,
+                  ),
+                  _sectionLabelCaps('INTEGRATION'),
+                  _sidebarNavTile(
+                    title: 'Integration',
+                    iconAsset: 'assets/images/integration.png',
+                    selected: false,
+                    onTap: onIntegration,
                   ),
                 ],
               ),

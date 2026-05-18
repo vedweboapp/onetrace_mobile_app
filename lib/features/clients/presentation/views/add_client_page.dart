@@ -10,10 +10,20 @@ import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
 
 class AddClientPage extends ConsumerStatefulWidget {
-  const AddClientPage({super.key});
+  const AddClientPage({super.key, this.editClientId, this.existing});
+
+  /// When set with [existing] or after a fetch, the form submits `PUT /clients/{id}/`.
+  final String? editClientId;
+
+  /// Prefill from client detail (or edit route extra). If null but [editClientId] is set, detail is fetched.
+  final ClientModel? existing;
 
   static const path = '/clients/add';
   static const name = 'add-client';
+  static const editName = 'edit-client';
+
+  static String pathForEdit(String clientId) =>
+      '/clients/${Uri.encodeComponent(clientId.trim())}/edit';
 
   @override
   ConsumerState<AddClientPage> createState() => _AddClientPageState();
@@ -34,6 +44,9 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
 
   String _country = 'United States';
   bool _isSubmitting = false;
+  bool _loadingEdit = false;
+  String? _loadEditError;
+  ClientModel? _resolvedEdit;
 
   static const _countries = <String>[
     'United States',
@@ -42,6 +55,82 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
     'Canada',
     'Australia',
   ];
+
+  bool get _isEditMode {
+    final ex = widget.existing;
+    if (ex != null && ex.id.trim().isNotEmpty) return true;
+    final eid = widget.editClientId?.trim();
+    return eid != null && eid.isNotEmpty;
+  }
+
+  String? get _editTargetId {
+    final ex = widget.existing;
+    if (ex != null && ex.id.trim().isNotEmpty) return ex.id.trim();
+    final r = _resolvedEdit;
+    if (r != null && r.id.trim().isNotEmpty) return r.id.trim();
+    final eid = widget.editClientId?.trim();
+    return eid != null && eid.isNotEmpty ? eid : null;
+  }
+
+  /// Preserved on update (form does not edit status yet).
+  bool get _activeFlagForUpdate =>
+      widget.existing?.isActive ?? _resolvedEdit?.isActive ?? true;
+
+  @override
+  void initState() {
+    super.initState();
+    final ex = widget.existing;
+    if (ex != null) {
+      _applyFromModel(ex);
+    } else if ((widget.editClientId ?? '').trim().isNotEmpty) {
+      _loadingEdit = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadForEdit((widget.editClientId ?? '').trim());
+      });
+    }
+  }
+
+  Future<void> _loadForEdit(String id) async {
+    setState(() {
+      _loadingEdit = true;
+      _loadEditError = null;
+    });
+    try {
+      final api = ref.read(clientsApiClientProvider);
+      final c = await api.fetchClientDetail(id);
+      if (!mounted) return;
+      setState(() {
+        _resolvedEdit = c;
+        _applyFromModel(c);
+        _loadingEdit = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingEdit = false;
+        _loadEditError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load client',
+        );
+      });
+    }
+  }
+
+  void _applyFromModel(ClientModel c) {
+    _clientName.text = c.name;
+    _contactPerson.text = c.contactPerson;
+    _email.text = c.email;
+    _phone.text = c.phone;
+    _address1.text = c.addressLine1;
+    _address2.text = c.addressLine2;
+    _city.text = c.city;
+    _state.text = c.state;
+    _postalCode.text = c.pincode;
+    final co = c.country.trim();
+    if (co.isNotEmpty) {
+      _country = _countries.contains(co) ? co : _countries.first;
+    }
+  }
 
   @override
   void dispose() {
@@ -83,24 +172,45 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
 
   Future<void> _submit() async {
     if (_isSubmitting) return;
+    if (_loadingEdit) return;
+    if (_isEditMode && _editTargetId == null) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _isSubmitting = true);
     try {
       final api = ref.read(clientsApiClientProvider);
-      final created = await api.createClient(
-        name: _clientName.text.trim(),
-        contactPerson: _contactPerson.text.trim(),
-        email: _email.text.trim(),
-        phone: _phone.text.trim(),
-        addressLine1: _address1.text.trim(),
-        addressLine2: _address2.text.trim(),
-        city: _city.text.trim(),
-        state: _state.text.trim(),
-        country: _country.trim(),
-        pincode: _postalCode.text.trim(),
-      );
+      final ClientModel result;
+      if (_isEditMode) {
+        final id = _editTargetId!;
+        result = await api.updateClient(
+          id: id,
+          name: _clientName.text.trim(),
+          contactPerson: _contactPerson.text.trim(),
+          email: _email.text.trim(),
+          phone: _phone.text.trim(),
+          addressLine1: _address1.text.trim(),
+          addressLine2: _address2.text.trim(),
+          city: _city.text.trim(),
+          state: _state.text.trim(),
+          country: _country.trim(),
+          pincode: _postalCode.text.trim(),
+          isActive: _activeFlagForUpdate,
+        );
+      } else {
+        result = await api.createClient(
+          name: _clientName.text.trim(),
+          contactPerson: _contactPerson.text.trim(),
+          email: _email.text.trim(),
+          phone: _phone.text.trim(),
+          addressLine1: _address1.text.trim(),
+          addressLine2: _address2.text.trim(),
+          city: _city.text.trim(),
+          state: _state.text.trim(),
+          country: _country.trim(),
+          pincode: _postalCode.text.trim(),
+        );
+      }
       if (!mounted) return;
-      context.pop<ClientModel>(created);
+      context.pop<ClientModel>(result);
     } catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(
@@ -108,7 +218,9 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
           content: Text(
             ApiResponseMessage.fromAnyError(
               e,
-              genericFallback: 'Failed to create client',
+              genericFallback: _isEditMode
+                  ? 'Failed to update client'
+                  : 'Failed to create client',
             ),
           ),
           behavior: SnackBarBehavior.floating,
@@ -161,7 +273,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
           icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
         ),
         title: Text(
-          'Add Client',
+          _isEditMode ? 'Edit Client' : 'Add Client',
           style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
             fontWeight: FontWeight.w800,
             fontSize: 16,
@@ -177,9 +289,35 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
       ),
       body: SafeArea(
         top: false,
-        child: Form(
-          key: _formKey,
-          child: ListView(
+        child: _loadingEdit
+            ? const Center(child: CircularProgressIndicator())
+            : _loadEditError != null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _loadEditError!,
+                        textAlign: TextAlign.center,
+                        style: AppFonts.bodyMedium(color: AppColors.muted),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: () {
+                          final id = widget.editClientId?.trim();
+                          if (id != null && id.isNotEmpty) _loadForEdit(id);
+                        },
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : Form(
+                key: _formKey,
+                child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
             children: [
               _sectionLabel('Basic Info'),
@@ -275,7 +413,8 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                initialValue: _country,
+                key: ValueKey<String>(_country),
+                initialValue: _countries.contains(_country) ? _country : _countries.first,
                 items: _countries
                     .map(
                       (c) => DropdownMenuItem<String>(
@@ -284,7 +423,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                       ),
                     )
                     .toList(),
-                onChanged: (v) => setState(() => _country = v ?? _country),
+                onChanged: (v) => setState(() => _country = v ?? _countries.first),
                 decoration: const InputDecoration(
                   filled: true,
                   fillColor: AppColors.white,
@@ -361,7 +500,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
               SizedBox(
                 height: 52,
                 child: FilledButton(
-                  onPressed: _isSubmitting ? null : _submit,
+                  onPressed: (_isSubmitting || _loadingEdit) ? null : _submit,
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF111111),
                     foregroundColor: AppColors.white,
@@ -379,7 +518,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                           ),
                         )
                       : Text(
-                          'Create',
+                          _isEditMode ? 'Save' : 'Create',
                           style: AppFonts.titleMedium(color: AppColors.white)
                               .copyWith(
                             fontWeight: FontWeight.w800,

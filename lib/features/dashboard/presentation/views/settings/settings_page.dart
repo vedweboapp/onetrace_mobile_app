@@ -4,6 +4,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
@@ -131,6 +132,25 @@ class SettingsPage extends StatelessWidget {
                 title: 'Module and Field',
                 route: MetadataSettingsPage.path,
               ),
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  'INTEGRATION',
+                  style: AppFonts.labelMedium(color: const Color(0xFF5F6672))
+                      .copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.0,
+                        fontSize: 16,
+                      ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const _SettingsMenuRow(
+                iconAsset: 'assets/images/integration.png',
+                title: 'Integration',
+                route: IntegrationSettingsPage.path,
+              ),
               SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
             ],
           ),
@@ -165,7 +185,7 @@ class _SettingsMenuRow extends StatelessWidget {
           children: [
             Image.asset(
               iconAsset,
-              color: const Color(0xFF4B5563),
+              color: const Color.fromARGB(255, 18, 18, 18),
               height: 24,
               width: 24,
             ),
@@ -173,7 +193,7 @@ class _SettingsMenuRow extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
-                style: AppFonts.bodyMedium(
+                style: AppFonts.titleMedium(
                   color: AppColors.inkStrong,
                 ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
               ),

@@ -84,6 +84,43 @@ final class ClientsApiClient {
     return ClientModel.fromJson(payload);
   }
 
+  /// `PUT /api/v1/clients/{id}/` — same field set as [createClient].
+  Future<ClientModel> updateClient({
+    required String id,
+    required String name,
+    required String contactPerson,
+    required String email,
+    required String phone,
+    required String addressLine1,
+    required String addressLine2,
+    required String city,
+    required String state,
+    required String country,
+    required String pincode,
+    required bool isActive,
+  }) async {
+    final response = await _dio.put<Map<String, dynamic>>(
+      AppApiUrls.clientsById(id.trim()),
+      data: <String, dynamic>{
+        'name': name,
+        'contact_person': contactPerson,
+        'email': email,
+        'phone': phone,
+        'address_line_1': addressLine1,
+        'address_line_2': addressLine2,
+        'city': city,
+        'state': state,
+        'country': country,
+        'pincode': pincode,
+        'is_active': isActive,
+      },
+    );
+    final root = response.data ?? const <String, dynamic>{};
+    final data = _readMap(root['data']);
+    final payload = data.isNotEmpty ? data : root;
+    return ClientModel.fromJson(payload);
+  }
+
   static List<Map<String, dynamic>> _readRows(Map<String, dynamic> root) {
     final raw = root['data'];
     if (raw is List) {

@@ -74,8 +74,9 @@ class DrawingCanvasArgs {
     final uploadedProjectId = (map['projectId'] ?? '').toString().trim();
     final levelId = (map['levelId'] ?? '').toString().trim();
     final title = (pdfName.isNotEmpty ? pdfName : fileName).trim();
-    final resolvedPid =
-        uploadedProjectId.isEmpty ? projectId.trim() : uploadedProjectId;
+    final resolvedPid = uploadedProjectId.isEmpty
+        ? projectId.trim()
+        : uploadedProjectId;
     return DrawingCanvasArgs(
       title: title,
       filePath: filePath.isEmpty ? null : filePath,
@@ -137,6 +138,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   List<CompositeItemOption> _productOptions = const <CompositeItemOption>[];
   int? _selectedGroupId;
   int? _selectedCompositeItemId;
+
   /// Default for new pins; toggled on the drawing form before placing a pin.
   bool _variationOn = false;
   bool _isLoadingGroups = false;
@@ -678,40 +680,54 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       setState(() {
         _regions.setAll(
           0,
-          _regions.map((region) {
-            final mappedLines = region.safeLines
-                .map(
-                  (line) => _CanvasLine(
-                    start: _mapPointAcrossContentRects(line.start, qFrom, qTo),
-                    end: _mapPointAcrossContentRects(line.end, qFrom, qTo),
-                  ),
-                )
-                .toList(growable: false);
-            final mappedPins = region.pins
-                .map(
-                  (pin) => pin.copyWith(
-                    offset: _mapPointAcrossContentRects(pin.offset, qFrom, qTo),
-                  ),
-                )
-                .toList(growable: false);
-            final mappedRect = region.safeLines.isNotEmpty
-                ? _boundingRectFromPoints(
-                    mappedLines.map((line) => line.start).toList(),
-                  )
-                : Rect.fromPoints(
-                    _mapPointAcrossContentRects(region.rect.topLeft, qFrom, qTo),
-                    _mapPointAcrossContentRects(
-                      region.rect.bottomRight,
-                      qFrom,
-                      qTo,
-                    ),
-                  );
-            return region.copyWith(
-              rect: mappedRect,
-              lines: mappedLines,
-              pins: mappedPins,
-            );
-          }).toList(growable: false),
+          _regions
+              .map((region) {
+                final mappedLines = region.safeLines
+                    .map(
+                      (line) => _CanvasLine(
+                        start: _mapPointAcrossContentRects(
+                          line.start,
+                          qFrom,
+                          qTo,
+                        ),
+                        end: _mapPointAcrossContentRects(line.end, qFrom, qTo),
+                      ),
+                    )
+                    .toList(growable: false);
+                final mappedPins = region.pins
+                    .map(
+                      (pin) => pin.copyWith(
+                        offset: _mapPointAcrossContentRects(
+                          pin.offset,
+                          qFrom,
+                          qTo,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false);
+                final mappedRect = region.safeLines.isNotEmpty
+                    ? _boundingRectFromPoints(
+                        mappedLines.map((line) => line.start).toList(),
+                      )
+                    : Rect.fromPoints(
+                        _mapPointAcrossContentRects(
+                          region.rect.topLeft,
+                          qFrom,
+                          qTo,
+                        ),
+                        _mapPointAcrossContentRects(
+                          region.rect.bottomRight,
+                          qFrom,
+                          qTo,
+                        ),
+                      );
+                return region.copyWith(
+                  rect: mappedRect,
+                  lines: mappedLines,
+                  pins: mappedPins,
+                );
+              })
+              .toList(growable: false),
         );
         _canvasLines.setAll(
           0,
@@ -742,7 +758,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           _draftStart = _mapPointAcrossContentRects(_draftStart!, qFrom, qTo);
         }
         if (_draftCurrent != null) {
-          _draftCurrent = _mapPointAcrossContentRects(_draftCurrent!, qFrom, qTo);
+          _draftCurrent = _mapPointAcrossContentRects(
+            _draftCurrent!,
+            qFrom,
+            qTo,
+          );
         }
         if (_regionMoveAnchorScene != null) {
           _regionMoveAnchorScene = _mapPointAcrossContentRects(
@@ -1637,7 +1657,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   List<Offset> _pointsFromCoordinates(dynamic rawCoordinates) {
-    if (rawCoordinates is! List || rawCoordinates.isEmpty) return const <Offset>[];
+    if (rawCoordinates is! List || rawCoordinates.isEmpty)
+      return const <Offset>[];
     final points = <Offset>[];
     for (final point in rawCoordinates) {
       double? x;
@@ -1950,7 +1971,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         _activeRegionIndex = moveIdx;
         _draftStart = null;
         _draftCurrent = null;
-      }); 
+      });
       return;
     }
     setState(() {
@@ -2296,181 +2317,184 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   _observeViewportGeometry(constraints.biggest);
                   return Stack(
                     children: [
-                  Positioned.fill(
-                    child: InteractiveViewer(
-                      transformationController: _viewerTransform,
-                      minScale: 0.5,
-                      maxScale: 8,
-                      panEnabled: _canPanCanvas,
-                      boundaryMargin: const EdgeInsets.all(80),
-                      child: SizedBox.expand(
-                        child: Stack(
+                      Positioned.fill(
+                        child: InteractiveViewer(
+                          transformationController: _viewerTransform,
+                          minScale: 0.5,
+                          maxScale: 8,
+                          panEnabled: _canPanCanvas,
+                          boundaryMargin: const EdgeInsets.all(80),
+                          child: SizedBox.expand(
+                            child: Stack(
+                              children: [
+                                Positioned.fill(child: _buildDrawingPreview()),
+                                Positioned.fill(
+                                  child: _buildCanvasInteractionLayer(),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned.fill(
+                        key: _viewportCanvasKey,
+                        child: Listener(
+                          behavior: HitTestBehavior.translucent,
+                          onPointerDown: (PointerDownEvent e) {
+                            _activePointers++;
+                            if (_activePointers > 1) {
+                              _selectAreaPointerDown = false;
+                              _cancelPinLongPressTimer();
+                              _pinPointerDownHit = null;
+                              _pinLongPressArmed = false;
+                              _pinDraggingAfterLongPress = false;
+                              _lineDraftPoints.clear();
+                              _lineDraftCurrent = null;
+                            } else {
+                              _suppressPinTapSheetOnce = false;
+                              _pinLongPressArmed = false;
+                              _pinDraggingAfterLongPress = false;
+                              _cancelPinLongPressTimer();
+                              _selectAreaPointerDown = false;
+                              final downScene = _globalPositionToScene(
+                                e.position,
+                              );
+                              if (_selectedTool == _CanvasTool.location) {
+                                _pinPointerDownHit = _findPinAtScenePoint(
+                                  downScene,
+                                );
+                                if (_pinPointerDownHit != null) {
+                                  _schedulePinLongPressArm(_pinPointerDownHit!);
+                                }
+                              } else {
+                                _pinPointerDownHit = null;
+                              }
+                              if (_pinPointerDownHit == null &&
+                                  _selectedTool == _CanvasTool.selectArea) {
+                                _selectAreaPointerDown = true;
+                                _startSelectAreaFromScene(downScene);
+                              }
+                            }
+                          },
+                          onPointerMove: (PointerMoveEvent e) {
+                            if (_activePointers != 1) return;
+                            final scene = _globalPositionToScene(e.position);
+                            final hit = _pinPointerDownHit;
+                            if (hit != null && _pinLongPressArmed) {
+                              _applyPinScenePosition(hit, scene);
+                              _pinDraggingAfterLongPress = true;
+                              return;
+                            }
+                            if (_selectAreaPointerDown) {
+                              _updateSelectAreaFromScene(scene);
+                              return;
+                            }
+                            if (_selectedTool == _CanvasTool.line &&
+                                _lineDraftPoints.isNotEmpty) {
+                              setState(() => _lineDraftCurrent = scene);
+                            }
+                          },
+                          onPointerUp: (PointerUpEvent e) {
+                            _cancelPinLongPressTimer();
+                            final hadPinSession = _pinPointerDownHit != null;
+                            final skipTapSheet =
+                                hadPinSession &&
+                                (_pinLongPressArmed ||
+                                    _pinDraggingAfterLongPress);
+                            if (hadPinSession && skipTapSheet) {
+                              _suppressPinTapSheetOnce = true;
+                            }
+                            _pinPointerDownHit = null;
+                            _pinLongPressArmed = false;
+                            _pinDraggingAfterLongPress = false;
+                            if (_selectAreaPointerDown) {
+                              _selectAreaPointerDown = false;
+                              _endSelectAreaGesture();
+                            }
+                            if (_activePointers > 0) _activePointers--;
+                          },
+                          onPointerCancel: (_) {
+                            _cancelPinLongPressTimer();
+                            _pinPointerDownHit = null;
+                            _pinLongPressArmed = false;
+                            _pinDraggingAfterLongPress = false;
+                            _lineDraftPoints.clear();
+                            _lineDraftCurrent = null;
+                            if (_selectAreaPointerDown) {
+                              _selectAreaPointerDown = false;
+                              if (_movingRegionIndex != null) {
+                                setState(() {
+                                  _movingRegionIndex = null;
+                                  _regionMoveAnchorScene = null;
+                                });
+                              } else {
+                                setState(() {
+                                  _draftStart = null;
+                                  _draftCurrent = null;
+                                });
+                              }
+                            }
+                            if (_activePointers > 0) _activePointers--;
+                          },
+                          child: IgnorePointer(
+                            // Let InteractiveViewer fully handle pinch/multi-touch.
+                            ignoring: _activePointers > 1,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              // Select-area moves & pin drags use [Listener] only so PanGesture never
+                              // wins the arena and cancels pointers (that was breaking pin/long-press drag).
+                              onTapUp: _onCanvasTapUp,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 12,
+                        bottom: 74,
+                        child: Column(
                           children: [
-                            Positioned.fill(child: _buildDrawingPreview()),
-                            Positioned.fill(
-                              child: _buildCanvasInteractionLayer(),
+                            InkWell(
+                              onTap: () => _zoomBy(1.2),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: AppColors.white,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFFE2E2E4),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.add,
+                                  color: AppColors.inkStrong,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            InkWell(
+                              onTap: () => _zoomBy(1 / 1.2),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: AppColors.white,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFFE2E2E4),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.remove,
+                                  color: AppColors.inkStrong,
+                                ),
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ),
-                  ),
-                  Positioned.fill(
-                    key: _viewportCanvasKey,
-                    child: Listener(
-                      behavior: HitTestBehavior.translucent,
-                      onPointerDown: (PointerDownEvent e) {
-                        _activePointers++;
-                        if (_activePointers > 1) {
-                          _selectAreaPointerDown = false;
-                          _cancelPinLongPressTimer();
-                          _pinPointerDownHit = null;
-                          _pinLongPressArmed = false;
-                          _pinDraggingAfterLongPress = false;
-                          _lineDraftPoints.clear();
-                          _lineDraftCurrent = null;
-                        } else {
-                          _suppressPinTapSheetOnce = false;
-                          _pinLongPressArmed = false;
-                          _pinDraggingAfterLongPress = false;
-                          _cancelPinLongPressTimer();
-                          _selectAreaPointerDown = false;
-                          final downScene = _globalPositionToScene(e.position);
-                          if (_selectedTool == _CanvasTool.location) {
-                            _pinPointerDownHit = _findPinAtScenePoint(
-                              downScene,
-                            );
-                            if (_pinPointerDownHit != null) {
-                              _schedulePinLongPressArm(_pinPointerDownHit!);
-                            }
-                          } else {
-                            _pinPointerDownHit = null;
-                          }
-                          if (_pinPointerDownHit == null &&
-                              _selectedTool == _CanvasTool.selectArea) {
-                            _selectAreaPointerDown = true;
-                            _startSelectAreaFromScene(downScene);
-                          }
-                        }
-                      },
-                      onPointerMove: (PointerMoveEvent e) {
-                        if (_activePointers != 1) return;
-                        final scene = _globalPositionToScene(e.position);
-                        final hit = _pinPointerDownHit;
-                        if (hit != null && _pinLongPressArmed) {
-                          _applyPinScenePosition(hit, scene);
-                          _pinDraggingAfterLongPress = true;
-                          return;
-                        }
-                        if (_selectAreaPointerDown) {
-                          _updateSelectAreaFromScene(scene);
-                          return;
-                        }
-                        if (_selectedTool == _CanvasTool.line &&
-                            _lineDraftPoints.isNotEmpty) {
-                          setState(() => _lineDraftCurrent = scene);
-                        }
-                      },
-                      onPointerUp: (PointerUpEvent e) {
-                        _cancelPinLongPressTimer();
-                        final hadPinSession = _pinPointerDownHit != null;
-                        final skipTapSheet =
-                            hadPinSession &&
-                            (_pinLongPressArmed || _pinDraggingAfterLongPress);
-                        if (hadPinSession && skipTapSheet) {
-                          _suppressPinTapSheetOnce = true;
-                        }
-                        _pinPointerDownHit = null;
-                        _pinLongPressArmed = false;
-                        _pinDraggingAfterLongPress = false;
-                        if (_selectAreaPointerDown) {
-                          _selectAreaPointerDown = false;
-                          _endSelectAreaGesture();
-                        }
-                        if (_activePointers > 0) _activePointers--;
-                      },
-                      onPointerCancel: (_) {
-                        _cancelPinLongPressTimer();
-                        _pinPointerDownHit = null;
-                        _pinLongPressArmed = false;
-                        _pinDraggingAfterLongPress = false;
-                        _lineDraftPoints.clear();
-                        _lineDraftCurrent = null;
-                        if (_selectAreaPointerDown) {
-                          _selectAreaPointerDown = false;
-                          if (_movingRegionIndex != null) {
-                            setState(() {
-                              _movingRegionIndex = null;
-                              _regionMoveAnchorScene = null;
-                            });
-                          } else {
-                            setState(() {
-                              _draftStart = null;
-                              _draftCurrent = null;
-                            });
-                          }
-                        }
-                        if (_activePointers > 0) _activePointers--;
-                      },
-                      child: IgnorePointer(
-                        // Let InteractiveViewer fully handle pinch/multi-touch.
-                        ignoring: _activePointers > 1,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          // Select-area moves & pin drags use [Listener] only so PanGesture never
-                          // wins the arena and cancels pointers (that was breaking pin/long-press drag).
-                          onTapUp: _onCanvasTapUp,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    right: 12,
-                    bottom: 74,
-                    child: Column(
-                      children: [
-                        InkWell(
-                          onTap: () => _zoomBy(1.2),
-                          borderRadius: BorderRadius.circular(10),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(0xFFE2E2E4),
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.add,
-                              color: AppColors.inkStrong,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        InkWell(
-                          onTap: () => _zoomBy(1 / 1.2),
-                          borderRadius: BorderRadius.circular(10),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(0xFFE2E2E4),
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.remove,
-                              color: AppColors.inkStrong,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                     ],
                   );
                 },
@@ -2510,23 +2534,25 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                     onChanged: _isLoadingGroups
                         ? null
                         : (value) {
-                      setState(() {
-                        _selectedGroupId = value;
-                        GroupItemOption? selected;
-                        for (final g in _groupOptions) {
-                          if (g.id == value) {
-                            selected = g;
-                            break;
-                          }
-                        }
-                        _groupController.text = selected?.name ?? '';
-                        _selectedCompositeItemId = null;
-                        _productController.clear();
-                      });
-                      unawaited(_loadCompositeItemsForGroup(value));
-                    },
+                            setState(() {
+                              _selectedGroupId = value;
+                              GroupItemOption? selected;
+                              for (final g in _groupOptions) {
+                                if (g.id == value) {
+                                  selected = g;
+                                  break;
+                                }
+                              }
+                              _groupController.text = selected?.name ?? '';
+                              _selectedCompositeItemId = null;
+                              _productController.clear();
+                            });
+                            unawaited(_loadCompositeItemsForGroup(value));
+                          },
                     decoration: InputDecoration(
-                      hintText: _isLoadingGroups ? 'Loading groups...' : 'Group :',
+                      hintText: _isLoadingGroups
+                          ? 'Loading groups...'
+                          : 'Group :',
                       filled: true,
                       fillColor: const Color(0xFFF2F2F3),
                       contentPadding: const EdgeInsets.symmetric(
@@ -2541,7 +2567,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
-                    value: _productOptions.any(
+                    value:
+                        _productOptions.any(
                           (item) => item.id == _selectedCompositeItemId,
                         )
                         ? _selectedCompositeItemId
@@ -2554,21 +2581,22 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                           ),
                         )
                         .toList(),
-                    onChanged: (_selectedGroupId == null || _isLoadingCompositeItems)
+                    onChanged:
+                        (_selectedGroupId == null || _isLoadingCompositeItems)
                         ? null
                         : (value) {
-                      setState(() {
-                        _selectedCompositeItemId = value;
-                        CompositeItemOption? selected;
-                        for (final item in _productOptions) {
-                          if (item.id == value) {
-                            selected = item;
-                            break;
-                          }
-                        }
-                        _productController.text = selected?.name ?? '';
-                      });
-                    },
+                            setState(() {
+                              _selectedCompositeItemId = value;
+                              CompositeItemOption? selected;
+                              for (final item in _productOptions) {
+                                if (item.id == value) {
+                                  selected = item;
+                                  break;
+                                }
+                              }
+                              _productController.text = selected?.name ?? '';
+                            });
+                          },
                     decoration: InputDecoration(
                       hintText: _selectedGroupId == null
                           ? 'Select group first'
@@ -2592,12 +2620,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                     children: [
                       Text(
                         'VARIATION',
-                        style: AppFonts.labelMedium(
-                          color: AppColors.inkStrong,
-                        ).copyWith(
-                          letterSpacing: 1.0,
-                          fontWeight: FontWeight.w800,
-                        ),
+                        style: AppFonts.labelMedium(color: AppColors.inkStrong)
+                            .copyWith(
+                              letterSpacing: 1.0,
+                              fontWeight: FontWeight.w800,
+                            ),
                       ),
                       const Spacer(),
                       CupertinoSwitch(

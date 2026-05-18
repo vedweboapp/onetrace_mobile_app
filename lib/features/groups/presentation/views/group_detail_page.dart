@@ -238,28 +238,32 @@ class _GroupDetailPageState extends ConsumerState<GroupDetailPage> {
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    g.name.isEmpty ? 'Group Name' : g.name,
-                    style: AppFonts.headlineSmall(
-                      color: AppColors.inkStrong,
-                    ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Composite items',
-                    style: AppFonts.bodyMedium(
-                      color: AppColors.muted,
-                    ).copyWith(fontSize: 15),
-                  ),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      g.name.isEmpty ? 'Group Name' : g.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppFonts.headlineSmall(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Composite items',
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.muted,
+                      ).copyWith(fontSize: 15),
+                    ),
+                  ],
+                ),
               ),
-              // const SizedBox(height: 8),
-              Align(alignment: Alignment.centerLeft, child: _statusPill(g.isActive)),
+              const SizedBox(width: 12),
+              _statusPill(g.isActive),
             ],
           ),
 

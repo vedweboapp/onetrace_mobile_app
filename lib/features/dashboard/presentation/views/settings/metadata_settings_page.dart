@@ -4,6 +4,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/module_metadata_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
@@ -52,6 +53,7 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
         onCompany: () => _closeDrawerPush(CompanySettingsPage.path),
         onPrivacy: () => _closeDrawerPush(PrivacySettingsPage.path),
         onMetadata: () => _scaffoldKey.currentState?.closeDrawer(),
+        onIntegration: () => _closeDrawerPush(IntegrationSettingsPage.path),
       ),
       appBar: AppBar(
         backgroundColor: AppColors.white,
@@ -226,6 +228,7 @@ enum _SettingsDrawerSelection {
   company,
   privacy,
   metadata,
+  integration,
 }
 
 class _SettingsDrawer extends StatelessWidget {
@@ -237,6 +240,7 @@ class _SettingsDrawer extends StatelessWidget {
     required this.onCompany,
     required this.onPrivacy,
     required this.onMetadata,
+    required this.onIntegration,
   });
 
   final _SettingsDrawerSelection selected;
@@ -246,6 +250,7 @@ class _SettingsDrawer extends StatelessWidget {
   final VoidCallback onCompany;
   final VoidCallback onPrivacy;
   final VoidCallback onMetadata;
+  final VoidCallback onIntegration;
 
   @override
   Widget build(BuildContext context) {
@@ -317,6 +322,13 @@ class _SettingsDrawer extends StatelessWidget {
                     iconAsset: 'assets/images/database (1).png',
                     selected: selected == _SettingsDrawerSelection.metadata,
                     onTap: onMetadata,
+                  ),
+                  _sectionLabelCaps('INTEGRATION'),
+                  _sidebarNavTile(
+                    title: 'Integration',
+                    iconAsset: 'assets/images/integration.png',
+                    selected: selected == _SettingsDrawerSelection.integration,
+                    onTap: onIntegration,
                   ),
                 ],
               ),

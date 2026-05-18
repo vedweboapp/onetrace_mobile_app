@@ -54,6 +54,7 @@ dependencies:
   flutter_keyboard_visibility_linux: ^1.0.0
   flutter_keyboard_visibility_macos: ^1.0.0
   flutter_keyboard_visibility_windows: ^1.0.0
+  open_file: ^3.5.11
 
 dev_dependencies:
   flutter_test:

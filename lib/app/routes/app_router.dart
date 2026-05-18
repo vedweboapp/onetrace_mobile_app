@@ -16,6 +16,7 @@ import 'package:red5/features/dashboard/presentation/views/quote_composite_items
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_details_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/module_metadata_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/change_password_page.dart';
@@ -27,6 +28,8 @@ import 'package:red5/features/dashboard/presentation/views/settings/settings_pag
 import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/tags_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/zoho_integration_page.dart';
+import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/presentation/views/add_client_page.dart';
 import 'package:red5/features/clients/presentation/views/client_detail_page.dart';
 import 'package:red5/features/contacts/presentation/views/add_contact_page.dart';
@@ -35,6 +38,7 @@ import 'package:red5/features/groups/presentation/views/add_group_page.dart';
 import 'package:red5/features/groups/presentation/views/group_detail_page.dart';
 import 'package:red5/features/items/data/item_models.dart';
 import 'package:red5/features/composite_items/presentation/view/add_composite_item_page.dart';
+import 'package:red5/features/composite_items/presentation/view/composite_item_details_page.dart';
 import 'package:red5/features/items/presentation/views/add_item_page.dart';
 import 'package:red5/features/items/presentation/views/item_detail_page.dart';
 import 'package:red5/features/quotations/presentation/views/add_quotation_page.dart';
@@ -195,6 +199,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '${ClientDetailPage.pathPrefix}/:clientId/edit',
+        name: AddClientPage.editName,
+        pageBuilder: (context, state) {
+          final clientId = Uri.decodeComponent(
+            (state.pathParameters['clientId'] ?? '').trim(),
+          );
+          final extra = state.extra;
+          final prefill = extra is ClientModel ? extra : null;
+          return _animatedPage(
+            state: state,
+            child: AddClientPage(editClientId: clientId, existing: prefill),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
         path: AddSitePage.path,
         name: AddSitePage.name,
         pageBuilder: (context, state) => _animatedPage(
@@ -230,11 +250,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AddContactPage.path,
         name: AddContactPage.name,
-        pageBuilder: (context, state) => _animatedPage(
-          state: state,
-          child: const AddContactPage(),
-          beginOffset: const Offset(0, 0.08),
-        ),
+        pageBuilder: (context, state) {
+          String? presetClientId;
+          final extra = state.extra;
+          if (extra is Map) {
+            final m = Map<String, dynamic>.from(extra);
+            final raw = m['presetClientId'];
+            if (raw is String && raw.trim().isNotEmpty) {
+              presetClientId = raw.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: AddContactPage(presetClientId: presetClientId),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
       ),
       GoRoute(
         path: '${ContactDetailPage.pathPrefix}/:contactId',
@@ -319,10 +350,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final prefill = extra is ItemDetailModel ? extra : null;
           return _animatedPage(
             state: state,
-            child: AddItemPage(
-              editItemId: itemId,
-              prefill: prefill,
-            ),
+            child: AddItemPage(editItemId: itemId, prefill: prefill),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -336,10 +364,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final prefill = extra is ItemDetailModel ? extra : null;
           return _animatedPage(
             state: state,
-            child: AddCompositeItemPage(
-              editItemId: itemId,
-              prefill: prefill,
-            ),
+            child: AddCompositeItemPage(editItemId: itemId, prefill: prefill),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${CompositeItemDetailsPage.pathPrefix}/:itemId',
+        name: CompositeItemDetailsPage.name,
+        pageBuilder: (context, state) {
+          final itemId = Uri.decodeComponent(
+            (state.pathParameters['itemId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: CompositeItemDetailsPage(itemId: itemId),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -655,6 +694,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => _animatedPage(
           state: state,
           child: const MetadataSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: IntegrationSettingsPage.path,
+        name: IntegrationSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const IntegrationSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: ZohoIntegrationPage.path,
+        name: ZohoIntegrationPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const ZohoIntegrationPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),

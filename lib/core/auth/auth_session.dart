@@ -19,6 +19,59 @@ abstract final class AuthSession {
     return _readFirstString(payload, const ['refresh', 'refresh_token']);
   }
 
+  /// Organization id from login / verify-otp JSON (`organization`, `organization_id`, …).
+  static int? readOrganizationId(Map<String, dynamic>? payload) {
+    if (payload == null) return null;
+
+    int? parseId(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value.trim());
+      if (value is Map) {
+        final nested = value['id'] ?? value['pk'];
+        return parseId(nested);
+      }
+      return null;
+    }
+
+    int? fromMap(Map<String, dynamic> map) {
+      for (final key in const [
+        'organization_id',
+        'organizationId',
+        'org_id',
+        'orgId',
+      ]) {
+        final id = parseId(map[key]);
+        if (id != null) return id;
+      }
+      final org = map['organization'];
+      final id = parseId(org);
+      if (id != null) return id;
+
+      final user = map['user'];
+      if (user is Map) {
+        final userMap = Map<String, dynamic>.from(
+          user.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        return fromMap(userMap);
+      }
+      return null;
+    }
+
+    final fromRoot = fromMap(payload);
+    if (fromRoot != null) return fromRoot;
+
+    final nested = payload['data'];
+    if (nested is Map) {
+      return fromMap(
+        Map<String, dynamic>.from(
+          nested.map((k, v) => MapEntry(k.toString(), v)),
+        ),
+      );
+    }
+    return null;
+  }
+
   /// `data.user.id` (or top-level `user.id`) from login / verify-otp JSON.
   static String? readUserId(Map<String, dynamic>? payload) {
     if (payload == null) return null;

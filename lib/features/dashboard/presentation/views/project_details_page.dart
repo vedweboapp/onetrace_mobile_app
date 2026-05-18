@@ -300,7 +300,8 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
   Widget _placeholderTab(String title) {
     return const AppUnderDevelopmentView(
       title: 'Working on this page',
-      message: 'This section is under development.\nCheck back soon for updates.',
+      message:
+          'This section is under development.\nCheck back soon for updates.',
     );
   }
 

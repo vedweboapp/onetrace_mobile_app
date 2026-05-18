@@ -15,6 +15,7 @@ import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
@@ -35,8 +36,12 @@ class PersonalProfilePage extends ConsumerStatefulWidget {
       _PersonalProfilePageState();
 }
 
-class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
+enum _AppearanceMode { light, dark }
+
+class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
+    with SingleTickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  late final TabController _tabController;
 
   final ImagePicker _imagePicker = ImagePicker();
   Uint8List? _profilePhotoBytes;
@@ -80,9 +85,27 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
   String? _loadError;
   String? _photoUrl;
 
+  // --- Appearance / Branding (matches the UI shown in your screenshot) ---
+  _AppearanceMode _appearanceMode = _AppearanceMode.light;
+  int _selectedBrandColor = 0;
+  String _systemLanguage = 'English (United States)';
+
+  static const _systemLanguages = <String>[
+    'English (United States)',
+  ];
+
+  static const _brandPalette = <Color>[
+    Color(0xFF000000), // #000000
+    Color(0xFFF97316), // #F97316
+    Color(0xFF2563EB), // #2563EB
+    Color(0xFF059669), // #059669
+    Color(0xFF4B5563), // #4B5563
+  ];
+
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _phoneControllers = [TextEditingController()];
     _emailControllers = [TextEditingController()];
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadProfile());
@@ -260,6 +283,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     for (final c in _emailControllers) {
       c.dispose();
     }
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -341,11 +365,10 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
       return;
     }
 
-    final roleInt = _selectedRoleId ?? int.tryParse(_profile?.roleId ?? '') ?? 0;
+    final roleInt =
+        _selectedRoleId ?? int.tryParse(_profile?.roleId ?? '') ?? 0;
     if (roleInt <= 0) {
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Select a role.')),
-      );
+      context.showTopSnackBar(const SnackBar(content: Text('Select a role.')));
       return;
     }
 
@@ -692,6 +715,156 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     );
   }
 
+  Widget _smallHeading(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        title.toUpperCase(),
+        style: AppFonts.labelMedium(color: AppColors.inkStrong).copyWith(
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
+  Widget _appearanceToggle({bool interactive = true}) {
+    final selectedBg = AppColors.white;
+    final baseBg = const Color(0xFFE5E7EB);
+    final enabled = interactive;
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: baseBg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _AppearanceButton(
+              icon: Icons.wb_sunny_rounded,
+              label: 'Light',
+              selected: _appearanceMode == _AppearanceMode.light,
+              selectedColor: _brandPalette[1],
+              selectedBg: selectedBg,
+              onTap: enabled
+                  ? () => setState(() => _appearanceMode = _AppearanceMode.light)
+                  : null,
+            ),
+          ),
+          Expanded(
+            child: _AppearanceButton(
+              icon: Icons.nightlight_round,
+              label: 'Dark',
+              selected: _appearanceMode == _AppearanceMode.dark,
+              selectedColor: _brandPalette[4],
+              selectedBg: selectedBg,
+              onTap: enabled
+                  ? () => setState(() => _appearanceMode = _AppearanceMode.dark)
+                  : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _brandColorRow({bool interactive = true}) {
+    final enabled = interactive;
+    return Row(
+      children: [
+        for (var i = 0; i < _brandPalette.length; i++)
+          Padding(
+            padding: EdgeInsets.only(
+              right: i == _brandPalette.length - 1 ? 0 : 10,
+            ),
+            child: InkWell(
+              onTap: enabled ? () => setState(() => _selectedBrandColor = i) : null,
+              borderRadius: BorderRadius.circular(999),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: _brandPalette[i],
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _selectedBrandColor == i
+                        ? Colors.black
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: _selectedBrandColor == i
+                    ? Icon(
+                        Icons.check_rounded,
+                        size: 18,
+                        color: i == 0 ? Colors.white : Colors.black,
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        const SizedBox(width: 8),
+        InkWell(
+          onTap: enabled
+              ? () {
+                  // Placeholder: you can wire a bottom sheet later if needed.
+                }
+              : null,
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: const Icon(Icons.add, color: Color(0xFF9CA3AF), size: 18),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _systemLanguageDropdown({bool interactive = true}) {
+    return InputDecorator(
+      decoration: _fieldDecoration(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: SizedBox(
+          height: 24,
+          child: DropdownButton<String>(
+            isDense: true,
+            isExpanded: true,
+            value: _systemLanguage,
+            icon: const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: Color(0xFF6B7280),
+            ),
+            style: _fieldTextStyle(),
+            dropdownColor: AppColors.white,
+            padding: EdgeInsets.zero,
+            items: _systemLanguages
+                .map(
+                  (e) => DropdownMenuItem<String>(
+                    value: e,
+                    child: Text(e, style: _fieldTextStyle()),
+                  ),
+                )
+                .toList(),
+            onChanged: !interactive
+                ? null
+                : (v) => setState(() => _systemLanguage = v ?? _systemLanguage),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _label(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -918,10 +1091,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     if (out.any((r) => r.id == idStr)) return out;
     final label = (_profile?.role ?? '').trim();
     return [
-      RoleModel(
-        id: idStr,
-        roleName: label.isNotEmpty ? label : 'Role #$idStr',
-      ),
+      RoleModel(id: idStr, roleName: label.isNotEmpty ? label : 'Role #$idStr'),
       ...out,
     ];
   }
@@ -948,8 +1118,8 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
         ),
       );
     }
-    final value = _selectedRoleId != null &&
-            items.any((e) => e.value == _selectedRoleId)
+    final value =
+        _selectedRoleId != null && items.any((e) => e.value == _selectedRoleId)
         ? _selectedRoleId
         : null;
     return InputDecorator(
@@ -988,27 +1158,39 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     required String label,
     required VoidCallback onPressed,
   }) {
+    final bool isDisabled = !_editable;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 4),
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
-          onTap: !_editable ? null : onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          onTap: isDisabled ? null : onPressed,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 100, vertical: 10),
+            decoration: BoxDecoration(
+              color: isDisabled
+                  ? _labelGrey.withOpacity(0.09)
+                  : AppColors.inkStrong.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isDisabled ? _labelGrey : AppColors.inkStrong,
+                width: 1,
+              ),
+            ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   Icons.add,
                   size: 20,
-                  color: !_editable ? _labelGrey : AppColors.inkStrong,
+                  color: isDisabled ? _labelGrey : AppColors.inkStrong,
                 ),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: AppFonts.bodyMedium(
-                    color: !_editable ? _labelGrey : AppColors.inkStrong,
+                    color: isDisabled ? _labelGrey : AppColors.inkStrong,
                   ).copyWith(fontWeight: FontWeight.w600, fontSize: 15),
                 ),
               ],
@@ -1153,6 +1335,14 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
                       selected: false,
                       onTap: () => _closeDrawerPush(MetadataSettingsPage.path),
                     ),
+                    _sectionLabelCaps('INTEGRATION'),
+                    _sidebarNavTile(
+                      title: 'Integration',
+                      iconAsset: 'assets/images/integration.png',
+                      selected: false,
+                      onTap: () =>
+                          _closeDrawerPush(IntegrationSettingsPage.path),
+                    ),
                   ],
                 ),
               ),
@@ -1217,12 +1407,47 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w700, fontSize: 17),
         ),
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(1),
-          child: Divider(height: 1, thickness: 1, color: Color(0xFFE2E2E4)),
-        ),
+        bottom: _buildAppBarBottom(),
       ),
       body: _buildBody(),
+    );
+  }
+
+  PreferredSizeWidget? _buildAppBarBottom() {
+    if (_loading || (_loadError != null && _profile == null)) {
+      return const PreferredSize(
+        preferredSize: Size.fromHeight(1),
+        child: Divider(height: 1, thickness: 1, color: Color(0xFFE2E2E4)),
+      );
+    }
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(49),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TabBar(
+            controller: _tabController,
+            indicatorColor: AppColors.inkStrong,
+            indicatorWeight: 3,
+            labelColor: AppColors.inkStrong,
+            unselectedLabelColor: _labelGrey,
+            labelStyle: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+            ),
+            unselectedLabelStyle:
+                AppFonts.bodyMedium(color: _labelGrey).copyWith(
+              fontWeight: FontWeight.w500,
+              fontSize: 15,
+            ),
+            tabs: const [
+              Tab(text: 'Personal Profile'),
+              Tab(text: 'Appearance'),
+            ],
+          ),
+          const Divider(height: 1, thickness: 1, color: Color(0xFFE2E2E4)),
+        ],
+      ),
     );
   }
 
@@ -1241,11 +1466,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.error_outline,
-              color: AppColors.inkStrong,
-              size: 48,
-            ),
+            Icon(Icons.error_outline, color: AppColors.inkStrong, size: 48),
             const SizedBox(height: 12),
             Text(
               _loadError!,
@@ -1267,288 +1488,349 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage> {
     }
 
     final enabled = _editable;
-    return RefreshIndicator(
-      onRefresh: _loadProfile,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-        children: [
-          _buildFormBody(enabled),
-        ],
-      ),
+    return TabBarView(
+      controller: _tabController,
+      children: [
+        RefreshIndicator(
+          onRefresh: _loadProfile,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+            children: [_buildProfileTabContent(enabled)],
+          ),
+        ),
+        ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: [_buildAppearanceTabContent()],
+        ),
+      ],
     );
   }
 
-  Widget _buildFormBody(bool enabled) {
+  Widget _buildAppearanceTabContent() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-          _profileHeader(),
-          const SizedBox(height: 28),
-          _sectionHeader('BASIC INFO'),
-          const SizedBox(height: 14),
-          _label('First Name'),
-          AppTextField(
-            controller: _firstNameController,
-            hintText: '',
-            enabled: enabled,
-            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-          ),
-          const SizedBox(height: 14),
-          _label('Last Name'),
-          AppTextField(
-            controller: _lastNameController,
-            hintText: '',
-            enabled: enabled,
-            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-          ),
-          const SizedBox(height: 14),
-          _label('Role'),
-          _roleDropdown(enabled),
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [_label('Gender'), _genderDropdown()],
-                ),
+        _sectionHeader('VISUAL THEME'),
+        _smallHeading('Appearance'),
+        _appearanceToggle(interactive: true),
+        const SizedBox(height: 18),
+        _smallHeading('Brand Color'),
+        _brandColorRow(interactive: true),
+        const SizedBox(height: 22),
+        _sectionHeader('SYSTEM LANGUAGE'),
+        _systemLanguageDropdown(interactive: true),
+      ],
+    );
+  }
+
+  Widget _buildProfileTabContent(bool enabled) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _profileHeader(),
+        const SizedBox(height: 28),
+        _sectionHeader('BASIC INFO'),
+        const SizedBox(height: 14),
+        _label('First Name'),
+        AppTextField(
+          controller: _firstNameController,
+          hintText: '',
+          enabled: enabled,
+          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+        ),
+        const SizedBox(height: 14),
+        _label('Last Name'),
+        AppTextField(
+          controller: _lastNameController,
+          hintText: '',
+          enabled: enabled,
+          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+        ),
+        const SizedBox(height: 14),
+        _label('Role'),
+        _roleDropdown(enabled),
+        const SizedBox(height: 14),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [_label('Gender'), _genderDropdown()],
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _label('Date of Birth'),
-                    TextField(
-                      controller: _dobController,
-                      readOnly: true,
-                      onTap: enabled ? _pickDob : null,
-                      style: _fieldTextStyle(),
-                      decoration: _fieldDecoration(
-                        suffix: IconButton(
-                          icon: Icon(
-                            Icons.calendar_month_outlined,
-                            color: enabled
-                                ? const Color(0xFF6B7280)
-                                : _labelGrey,
-                            size: 22,
-                          ),
-                          onPressed: enabled ? _pickDob : null,
-                        ),
-                      ),
-                      enabled: enabled,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 28),
-          _sectionHeader('CONTACT'),
-          const SizedBox(height: 14),
-          if (!_editable) ...[
-            _label('Phone'),
-            AppTextField(
-              controller: _phoneControllers.first,
-              hintText: '',
-              keyboardType: TextInputType.phone,
-              enabled: false,
-              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
             ),
-            const SizedBox(height: 14),
-            _label('Email'),
-            AppTextField(
-              controller: _emailControllers.first,
-              hintText: '',
-              keyboardType: TextInputType.emailAddress,
-              enabled: false,
-              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-            ),
-          ] else ...[
-            for (var i = 0; i < _phoneControllers.length; i++)
-              _phoneFieldRow(i),
-            _addRowButton(label: '+ Add Phone', onPressed: _addPhone),
-            const SizedBox(height: 8),
-            for (var i = 0; i < _emailControllers.length; i++)
-              _emailFieldRow(i),
-            _addRowButton(label: '+ Add Email', onPressed: _addEmail),
-          ],
-          const SizedBox(height: 28),
-          _sectionHeader('ADDRESS'),
-          _label('Address Line 1'),
-          AppTextField(
-            controller: _addr1Controller,
-            hintText: '',
-            enabled: enabled,
-            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-          ),
-          const SizedBox(height: 14),
-          _label('Address Line 2'),
-          AppTextField(
-            controller: _addr2Controller,
-            hintText: '',
-            enabled: enabled,
-            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-          ),
-          const SizedBox(height: 14),
-          _label('City'),
-          AppTextField(
-            controller: _cityController,
-            hintText: '',
-            enabled: enabled,
-            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _label('State'),
-                    AppTextField(
-                      controller: _stateController,
-                      hintText: '',
-                      enabled: enabled,
-                      hintStyle: const TextStyle(
-                        color: Colors.transparent,
-                        height: 0,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _label('ZIP Code'),
-                    AppTextField(
-                      controller: _zipController,
-                      hintText: '',
-                      keyboardType: TextInputType.text,
-                      enabled: enabled,
-                      hintStyle: const TextStyle(
-                        color: Colors.transparent,
-                        height: 0,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (_editable) ...[
-            _addRowButton(label: '+ Add Address', onPressed: _addAddressBlock),
-            if (_showExtraAddress) ...[
-              const SizedBox(height: 20),
-              _label('Address Line 1'),
-              AppTextField(
-                controller: _extraAddr1,
-                hintText: '',
-                hintStyle: const TextStyle(
-                  color: Colors.transparent,
-                  height: 0,
-                ),
-              ),
-              const SizedBox(height: 14),
-              _label('Address Line 2'),
-              AppTextField(
-                controller: _extraAddr2,
-                hintText: '',
-                hintStyle: const TextStyle(
-                  color: Colors.transparent,
-                  height: 0,
-                ),
-              ),
-              const SizedBox(height: 14),
-              _label('City'),
-              AppTextField(
-                controller: _extraCity,
-                hintText: '',
-                hintStyle: const TextStyle(
-                  color: Colors.transparent,
-                  height: 0,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _label('State'),
-                        AppTextField(
-                          controller: _extraState,
-                          hintText: '',
-                          hintStyle: const TextStyle(
-                            color: Colors.transparent,
-                            height: 0,
-                          ),
+                  _label('Date of Birth'),
+                  TextField(
+                    controller: _dobController,
+                    readOnly: true,
+                    onTap: enabled ? _pickDob : null,
+                    style: _fieldTextStyle(),
+                    decoration: _fieldDecoration(
+                      suffix: IconButton(
+                        icon: Icon(
+                          Icons.calendar_month_outlined,
+                          color: enabled ? const Color(0xFF6B7280) : _labelGrey,
+                          size: 22,
                         ),
-                      ],
+                        onPressed: enabled ? _pickDob : null,
+                      ),
                     ),
+                    enabled: enabled,
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _label('ZIP Code'),
-                        AppTextField(
-                          controller: _extraZip,
-                          hintText: '',
-                          keyboardType: TextInputType.text,
-                          hintStyle: const TextStyle(
-                            color: Colors.transparent,
-                            height: 0,
-                          ),
-                        ),
-                      ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 28),
+        _sectionHeader('CONTACT'),
+        const SizedBox(height: 14),
+        if (!_editable) ...[
+          _label('Phone'),
+          AppTextField(
+            controller: _phoneControllers.first,
+            hintText: '',
+            keyboardType: TextInputType.phone,
+            enabled: false,
+            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+          ),
+          const SizedBox(height: 14),
+          _label('Email'),
+          AppTextField(
+            controller: _emailControllers.first,
+            hintText: '',
+            keyboardType: TextInputType.emailAddress,
+            enabled: false,
+            hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+          ),
+        ] else ...[
+          for (var i = 0; i < _phoneControllers.length; i++) _phoneFieldRow(i),
+          _addRowButton(label: 'Add Phone', onPressed: _addPhone),
+          const SizedBox(height: 8),
+          for (var i = 0; i < _emailControllers.length; i++) _emailFieldRow(i),
+          _addRowButton(label: 'Add Email', onPressed: _addEmail),
+        ],
+        const SizedBox(height: 28),
+        _sectionHeader('ADDRESS'),
+        _label('Address Line 1'),
+        AppTextField(
+          controller: _addr1Controller,
+          hintText: '',
+          enabled: enabled,
+          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+        ),
+        const SizedBox(height: 14),
+        _label('Address Line 2'),
+        AppTextField(
+          controller: _addr2Controller,
+          hintText: '',
+          enabled: enabled,
+          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+        ),
+        const SizedBox(height: 14),
+        _label('City'),
+        AppTextField(
+          controller: _cityController,
+          hintText: '',
+          enabled: enabled,
+          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _label('State'),
+                  AppTextField(
+                    controller: _stateController,
+                    hintText: '',
+                    enabled: enabled,
+                    hintStyle: const TextStyle(
+                      color: Colors.transparent,
+                      height: 0,
                     ),
                   ),
                 ],
               ),
-            ],
-          ],
-          if (_editable) ...[
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: FilledButton(
-                onPressed: _saving ? null : _saveChanges,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF121212),
-                  foregroundColor: AppColors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _label('ZIP Code'),
+                  AppTextField(
+                    controller: _zipController,
+                    hintText: '',
+                    keyboardType: TextInputType.text,
+                    enabled: enabled,
+                    hintStyle: const TextStyle(
+                      color: Colors.transparent,
+                      height: 0,
+                    ),
                   ),
-                ),
-                child: _saving
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : Text(
-                        'Save Changes',
-                        style: AppFonts.titleSmall(
-                          color: AppColors.white,
-                        ).copyWith(fontWeight: FontWeight.w700),
-                      ),
+                ],
               ),
             ),
           ],
+        ),
+        if (_editable) ...[
+          _addRowButton(label: 'Add Address', onPressed: _addAddressBlock),
+          if (_showExtraAddress) ...[
+            const SizedBox(height: 20),
+            _label('Address Line 1'),
+            AppTextField(
+              controller: _extraAddr1,
+              hintText: '',
+              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+            ),
+            const SizedBox(height: 14),
+            _label('Address Line 2'),
+            AppTextField(
+              controller: _extraAddr2,
+              hintText: '',
+              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+            ),
+            const SizedBox(height: 14),
+            _label('City'),
+            AppTextField(
+              controller: _extraCity,
+              hintText: '',
+              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _label('State'),
+                      AppTextField(
+                        controller: _extraState,
+                        hintText: '',
+                        hintStyle: const TextStyle(
+                          color: Colors.transparent,
+                          height: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _label('ZIP Code'),
+                      AppTextField(
+                        controller: _extraZip,
+                        hintText: '',
+                        keyboardType: TextInputType.text,
+                        hintStyle: const TextStyle(
+                          color: Colors.transparent,
+                          height: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
-      );
+        if (_editable) ...[
+          const SizedBox(height: 28),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton(
+              onPressed: _saving ? null : _saveChanges,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF121212),
+                foregroundColor: AppColors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _saving
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'Save Changes',
+                      style: AppFonts.titleSmall(
+                        color: AppColors.white,
+                      ).copyWith(fontWeight: FontWeight.w700),
+                    ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AppearanceButton extends StatelessWidget {
+  const _AppearanceButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.selectedColor,
+    required this.selectedBg,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final Color selectedColor;
+  final Color selectedBg;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? selectedBg : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected ? selectedColor : const Color(0xFF6B7280),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: AppFonts.bodyMedium(
+                  color: selected ? AppColors.inkStrong : const Color(0xFF6B7280),
+                ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

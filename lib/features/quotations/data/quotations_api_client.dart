@@ -32,10 +32,7 @@ final class QuotationsApiClient {
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.quotations,
-      queryParameters: <String, dynamic>{
-        'page': page,
-        'page_size': pageSize,
-      },
+      queryParameters: <String, dynamic>{'page': page, 'page_size': pageSize},
     );
     final root = response.data ?? const <String, dynamic>{};
     final rows = _readRows(root);

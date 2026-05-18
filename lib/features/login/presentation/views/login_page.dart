@@ -23,6 +23,7 @@ import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
+import 'package:red5/features/login/presentation/widgets/signup_bottom_sheet.dart';
 
 import '../../../../core/widgets/app_const_widget.dart';
 
@@ -270,6 +271,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         await storage.setString(LocalStorageKeys.authUserId, userId);
       } else {
         await storage.remove(LocalStorageKeys.authUserId);
+      }
+      final organizationId = AuthSession.readOrganizationId(response.data);
+      if (organizationId != null) {
+        await storage.setInt(
+          LocalStorageKeys.authOrganizationId,
+          organizationId,
+        );
+      } else {
+        await storage.remove(LocalStorageKeys.authOrganizationId);
       }
       if (_rememberMe) {
         await storage.setBool(LocalStorageKeys.authRememberMe, true);
@@ -669,9 +679,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             ).copyWith(fontSize: 14),
           ),
           GestureDetector(
-            onTap: () {},
+            onTap: () => showSignupBottomSheet(context),
             child: Text(
-              AppStrings.loginRequestAccessArrow,
+              AppStrings.loginSignUpLink,
               style: AppFonts.bodyMedium(
                 color: _mobileDark,
               ).copyWith(fontWeight: FontWeight.w700, fontSize: 14),

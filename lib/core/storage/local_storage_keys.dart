@@ -10,6 +10,9 @@ abstract final class LocalStorageKeys {
   /// Stringified `data.user.id` from login / verify-otp (for `/user-profile/{id}/`).
   static const authUserId = 'auth_user_id';
 
+  /// Active organization id (login response + [OrganizationIdHeader]).
+  static const authOrganizationId = 'auth_organization_id';
+
   /// JSON: `{ "documents": [...], "selectedIndex": int }` (legacy; migrated on read)
   static const quoteSession = 'quote_session_v1';
 

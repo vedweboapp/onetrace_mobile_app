@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/features/sites/data/site_models.dart';
 
 final class LevelSyncResult {
   const LevelSyncResult({this.levelId, this.rawResponse});
@@ -21,12 +22,15 @@ final class ProjectLevelItem {
     required this.name,
     required this.drawingFile,
     required this.plots,
+    this.sortOrder = 0,
   });
 
   final String id;
   final String name;
   final String drawingFile;
   final List<Map<String, dynamic>> plots;
+  /// API `order` field for stable display ordering (lower first).
+  final int sortOrder;
 }
 
 final class ClientOption {
@@ -351,14 +355,13 @@ final class QuoteProjectApiClient {
     for (final row in rows) {
       final map = _coerceMap(row);
       final id = _readString(map, const ['id', 'level_id']);
-      final drawingFile = _readString(map, const ['drawing_file']);
-      if (id == null ||
-          id.isEmpty ||
-          drawingFile == null ||
-          drawingFile.isEmpty) {
-        continue;
-      }
+      if (id == null || id.isEmpty) continue;
+      final drawingFile = _readString(map, const ['drawing_file']) ?? '';
       final name = _readString(map, const ['name']) ?? 'Level';
+      final orderRaw = map['order'];
+      final sortOrder = orderRaw is int
+          ? orderRaw
+          : int.tryParse('${orderRaw ?? ''}') ?? 0;
       final rawPlots = map['plots'];
       final parsedPlots = <Map<String, dynamic>>[];
       if (rawPlots is List) {
@@ -375,9 +378,11 @@ final class QuoteProjectApiClient {
           name: name,
           drawingFile: drawingFile,
           plots: parsedPlots,
+          sortOrder: sortOrder,
         ),
       );
     }
+    out.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return out;
   }
 
@@ -487,6 +492,28 @@ final class QuoteProjectApiClient {
       final name =
           _readString(map, const ['name', 'item_name', 'title']) ?? 'Item $id';
       out.add(CompositeItemOption(id: id, name: name, groupId: parsedGroupId));
+    }
+    return out;
+  }
+
+  /// Sites linked to a project (`GET /project/{id}/` → `sites[]`).
+  ///
+  /// Quotation `site` expects this FK, not `/item/` rows.
+  Future<List<SiteModel>> fetchProjectSites({required String projectId}) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.projectById(projectId),
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final raw = body['sites'] ?? root['sites'];
+    if (raw is! List) return const [];
+    final out = <SiteModel>[];
+    for (final e in raw) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(
+        e.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      out.add(SiteModel.fromJson(m));
     }
     return out;
   }

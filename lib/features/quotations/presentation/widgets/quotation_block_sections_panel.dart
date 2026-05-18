@@ -13,25 +13,35 @@ class QuotationPlotLine {
     required this.label,
     this.quantityMultiplier,
     this.amount = 0,
+    this.designPins = const [],
+    this.plotId,
   });
 
   final bool selected;
   final String label;
-  /// When non-null, label is shown as `Label (N)` in the UI (e.g. pin count for Quotation Map).
+  /// When non-null, label is shown as `Label (xN)` in the UI (pin count from level API).
   final int? quantityMultiplier;
   final double amount;
+  /// Pins from `project/{id}/level/` for this plot (shown in the map bottom sheet).
+  final List<QuotationDesignPin> designPins;
+  /// Plot PK from level API (`plots[].id`).
+  final String? plotId;
 
   QuotationPlotLine copyWith({
     bool? selected,
     String? label,
     int? quantityMultiplier,
     double? amount,
+    List<QuotationDesignPin>? designPins,
+    String? plotId,
   }) {
     return QuotationPlotLine(
       selected: selected ?? this.selected,
       label: label ?? this.label,
       quantityMultiplier: quantityMultiplier ?? this.quantityMultiplier,
       amount: amount ?? this.amount,
+      designPins: designPins ?? this.designPins,
+      plotId: plotId ?? this.plotId,
     );
   }
 }
@@ -42,31 +52,36 @@ class QuotationPlotGroup {
   const QuotationPlotGroup({
     required this.name,
     required this.lines,
+    this.levelId,
   });
 
   final String name;
   final List<QuotationPlotLine> lines;
+  /// Level PK from `GET project/{id}/level/` when this block was built from API data.
+  final String? levelId;
 
   QuotationPlotGroup copyWith({
     String? name,
     List<QuotationPlotLine>? lines,
+    String? levelId,
   }) {
     return QuotationPlotGroup(
       name: name ?? this.name,
       lines: lines ?? this.lines,
+      levelId: levelId ?? this.levelId,
     );
   }
 }
 
-/// Section name row + expandable block card (plots, lines, totals).
+/// Section name row + one expandable card per [QuotationPlotGroup] (e.g. one API level = one block).
 class QuotationBlockSectionsPanel extends StatelessWidget {
   const QuotationBlockSectionsPanel({
     super.key,
     required this.blockNameController,
     required this.sectionNameController,
     required this.plotGroups,
-    required this.blockExpanded,
-    required this.onBlockExpandedChanged,
+    required this.blockExpandedList,
+    required this.onBlockExpandedAt,
     required this.onAddSection,
     required this.onLineSelectionChanged,
     required this.onRemovePlotGroup,
@@ -76,8 +91,9 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
   final TextEditingController blockNameController;
   final TextEditingController sectionNameController;
   final List<QuotationPlotGroup> plotGroups;
-  final bool blockExpanded;
-  final ValueChanged<bool> onBlockExpandedChanged;
+  /// Length must match [plotGroups]; each entry is the expanded flag for that block card.
+  final List<bool> blockExpandedList;
+  final void Function(int blockIndex, bool expanded) onBlockExpandedAt;
   final VoidCallback onAddSection;
   final void Function(int groupIndex, int lineIndex, bool selected) onLineSelectionChanged;
   final ValueChanged<int> onRemovePlotGroup;
@@ -90,7 +106,11 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
       QuotationPlotGroup(
         name: 'No Plot',
         lines: [
-          QuotationPlotLine(label: 'Quotation Map', quantityMultiplier: 4, amount: 0),
+          QuotationPlotLine(
+            label: 'Quotation Map',
+            quantityMultiplier: 4,
+            amount: 0,
+          ),
           QuotationPlotLine(label: 'Quotation Map', amount: 0),
           QuotationPlotLine(label: 'Quotation Map', amount: 0),
         ],
@@ -107,28 +127,27 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
     );
   }
 
-  double _sumSelected() {
+  static double _sumSelectedForGroup(QuotationPlotGroup g) {
     var sum = 0.0;
-    for (final g in plotGroups) {
-      for (final l in g.lines) {
-        if (l.selected) sum += l.amount;
-      }
+    for (final l in g.lines) {
+      if (l.selected) sum += l.amount;
     }
     return sum;
   }
 
   String _lineTitle(QuotationPlotLine line) {
     if (line.quantityMultiplier != null && line.quantityMultiplier! > 0) {
-      return '${line.label} (${line.quantityMultiplier})';
+      return '${line.label} (x${line.quantityMultiplier})';
     }
     return line.label;
   }
 
   @override
   Widget build(BuildContext context) {
-    final subtotal = _sumSelected();
-    const tax = 0.0;
-    final total = subtotal + tax;
+    assert(
+      blockExpandedList.length == plotGroups.length,
+      'blockExpandedList and plotGroups must have the same length',
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -169,20 +188,34 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        _BlockCard(
-          blockNameController: blockNameController,
-          expanded: blockExpanded,
-          onExpandedChanged: onBlockExpandedChanged,
-          plotGroups: plotGroups,
-          submitting: submitting,
-          onLineSelectionChanged: onLineSelectionChanged,
-          onRemovePlotGroup: onRemovePlotGroup,
-          lineTitle: _lineTitle,
-          formatMoney: _gbp.format,
-          subtotal: subtotal,
-          tax: tax,
-          total: total,
-        ),
+        for (var i = 0; i < plotGroups.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          Builder(
+            builder: (context) {
+              final g = plotGroups[i];
+              final subtotal = _sumSelectedForGroup(g);
+              const tax = 0.0;
+              final total = subtotal + tax;
+              return _BlockCard(
+                blockNameController: blockNameController,
+                headerTitleOverride: g.name.trim().isEmpty ? null : g.name.trim(),
+                hidePlotGroupHeaders: true,
+                expanded: blockExpandedList[i],
+                onExpandedChanged: (v) => onBlockExpandedAt(i, v),
+                plotGroups: [g],
+                submitting: submitting,
+                onLineSelectionChanged: (localGi, li, sel) =>
+                    onLineSelectionChanged(i, li, sel),
+                onRemovePlotGroup: (_) => onRemovePlotGroup(i),
+                lineTitle: _lineTitle,
+                formatMoney: _gbp.format,
+                subtotal: subtotal,
+                tax: tax,
+                total: total,
+              );
+            },
+          ),
+        ],
       ],
     );
   }
@@ -201,6 +234,8 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
 class _BlockCard extends StatelessWidget {
   const _BlockCard({
     required this.blockNameController,
+    this.headerTitleOverride,
+    this.hidePlotGroupHeaders = false,
     required this.expanded,
     required this.onExpandedChanged,
     required this.plotGroups,
@@ -215,6 +250,10 @@ class _BlockCard extends StatelessWidget {
   });
 
   final TextEditingController blockNameController;
+  /// When set, shown as the card title instead of [blockNameController] text.
+  final String? headerTitleOverride;
+  /// When true, plot sub-headers (blue circle + name) are omitted — lines list starts immediately.
+  final bool hidePlotGroupHeaders;
   final bool expanded;
   final ValueChanged<bool> onExpandedChanged;
   final List<QuotationPlotGroup> plotGroups;
@@ -263,21 +302,33 @@ class _BlockCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Expanded(
-                      child: AnimatedBuilder(
-                        animation: blockNameController,
-                        builder: (context, _) {
-                          final t = blockNameController.text.trim();
-                          return Text(
-                            t.isEmpty ? 'Block Name' : t,
-                            textAlign: TextAlign.center,
-                            style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16,
-                              color: t.isEmpty ? AppColors.muted : AppColors.inkStrong,
+                      child: headerTitleOverride != null
+                          ? Text(
+                              headerTitleOverride!.isEmpty ? 'Block Name' : headerTitleOverride!,
+                              textAlign: TextAlign.center,
+                              style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                                color: headerTitleOverride!.isEmpty
+                                    ? AppColors.muted
+                                    : AppColors.inkStrong,
+                              ),
+                            )
+                          : AnimatedBuilder(
+                              animation: blockNameController,
+                              builder: (context, _) {
+                                final t = blockNameController.text.trim();
+                                return Text(
+                                  t.isEmpty ? 'Block Name' : t,
+                                  textAlign: TextAlign.center,
+                                  style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16,
+                                    color: t.isEmpty ? AppColors.muted : AppColors.inkStrong,
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                      ),
                     ),
                     PopupMenuButton<void>(
                       enabled: !submitting,
@@ -314,13 +365,15 @@ class _BlockCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (var gi = 0; gi < plotGroups.length; gi++) ...[
-                        if (gi > 0) Divider(height: 1, color: AppColors.borderLight.withValues(alpha: 0.7)),
-                        _PlotHeader(
-                          name: plotGroups[gi].name,
-                          canRemove: plotGroups.length > 1,
-                          submitting: submitting,
-                          onRemove: () => onRemovePlotGroup(gi),
-                        ),
+                        if (!hidePlotGroupHeaders && gi > 0)
+                          Divider(height: 1, color: AppColors.borderLight.withValues(alpha: 0.7)),
+                        if (!hidePlotGroupHeaders)
+                          _PlotHeader(
+                            name: plotGroups[gi].name,
+                            canRemove: plotGroups.length > 1,
+                            submitting: submitting,
+                            onRemove: () => onRemovePlotGroup(gi),
+                          ),
                         for (var li = 0; li < plotGroups[gi].lines.length; li++)
                           _LineRow(
                             selected: plotGroups[gi].lines[li].selected,
@@ -431,8 +484,7 @@ class _LineRow extends StatelessWidget {
 
   static const _linkBlue = Color(0xFF1976D2);
 
-  bool get _quotationMapWithPins =>
-      line.label == 'Quotation Map' && (line.quantityMultiplier ?? 0) > 0;
+  bool get _lineHasPins => (line.quantityMultiplier ?? 0) > 0;
 
   @override
   Widget build(BuildContext context) {
@@ -462,7 +514,7 @@ class _LineRow extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: _quotationMapWithPins
+            child: _lineHasPins
                 ? Material(
                     color: Colors.transparent,
                     child: InkWell(
@@ -473,6 +525,8 @@ class _LineRow extends StatelessWidget {
                                 blockNameController: blockNameController,
                                 plotGroupName: plotGroupName,
                                 pinCount: line.quantityMultiplier!,
+                                sheetTitle: line.label,
+                                designPins: line.designPins,
                               );
                             }
                           : null,

@@ -197,11 +197,11 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
                       height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
-                      const Icon(Icons.person_outline,
-                          size: 16, color: Color(0xFF8B8B8B)),
+                       Image.asset("assets/images/inperson.png",
+                          height: 15,width: 15, color: Color(0xFF8B8B8B)),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
@@ -212,11 +212,11 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Row(
                     children: [
-                      const Icon(Icons.phone_outlined,
-                          size: 16, color: Color(0xFF8B8B8B)),
+                      Image.asset("assets/images/call.png",
+                          height: 15,width: 15, color: Color(0xFF8B8B8B)),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(

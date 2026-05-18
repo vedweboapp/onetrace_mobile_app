@@ -4,6 +4,7 @@ import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/network/auth_bearer_interceptor.dart';
+import 'package:red5/core/network/organization_id_interceptor.dart';
 import 'package:red5/core/network/dio_multipart_transfer.dart';
 import 'package:red5/core/network/success_toast_interceptor.dart';
 import 'package:red5/core/storage/local_storage.dart';
@@ -15,6 +16,7 @@ import 'package:red5/features/items/data/items_api_client.dart';
 import 'package:red5/features/quotations/data/quotations_api_client.dart';
 import 'package:red5/features/dashboard/data/invite_user_service.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_client.dart';
+import 'package:red5/features/dashboard/data/organization_settings_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
 import 'package:red5/features/user_profile/data/roles_api_client.dart';
@@ -24,6 +26,7 @@ final GetIt sl = GetIt.instance;
 
 List<Interceptor> _authorizedDioInterceptors(LocalStorage storage) => [
   AuthBearerInterceptor(storage),
+  OrganizationIdInterceptor(storage),
   ApiDioLogInterceptor(),
   SuccessToastInterceptor(),
 ];
@@ -211,6 +214,24 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return RolesApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<OrganizationSettingsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return OrganizationSettingsApiClient(dio: dio);
   });
 
   sl.registerLazySingleton<UserProfileApiClient>(() {

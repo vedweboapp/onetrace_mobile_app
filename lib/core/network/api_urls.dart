@@ -36,6 +36,13 @@ abstract final class AppApiUrls {
   /// `POST` [auth_verify-otp_create]
   static const String authVerifyOtp = '$_v1/auth/verify-otp/';
 
+  /// `POST` org user self-registration
+  static const String authOrgUserSignup = '$_v1/auth/org-user/signup/';
+
+  /// `GET` · `PUT` · `PATCH` organization company settings
+  static String organizationSettingsById(int organizationId) =>
+      '$_v1/organizationsettings/$organizationId/';
+
   // ─── Clients ─────────────────────────────────────────────────────────────
 
   /// `GET` [clients_list] · `POST` [clients_create]

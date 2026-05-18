@@ -11,6 +11,9 @@ import 'package:red5/core/network/success_toast_interceptor.dart';
 final class AuthApiClient {
   AuthApiClient({Dio? dio}) : _dio = dio ?? _createDefaultDio();
 
+  /// OTP purpose for signup email verification (`auth/send-otp/`, `auth/verify-otp/`).
+  static const otpPurposeEmailVerify = 'email_verify';
+
   final Dio _dio;
 
   static Dio _createDefaultDio() {
@@ -114,6 +117,28 @@ final class AuthApiClient {
       data: <String, dynamic>{
         'email': email,
         if (extraFields != null) ...extraFields,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Register a new org user after email has been verified.
+  Future<Response<Map<String, dynamic>>> orgUserSignup({
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String phoneNumber,
+    required String password,
+    CancelToken? cancelToken,
+  }) async {
+    return _dio.post<Map<String, dynamic>>(
+      AppApiUrls.authOrgUserSignup,
+      data: <String, dynamic>{
+        'first_name': firstName,
+        'last_name': lastName,
+        'email': email,
+        'phone_number': phoneNumber,
+        'password': password,
       },
       cancelToken: cancelToken,
     );

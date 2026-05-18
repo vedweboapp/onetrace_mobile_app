@@ -1,7 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 
-String _readString(Map<String, dynamic> json, List<String> keys, {String fallback = ''}) {
+String _readString(
+  Map<String, dynamic> json,
+  List<String> keys, {
+  String fallback = '',
+}) {
   for (final key in keys) {
     final raw = json[key];
     if (raw == null) continue;
@@ -40,17 +44,15 @@ class QuotationListItem {
     if (id.isEmpty) {
       id = _readString(json, const ['uuid', 'pk', 'reference']);
     }
-    final projectNameStr = _emptyToNull(
-      () {
-        final n = _readNestedLabel(
-          json,
-          const ['project', 'deal'],
-          const ['name', 'project_name', 'title'],
-        );
-        if (n.isNotEmpty) return n;
-        return _readString(json, const ['project_name', 'site_name', 'property']);
-      }(),
-    );
+    final projectNameStr = _emptyToNull(() {
+      final n = _readNestedLabel(
+        json,
+        const ['project', 'deal'],
+        const ['name', 'project_name', 'title'],
+      );
+      if (n.isNotEmpty) return n;
+      return _readString(json, const ['project_name', 'site_name', 'property']);
+    }());
     var quoteName = _readString(json, const [
       'quote_name',
       'name',
@@ -81,21 +83,21 @@ class QuotationListItem {
         'reference',
         'Quote_Number',
       ], fallback: '—'),
-      clientName: _emptyToNull(
-        () {
-          final n = _readNestedLabel(
-            json,
-            const ['client', 'customer'],
-            const ['name', 'client_name', 'title'],
-          );
-          if (n.isNotEmpty) return n;
-          return _readString(json, const ['client_name', 'customer_name']);
-        }(),
-      ),
+      clientName: _emptyToNull(() {
+        final n = _readNestedLabel(
+          json,
+          const ['client', 'customer'],
+          const ['name', 'client_name', 'title'],
+        );
+        if (n.isNotEmpty) return n;
+        return _readString(json, const ['client_name', 'customer_name']);
+      }()),
       projectName: projectNameStr,
       siteName: topSite ?? siteFromProject,
       contactPhone: _readListContactPhone(json),
-      description: _emptyToNull(_readString(json, const ['description', 'details'])),
+      description: _emptyToNull(
+        _readString(json, const ['description', 'details']),
+      ),
     );
   }
 }
@@ -197,10 +199,7 @@ String _formatTagsField(Map<String, dynamic> json) {
 /// Display chip for quotation tags (Overview UI).
 @immutable
 class QuotationTagChip {
-  const QuotationTagChip({
-    required this.name,
-    this.avatarUrl,
-  });
+  const QuotationTagChip({required this.name, this.avatarUrl});
 
   final String name;
   final String? avatarUrl;
@@ -230,10 +229,9 @@ List<QuotationTagChip> _parseTagChips(Map<String, dynamic> json) {
         'profile_image',
       ]);
       if (name.isEmpty) continue;
-      out.add(QuotationTagChip(
-        name: name,
-        avatarUrl: avatar.isEmpty ? null : avatar,
-      ));
+      out.add(
+        QuotationTagChip(name: name, avatarUrl: avatar.isEmpty ? null : avatar),
+      );
     } else {
       final s = e.toString().trim();
       if (s.isNotEmpty && s != 'null') {
@@ -268,10 +266,7 @@ String _readNestedLabel(
 /// Full quotation from `GET /api/v1/quotations/{id}/`.
 @immutable
 class QuotationDetailModel {
-  const QuotationDetailModel({
-    required this.id,
-    required this.raw,
-  });
+  const QuotationDetailModel({required this.id, required this.raw});
 
   final String id;
   final Map<String, dynamic> raw;
@@ -288,12 +283,7 @@ class QuotationDetailModel {
   }
 
   String get quoteName {
-    for (final k in const [
-      'quote_name',
-      'name',
-      'title',
-      'Subject',
-    ]) {
+    for (final k in const ['quote_name', 'name', 'title', 'Subject']) {
       final v = raw[k];
       if (v == null) continue;
       if (v is Map || v is List) continue;
@@ -326,30 +316,37 @@ class QuotationDetailModel {
   }
 
   String get clientLabel {
-    final n = _readNestedLabel(raw, const ['client', 'customer'], const [
-      'name',
-      'client_name',
-    ]);
+    final n = _readNestedLabel(
+      raw,
+      const ['client', 'customer'],
+      const ['name', 'client_name'],
+    );
     return n.isNotEmpty ? n : field('client', const ['client_name']);
   }
 
   String get projectLabel {
-    final n = _readNestedLabel(raw, const ['project', 'deal'], const [
-      'name',
-      'project_name',
-    ]);
+    final n = _readNestedLabel(
+      raw,
+      const ['project', 'deal'],
+      const ['name', 'project_name'],
+    );
     return n.isNotEmpty ? n : field('project', const ['project_name']);
   }
 
   String get siteLabel {
-    final top = _readNestedLabel(raw, const ['site'], const ['site_name', 'name']);
+    final top = _readNestedLabel(
+      raw,
+      const ['site'],
+      const ['site_name', 'name'],
+    );
     if (top.isNotEmpty) return top;
     final fromProject = _firstProjectSiteName(raw);
     if (fromProject != null && fromProject.isNotEmpty) return fromProject;
     return field('site', const ['site_name']);
   }
 
-  String get costCentre => field('costCentre', const ['cost_centre', 'cost_center']);
+  String get costCentre =>
+      field('costCentre', const ['cost_centre', 'cost_center']);
 
   /// For display: empty or em-dash becomes `-` (matches CRM overview).
   String get costCentreDisplay {
@@ -430,7 +427,10 @@ class QuotationDetailModel {
       final s = _formatUserLike(v);
       if (s.isNotEmpty) return s;
     }
-    return field('projectManager', const ['project_manager', 'project_manager_name']);
+    return field('projectManager', const [
+      'project_manager',
+      'project_manager_name',
+    ]);
   }
 
   String get technicians {
@@ -447,7 +447,8 @@ class QuotationDetailModel {
     return field('salesPerson', const ['sales_person', 'salesperson']);
   }
 
-  String get description => field('description', const ['description', 'details']);
+  String get description =>
+      field('description', const ['description', 'details']);
 
   factory QuotationDetailModel.fromJson(Map<String, dynamic> json) {
     final id = _readString(json, const ['id', 'ID']);

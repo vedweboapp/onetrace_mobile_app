@@ -12,11 +12,14 @@ import 'package:red5/features/contacts/data/contact_models.dart';
 import 'package:red5/features/contacts/data/contacts_api_client.dart';
 
 class AddContactPage extends ConsumerStatefulWidget {
-  const AddContactPage({super.key, this.existing});
+  const AddContactPage({super.key, this.existing, this.presetClientId});
 
   /// When non-null the form opens in edit mode pre-filled with [existing] and
   /// submits a `PATCH /contact/{id}/` instead of a `POST /contact/`.
   final ContactModel? existing;
+
+  /// When opening “add contact” from a client screen, pre-selects this client id.
+  final String? presetClientId;
 
   static const path = '/contacts/add';
   static const name = 'add-contact';
@@ -73,6 +76,11 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
       final country = existing.country.trim();
       if (country.isNotEmpty) {
         _country = _countries.contains(country) ? country : _countries.first;
+      }
+    } else {
+      final preset = widget.presetClientId?.trim();
+      if (preset != null && preset.isNotEmpty) {
+        _selectedClientId = preset;
       }
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadClients());
@@ -135,6 +143,20 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
         );
         seen.add(id);
       }
+    }
+
+    final preset = widget.presetClientId?.trim();
+    if (preset != null &&
+        preset.isNotEmpty &&
+        !seen.contains(preset) &&
+        !_clients.any((c) => c.id == preset)) {
+      items.add(
+        DropdownMenuItem<String>(
+          value: preset,
+          child: Text('Client #$preset'),
+        ),
+      );
+      seen.add(preset);
     }
 
     for (final c in _clients) {

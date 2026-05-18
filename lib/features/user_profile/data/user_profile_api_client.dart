@@ -22,6 +22,40 @@ final class UserProfileApiClient {
         },
       );
 
+  /// Loads every page of `GET /user-profile/` until exhausted (for pickers).
+  Future<List<UserProfileModel>> fetchAllUserProfiles({
+    int pageSize = 50,
+  }) async {
+    final out = <UserProfileModel>[];
+    final seenIds = <String>{};
+    var page = 1;
+    while (true) {
+      final response = await _dio.get<Map<String, dynamic>>(
+        AppApiUrls.userProfiles,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'page_size': pageSize,
+        },
+      );
+      final root = response.data ?? const <String, dynamic>{};
+      final rows = _readRows(root);
+      for (final row in rows) {
+        final m = UserProfileModel.fromJson(row);
+        if (m.id.isEmpty || !seenIds.add(m.id)) continue;
+        out.add(m);
+      }
+      final pagination = _readMap(root['pagination']);
+      final hasNext = pagination['next'] != null;
+      if (!hasNext || rows.isEmpty) break;
+      page++;
+    }
+    if (out.isEmpty) {
+      final single = await fetchCurrentProfile();
+      if (single != null) out.add(single);
+    }
+    return out;
+  }
+
   /// `GET /user-profile/` — first row (or single `data` object).
   Future<UserProfileModel?> fetchCurrentProfile() async {
     final response = await _dio.get<Map<String, dynamic>>(
