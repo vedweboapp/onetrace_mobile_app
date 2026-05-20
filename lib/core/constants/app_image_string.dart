@@ -12,7 +12,6 @@ class AppImageString {
   static const String siteWorkPng = "assets/images/site_work.png";
   static const String mapSiteWorkPng = "assets/images/map_locator.png";
   static const String editPenPng = "assets/images/edit_pen.png";
-  static const String pinPng = "assets/images/pin.png";
   static const String googlePng = "assets/images/google.png";
   static const String microsoftPng = "assets/images/microsoft.png";
   static const String facebookPng = "assets/images/facebook.png";

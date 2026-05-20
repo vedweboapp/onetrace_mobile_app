@@ -6,6 +6,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
 import 'package:red5/features/quotations/data/quotations_api_client.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -115,7 +116,7 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
       context.pop(true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(
@@ -130,14 +131,14 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
 
   void _onDuplicateQuotation() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    context.showTopSnackBar(
       const SnackBar(content: Text('Duplicate is not available yet.')),
     );
   }
 
   void _onDuplicateManyQuotations() {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    context.showTopSnackBar(
       const SnackBar(content: Text('Duplicate many is not available yet.')),
     );
   }
@@ -148,7 +149,7 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
     final url = d.exportPdfUrl;
     if (url == null || url.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(
           content: Text('No PDF link is available for this quotation yet.'),
         ),
@@ -158,15 +159,15 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
     final uri = Uri.tryParse(url);
     if (uri == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Invalid PDF URL.')));
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Invalid PDF URL.')),
+      );
       return;
     }
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!mounted) return;
     if (!launched) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      context.showTopSnackBar(
         const SnackBar(content: Text('Could not open the PDF link.')),
       );
     }

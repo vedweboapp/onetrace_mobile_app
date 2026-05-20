@@ -147,4 +147,17 @@ class AppStrings {
       'Could not send invitation. Please try again.';
   static const apiErrorSignup =
       'Could not create your account. Please try again.';
+  static const apiErrorSaveCompanySettings =
+      'Could not save company settings. Please try again.';
+  static const companySettingsSaved = 'Company settings saved successfully';
+  static const companySettingsWebsiteHint = 'https://www.example.com';
+  static const companySettingsDescriptionHint =
+      'Brief description of your company';
+  static const companySettingsAddress1Hint = 'Street address';
+  static const companySettingsAddress2Hint = 'Suite, unit, etc. (optional)';
+  static const companySettingsCityHint = 'e.g. New York';
+  static const companySettingsStateHint = 'e.g. NY';
+  static const companySettingsPincodeHint = 'ZIP or Postal Code';
+  static const companySettingsCountryRequired = 'Country is required';
+  static const companySettingsPincodeRequired = 'Postal code is required';
 }

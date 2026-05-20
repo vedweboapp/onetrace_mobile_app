@@ -74,6 +74,137 @@ class UserAddressModel {
   }
 }
 
+/// Nested `organization_detail` from `/user-profile/`.
+@immutable
+class OrganizationDetailModel {
+  const OrganizationDetailModel({
+    required this.id,
+    required this.uuid,
+    required this.companyName,
+  });
+
+  final String id;
+  final String uuid;
+  final String companyName;
+
+  int? get idAsInt => int.tryParse(id.trim());
+
+  factory OrganizationDetailModel.fromJson(Map<String, dynamic> json) {
+    return OrganizationDetailModel(
+      id: _readString(json, const ['id']),
+      uuid: _readString(json, const ['uuid']),
+      companyName: _readString(json, const ['company_name', 'companyName']),
+    );
+  }
+}
+
+/// Label/id pair from `appearance_settings.available_options`.
+@immutable
+class AppearanceOptionModel {
+  const AppearanceOptionModel({
+    required this.id,
+    required this.label,
+    this.hex,
+  });
+
+  final String id;
+  final String label;
+  final String? hex;
+
+  factory AppearanceOptionModel.fromJson(Map<String, dynamic> json) {
+    return AppearanceOptionModel(
+      id: _readString(json, const ['id']),
+      label: _readString(json, const ['label', 'name']),
+      hex: _readString(json, const ['hex', 'color']),
+    );
+  }
+}
+
+/// Nested `appearance_settings` from `/user-profile/`.
+@immutable
+class AppearanceSettingsModel {
+  const AppearanceSettingsModel({
+    required this.themeMode,
+    required this.language,
+    required this.accentType,
+    required this.accentPresetId,
+    required this.accentCustomHex,
+    required this.languageOptions,
+    required this.themeModeOptions,
+    required this.accentPresets,
+  });
+
+  final String themeMode;
+  final String language;
+  final String accentType;
+  final String accentPresetId;
+  final String accentCustomHex;
+  final List<AppearanceOptionModel> languageOptions;
+  final List<AppearanceOptionModel> themeModeOptions;
+  final List<AppearanceOptionModel> accentPresets;
+
+  factory AppearanceSettingsModel.fromJson(Map<String, dynamic> json) {
+    final prefs = json['preferences'] is Map
+        ? Map<String, dynamic>.from(
+            (json['preferences'] as Map).map(
+              (k, v) => MapEntry(k.toString(), v),
+            ),
+          )
+        : <String, dynamic>{};
+
+    final accent = prefs['accent'] is Map
+        ? Map<String, dynamic>.from(
+            (prefs['accent'] as Map).map(
+              (k, v) => MapEntry(k.toString(), v),
+            ),
+          )
+        : <String, dynamic>{};
+
+    final options = json['available_options'] is Map
+        ? Map<String, dynamic>.from(
+            (json['available_options'] as Map).map(
+              (k, v) => MapEntry(k.toString(), v),
+            ),
+          )
+        : <String, dynamic>{};
+
+    return AppearanceSettingsModel(
+      themeMode: _readString(prefs, const ['theme_mode', 'themeMode']),
+      language: _readString(prefs, const ['language']),
+      accentType: _readString(accent, const ['type']),
+      accentPresetId: _readString(accent, const ['preset_id', 'presetId']),
+      accentCustomHex: _readString(accent, const ['custom_hex', 'customHex']),
+      languageOptions: _parseOptionList(options['language']),
+      themeModeOptions: _parseOptionList(options['theme_mode']),
+      accentPresets: _parseOptionList(options['accent_presets']),
+    );
+  }
+
+  String get resolvedAccentHex {
+    if (accentType == 'custom' && accentCustomHex.isNotEmpty) {
+      return accentCustomHex;
+    }
+    for (final preset in accentPresets) {
+      if (preset.id == accentPresetId && (preset.hex ?? '').isNotEmpty) {
+        return preset.hex!;
+      }
+    }
+    return accentCustomHex;
+  }
+
+  static List<AppearanceOptionModel> _parseOptionList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => AppearanceOptionModel.fromJson(
+            Map<String, dynamic>.from(e),
+          ),
+        )
+        .toList();
+  }
+}
+
 /// Nested `user_detail` or top-level user fields from `/user-profile/`.
 @immutable
 class UserDetail {
@@ -133,6 +264,8 @@ class UserProfileModel {
     required this.userDetail,
     required this.role,
     required this.roleId,
+    required this.organizationDetail,
+    required this.appearanceSettings,
     required this.dateOfBirth,
     required this.addressLine1,
     required this.addressLine2,
@@ -150,6 +283,8 @@ class UserProfileModel {
   final String role;
   /// FK to `/api/v1/role/` when API returns int or nested role object.
   final String roleId;
+  final OrganizationDetailModel? organizationDetail;
+  final AppearanceSettingsModel? appearanceSettings;
   final String dateOfBirth;
   /// Legacy flat address when API has no `addresses[]`.
   final String addressLine1;
@@ -201,12 +336,16 @@ class UserProfileModel {
     final detail = UserDetail.fromJson(merged);
 
     final parsedRole = _parseRoleFields(json, merged);
+    final organizationDetail = _parseOrganizationDetail(json);
+    final appearanceSettings = _parseAppearanceSettings(json);
 
     return UserProfileModel(
       id: id.isNotEmpty ? id : detail.id,
       userDetail: detail,
       role: parsedRole.displayName,
       roleId: parsedRole.roleId,
+      organizationDetail: organizationDetail,
+      appearanceSettings: appearanceSettings,
       dateOfBirth: _readString(json, const [
         'date_of_birth',
         'dob',
@@ -306,6 +445,28 @@ class UserProfileModel {
       }
     }
     return out;
+  }
+
+  static OrganizationDetailModel? _parseOrganizationDetail(
+    Map<String, dynamic> json,
+  ) {
+    final raw = json['organization_detail'] ??
+        json['organization_details'] ??
+        json['organization'];
+    if (raw is! Map) return null;
+    return OrganizationDetailModel.fromJson(
+      Map<String, dynamic>.from(raw.map((k, v) => MapEntry(k.toString(), v))),
+    );
+  }
+
+  static AppearanceSettingsModel? _parseAppearanceSettings(
+    Map<String, dynamic> json,
+  ) {
+    final raw = json['appearance_settings'] ?? json['appearanceSettings'];
+    if (raw is! Map) return null;
+    return AppearanceSettingsModel.fromJson(
+      Map<String, dynamic>.from(raw.map((k, v) => MapEntry(k.toString(), v))),
+    );
   }
 
   static List<UserAddressModel> _parseAddresses(Map<String, dynamic> json) {

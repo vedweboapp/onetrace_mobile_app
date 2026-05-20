@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:red5/features/dashboard/data/organization_settings_codec.dart';
 
 /// Company / organization settings from `GET /organizationsettings/{id}/`.
 @immutable
@@ -85,21 +86,15 @@ class OrganizationSettingsModel {
         'digitSeparator',
       ]),
       decimalPlaces: _readInt(json, const ['decimal_places', 'decimalPlaces']),
-      workingDays: _readStringList(json['working_days'] ?? json['workingDays']),
+      workingDays: OrganizationSettingsCodec.workingDaysFromApi(
+        json['working_days'] ?? json['workingDays'],
+      ),
       breakDuration: _readString(json, const [
         'break_duration',
         'breakDuration',
       ]),
     );
   }
-}
-
-List<String> _readStringList(dynamic raw) {
-  if (raw is! List) return const [];
-  return raw
-      .map((e) => e?.toString().trim() ?? '')
-      .where((s) => s.isNotEmpty)
-      .toList();
 }
 
 String _readString(Map<String, dynamic> json, List<String> keys) {

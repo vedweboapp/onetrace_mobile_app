@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:red5/core/network/organization_id_header.dart';
 import 'package:red5/core/storage/local_storage.dart';
-import 'package:red5/core/storage/local_storage_keys.dart';
+import 'package:red5/core/storage/organization_id_storage.dart';
 
 /// Adds [OrganizationIdHeader.name] from [LocalStorage] when set.
 final class OrganizationIdInterceptor extends Interceptor {
@@ -11,10 +11,7 @@ final class OrganizationIdInterceptor extends Interceptor {
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    final fromStorage = _storage.getInt(LocalStorageKeys.authOrganizationId) ??
-        int.tryParse(
-          _storage.getString(LocalStorageKeys.authOrganizationId)?.trim() ?? '',
-        );
+    final fromStorage = OrganizationIdStorage.read(_storage);
     if (fromStorage != null &&
         !options.headers.containsKey(OrganizationIdHeader.name)) {
       options.headers[OrganizationIdHeader.name] = fromStorage.toString();

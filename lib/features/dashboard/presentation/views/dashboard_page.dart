@@ -13,6 +13,7 @@ import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/network/auth_api_client.dart';
+import 'package:red5/core/preferences/nav_menu_style_preference.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
@@ -66,6 +67,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   String? _projectsError;
   int _selectedIndex = 0;
   bool _productsExpanded = true;
+  final GlobalKey<ScaffoldState> _dashboardScaffoldKey = GlobalKey<ScaffoldState>();
+  NavMenuStyle _navMenuStyle = NavMenuStyle.drawer;
   PageRoute<dynamic>? _subscribedRoute;
   String? _profileAvatarUrl;
 
@@ -75,6 +78,91 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     _searchController.addListener(() => setState(() {}));
     _fetchProjects();
     unawaited(_loadProfileAvatar());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadNavMenuStyle());
+  }
+
+  void _loadNavMenuStyle() {
+    final storage = ref.read(localStorageProvider);
+    final style = NavMenuStylePreference.read(storage);
+    if (mounted) setState(() => _navMenuStyle = style);
+  }
+
+  void _openMainNavigation() {
+    FocusScope.of(context).unfocus();
+    if (_navMenuStyle == NavMenuStyle.bottomSheet) {
+      _showMainNavBottomSheet();
+    } else {
+      _dashboardScaffoldKey.currentState?.openDrawer();
+    }
+  }
+
+  void _showMainNavBottomSheet() {
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final maxH = MediaQuery.sizeOf(context).height * 0.78;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Material(
+              color: AppColors.white,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxH),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE2E2E4),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Menu',
+                            style: AppFonts.titleLarge(
+                              color: AppColors.inkStrong,
+                            ).copyWith(fontWeight: FontWeight.w800, fontSize: 18),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Close',
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                            color: const Color(0xFF6B7280),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1, thickness: 1, color: Color(0xFFE3E3E4)),
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        children: _mainNavMenuSiblings(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -118,6 +206,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   void didPopNext() {
     _fetchProjects(silent: _projects.isNotEmpty);
     unawaited(_loadProfileAvatar());
+    _loadNavMenuStyle();
   }
 
   Future<void> _fetchProjects({bool silent = false}) async {
@@ -525,6 +614,87 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     }
   }
 
+  /// Drawer + overflow bottom sheet share the same destinations.
+  List<Widget> _mainNavMenuSiblings() {
+    return [
+      _drawerItem(
+        icon: 'assets/images/home.png',
+        label: 'Home',
+        selected: _selectedIndex == 0,
+        onTap: () => _selectDrawerIndex(0),
+      ),
+      _drawerItem(
+        icon: 'assets/images/clients.png',
+        label: 'Clients',
+        selected: _selectedIndex == 1,
+        onTap: () => _selectDrawerIndex(1),
+      ),
+      _drawerItem(
+        icon: 'assets/images/sites.png',
+        label: 'Sites',
+        selected: _selectedIndex == 2,
+        onTap: () => _selectDrawerIndex(2),
+      ),
+      _drawerItem(
+        icon: 'assets/images/contacts.png',
+        label: 'Contacts',
+        selected: _selectedIndex == 4,
+        onTap: () => _selectDrawerIndex(4),
+      ),
+      _drawerItem(
+        icon: 'assets/images/projects.png',
+        label: 'Projects',
+        selected: _selectedIndex == 3,
+        onTap: () => _selectDrawerIndex(3),
+      ),
+      _drawerItem(
+        icon: 'assets/images/groups.png',
+        label: 'Groups',
+        selected: _selectedIndex == 5,
+        onTap: () => _selectDrawerIndex(5),
+      ),
+      _drawerExpandableItem(
+        icon: 'assets/images/products.png',
+        label: 'Products',
+        expanded: _productsExpanded,
+        onTap: () => setState(() => _productsExpanded = !_productsExpanded),
+        children: [
+          _drawerSubItem(
+            'Items',
+            () {
+              Navigator.of(context).pop();
+              setState(() {
+                _selectedIndex = 6;
+                _productsExpanded = true;
+              });
+            },
+            _selectedIndex == 6,
+          ),
+          _drawerSubItem(
+            'Composite Items',
+            () {
+              Navigator.of(context).pop();
+              setState(() {
+                _selectedIndex = 7;
+                _productsExpanded = true;
+              });
+            },
+            _selectedIndex == 7,
+          ),
+        ],
+      ),
+      _drawerItem(
+        icon: 'assets/images/qoutations.png',
+        label: 'Quotations',
+        selected: _selectedIndex == 8,
+        onTap: () {
+          Navigator.of(context).pop();
+          setState(() => _selectedIndex = 8);
+        },
+      ),
+    ];
+  }
+
   Widget _buildAppDrawer(BuildContext context) {
     return Drawer(
       backgroundColor: AppColors.white,
@@ -567,84 +737,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
                   horizontal: 10,
                   vertical: 4,
                 ),
-                children: [
-                  _drawerItem(
-                    icon: "assets/images/home.png",
-                    label: 'Home',
-                    selected: _selectedIndex == 0,
-                    onTap: () => _selectDrawerIndex(0),
-                  ),
-                  _drawerItem(
-                    icon: "assets/images/clients.png",
-                    label: 'Clients',
-                    selected: _selectedIndex == 1,
-                    onTap: () => _selectDrawerIndex(1),
-                  ),
-                  _drawerItem(
-                    icon: "assets/images/sites.png",
-                    label: 'Sites',
-                    selected: _selectedIndex == 2,
-                    onTap: () => _selectDrawerIndex(2),
-                  ),
-                  _drawerItem(
-                    icon: "assets/images/contacts.png",
-                    label: 'Contacts',
-                    selected: _selectedIndex == 4,
-                    onTap: () => _selectDrawerIndex(4),
-                  ),
-                  _drawerItem(
-                    icon: "assets/images/projects.png",
-                    label: 'Projects',
-                    selected: _selectedIndex == 3,
-                    onTap: () => _selectDrawerIndex(3),
-                  ),
-                  _drawerItem(
-                    icon: "assets/images/groups.png",
-                    label: 'Groups',
-                    selected: _selectedIndex == 5,
-                    onTap: () => _selectDrawerIndex(5),
-                  ),
-                  _drawerExpandableItem(
-                    icon: "assets/images/products.png",
-                    label: 'Products',
-                    expanded: _productsExpanded,
-                    onTap: () =>
-                        setState(() => _productsExpanded = !_productsExpanded),
-                    children: [
-                      _drawerSubItem(
-                        'Items',
-                        () {
-                          Navigator.of(context).pop();
-                          setState(() {
-                            _selectedIndex = 6;
-                            _productsExpanded = true;
-                          });
-                        },
-                        _selectedIndex == 6,
-                      ),
-                      _drawerSubItem(
-                        'Composite Items',
-                        () {
-                          Navigator.of(context).pop();
-                          setState(() {
-                            _selectedIndex = 7;
-                            _productsExpanded = true;
-                          });
-                        },
-                        _selectedIndex == 7,
-                      ),
-                    ],
-                  ),
-                  _drawerItem(
-                    icon: "assets/images/qoutations.png",
-                    label: 'Quotations',
-                    selected: _selectedIndex == 8,
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      setState(() => _selectedIndex = 8);
-                    },
-                  ),
-                ],
+                children: _mainNavMenuSiblings(),
               ),
             ),
           ],
@@ -774,21 +867,45 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   }
 
   int get _bottomSelectedIndex {
+    if (_navMenuStyle == NavMenuStyle.bottomSheet) {
+      return switch (_selectedIndex) {
+        0 => 0,
+        1 => 1,
+        3 => 2,
+        _ => 3,
+      };
+    }
     return switch (_selectedIndex) {
       0 => 0,
       1 => 1,
       3 => 2,
-      4 => 3,
       _ => 0,
     };
   }
 
+  /// No pill when current screen is not one of the primary bottom tabs.
+  bool get _suppressBottomNavIndicator {
+    if (_navMenuStyle == NavMenuStyle.drawer) {
+      return _selectedIndex != 0 &&
+          _selectedIndex != 1 &&
+          _selectedIndex != 3;
+    }
+    return _bottomSelectedIndex == 3 &&
+        _selectedIndex != 0 &&
+        _selectedIndex != 1 &&
+        _selectedIndex != 3;
+  }
+
   void _onBottomDestinationSelected(int index) {
+    if (_navMenuStyle == NavMenuStyle.bottomSheet && index == 3) {
+      _openMainNavigation();
+      return;
+    }
     final pageIndex = switch (index) {
       0 => 0,
       1 => 1,
       2 => 3,
-      _ => 4,
+      _ => 0,
     };
     setState(() => _selectedIndex = pageIndex);
     if (pageIndex == 3) {
@@ -802,21 +919,26 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     final shellBg = quotationTab ? AppColors.white : _backgroundColor;
 
     return Scaffold(
+      key: _dashboardScaffoldKey,
       backgroundColor: shellBg,
-      drawer: _buildAppDrawer(context),
+      drawer: _navMenuStyle == NavMenuStyle.drawer
+          ? _buildAppDrawer(context)
+          : null,
+      drawerEnableOpenDragGesture: _navMenuStyle == NavMenuStyle.drawer,
       appBar: AppBar(
         backgroundColor: shellBg,
         elevation: 0,
         scrolledUnderElevation: 0,
         titleSpacing: 4,
-        leading: Builder(
-          builder: (context) => IconButton(
-            onPressed: () => Scaffold.of(context).openDrawer(),
-            icon: const Icon(Icons.menu_rounded, size: 24),
-            color: AppColors.inkStrong,
-            tooltip: 'Menu',
-          ),
-        ),
+        automaticallyImplyLeading: _navMenuStyle == NavMenuStyle.drawer,
+        leading: _navMenuStyle == NavMenuStyle.drawer
+            ? IconButton(
+                onPressed: _openMainNavigation,
+                icon: const Icon(Icons.menu_rounded, size: 24),
+                color: AppColors.inkStrong,
+                tooltip: 'Menu',
+              )
+            : null,
         title: _buildTopBarTitle(),
         actions: [_buildTopBarActions(), const SizedBox(width: 10)],
       ),
@@ -838,7 +960,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         selectedIndex: _bottomSelectedIndex,
         onDestinationSelected: _onBottomDestinationSelected,
         backgroundColor: shellBg,
-        indicatorColor: _selectedIndex == 2
+        indicatorColor: _suppressBottomNavIndicator
             ? Colors.transparent
             : const Color(0xFFECECEE),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -900,25 +1022,22 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
             ),
             label: 'Projects',
           ),
-          NavigationDestination(
-            icon: Image.asset(
-              "assets/images/contacts.png",
-              width: 22,
-              height: 22,
-              color: _selectedIndex == 4
-                  ? AppColors.inkStrong
-                  : HexColor("#4B5563"),
+          if (_navMenuStyle == NavMenuStyle.bottomSheet)
+            NavigationDestination(
+              icon: Icon(
+                Icons.more_horiz_rounded,
+                size: 26,
+                color: _bottomSelectedIndex == 3
+                    ? AppColors.inkStrong
+                    : HexColor('#4B5563'),
+              ),
+              selectedIcon: const Icon(
+                Icons.more_horiz_rounded,
+                size: 26,
+                color: AppColors.inkStrong,
+              ),
+              label: 'More',
             ),
-            selectedIcon: Image.asset(
-              "assets/images/contacts.png",
-              width: 22,
-              height: 22,
-              color: _selectedIndex == 4
-                  ? AppColors.inkStrong
-                  : HexColor("#4B5563"),
-            ),
-            label: 'Contacts',
-          ),
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,

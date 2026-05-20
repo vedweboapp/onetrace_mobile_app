@@ -18,4 +18,7 @@ abstract final class LocalStorageKeys {
 
   /// JSON object: block name → `{ "documents": [...], "selectedIndex": int }`
   static const quotationsByBlock = 'quotations_by_block_v1';
+
+  /// `drawer` | `bottom_sheet` — how main overflow navigation opens (see [NavMenuStylePreference]).
+  static const appNavMenuStyle = 'app_nav_menu_style_v1';
 }

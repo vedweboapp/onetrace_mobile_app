@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:red5/core/constants/app_image_string.dart';
+import 'package:red5/core/pdf_coordinates/pdf_coordinates.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
@@ -143,15 +144,37 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   bool _variationOn = false;
   bool _isLoadingGroups = false;
   bool _isLoadingCompositeItems = false;
-  static const List<Color> _regionPalette = <Color>[
-    Color(0x331E7DD8), // blue
-    Color(0x33F97316), // orange
-    Color(0x33A855F7), // purple
-    Color(0x3322C55E), // green
-    Color(0x33EC4899), // pink
-    Color(0x33F59E0B), // amber
+  static const List<Color> _regionBorderColors = <Color>[
+    Color(0xFF1E7DD8), // blue
+    Color(0xFFF97316), // orange
+    Color(0xFFA855F7), // purple
+    Color(0xFF22C55E), // green
+    Color(0xFFEC4899), // pink
+    Color(0xFFF59E0B), // amber
+    Color(0xFF06B6D4), // cyan
+    Color(0xFFEF4444), // red
   ];
+
+  static const double _regionBorderWidth = 1.0;
+  static const List<double> _regionDashPattern = <double>[5, 4];
+  static const List<double> _regionCrossDashPattern = <double>[4, 6];
+
+  Color _regionFillColor(int index) =>
+      _regionBorderColors[index % _regionBorderColors.length].withValues(
+        alpha: 0.16,
+      );
+
+  Color _regionBorderColor(int index) =>
+      _regionBorderColors[index % _regionBorderColors.length];
   PdfControllerPinch? _pdfController;
+  PdfPageMetadataCache? _pdfMetadataCache;
+
+  PdfCoordinateEngine? get _pdfEngine {
+    final ctrl = _pdfController;
+    final meta = _pdfMetadataCache;
+    if (ctrl == null || meta == null) return null;
+    return PdfCoordinateEngine(controller: ctrl, metadata: meta);
+  }
   String? _activeFilePath;
   final List<String> _uploadedPdfPaths = <String>[];
   final Map<String, List<_PlotRegion>> _regionsByPdfPath = {};
@@ -168,6 +191,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   Offset? _lineDraftCurrent;
   int? _movingRegionIndex;
   Offset? _regionMoveAnchorScene;
+  int? _regionPressIndex;
+  Offset? _regionPressScene;
+  static const double _regionDragThreshold = 8;
   bool _selectAreaPointerDown = false;
   int _activePointers = 0;
   final GlobalKey _viewportCanvasKey = GlobalKey();
@@ -204,6 +230,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return path.endsWith('.pdf');
   }
 
+  /// PDF uses pdfx matrix (single viewport); images use [InteractiveViewer].
+  bool get _usePdfViewport => _isPdfFile && _pdfController != null;
+
   bool get _isImageFile {
     final path = (_activeFilePath ?? '').toLowerCase().trim();
     return path.endsWith('.png') ||
@@ -221,11 +250,22 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _pinPointerDownHit != null &&
       (_pinLongPressArmed || _pinDraggingAfterLongPress);
 
-  bool get _canPanCanvas =>
-      _selectedTool == _CanvasTool.pin ||
-      (_selectedTool == _CanvasTool.selectArea &&
-          !_isDrawingSelectionGesture &&
-          !_isDraggingPinGesture);
+  /// Pan only with the hand tool — never while selecting areas or placing pins.
+  bool get _canPanCanvas => _selectedTool == _CanvasTool.pin;
+
+  /// Only the hand/pan tool lets pdfx consume gestures; draw tools use the overlay.
+  bool get _pdfViewerHandlesGestures =>
+      _usePdfViewport && _selectedTool == _CanvasTool.pin;
+
+  /// Block PDF pinch/pan whenever not in hand/pan mode.
+  bool get _blockPdfGestures =>
+      _usePdfViewport && !_pdfViewerHandlesGestures;
+
+  /// Draw-tool overlay captures all pointers (select / line / place pin).
+  bool get _overlayDrawListenerActive =>
+      _selectedTool == _CanvasTool.selectArea ||
+      _selectedTool == _CanvasTool.line ||
+      _selectedTool == _CanvasTool.location;
 
   @override
   void initState() {
@@ -264,15 +304,72 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (!mounted) return;
     await _refreshActiveContentAspectRatio();
     if (!mounted) return;
+    if (_isPdfFile) {
+      final path = (_activeFilePath ?? '').trim();
+      if (_pdfMetadataCache == null && path.isNotEmpty) {
+        await _loadPdfMetadata(path);
+      }
+    }
+    if (!mounted) return;
     await _loadSavedLevelMarkup();
+    if (!mounted) return;
+    if (_isPdfFile && _pdfController != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   void _initPdfControllerForActivePath() {
     final path = (_activeFilePath ?? '').trim();
     if (path.isEmpty || !File(path).existsSync()) return;
     if (!path.toLowerCase().endsWith('.pdf')) return;
+    _detachPdfController();
+    final controller = PdfControllerPinch(document: PdfDocument.openFile(path));
+    controller.addListener(_onPdfLayoutChanged);
+    _pdfController = controller;
+    unawaited(_loadPdfMetadata(path));
+  }
+
+  Future<void> _loadPdfMetadata(String path) async {
+    try {
+      final cache = await PdfPageMetadataCache.fromFile(path);
+      if (!mounted) return;
+      setState(() => _pdfMetadataCache = cache);
+    } catch (_) {
+      // Pins still work via layout rects; metadata enriches PDF-point storage.
+    }
+  }
+
+  void _detachPdfController() {
+    _pdfController?.removeListener(_onPdfLayoutChanged);
     _pdfController?.dispose();
-    _pdfController = PdfControllerPinch(document: PdfDocument.openFile(path));
+    _pdfController = null;
+    _pdfMetadataCache = null;
+  }
+
+  bool _pdfLayoutSyncScheduled = false;
+
+  void _onPdfLayoutChanged() {
+    if (!mounted || !_isPdfFile || _pdfLayoutSyncScheduled) return;
+    _pdfLayoutSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pdfLayoutSyncScheduled = false;
+      if (mounted) {
+        // Re-project plot polygons onto the PDF after zoom/pan/layout.
+        setState(() {});
+      }
+    });
+  }
+
+  /// Pin anchor in canvas space (viewport-local for PDF, scene for images).
+  Offset _pinAnchorScene(_CanvasPin pin) {
+    final engine = _pdfEngine;
+    final point = pin.pdfPoint;
+    if (engine != null && point != null) {
+      return engine.annotationToViewport(point) ?? pin.offset;
+    }
+    return pin.offset;
   }
 
   Future<void> _ensureDrawingSourceReady() async {
@@ -288,8 +385,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       final api = ref.read(quoteProjectApiClientProvider);
       final path = await api.downloadDrawingForLocalEdit(remote);
       if (!mounted) return;
-      _pdfController?.dispose();
-      _pdfController = null;
+      _detachPdfController();
       final k = _pdfStorageKey(path);
       setState(() {
         _activeFilePath = k;
@@ -322,7 +418,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     _levelController.dispose();
     _groupController.dispose();
     _productController.dispose();
-    _pdfController?.dispose();
+    _detachPdfController();
     _viewerTransform.dispose();
     super.dispose();
   }
@@ -335,6 +431,48 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     _regionsByPdfPath[path] = _snapshotRegions(_regions);
     _linesByPdfPath[path] = List<_CanvasLine>.from(_canvasLines);
   }
+
+  /// Clears plots, pins, lines, and drafts from the canvas and per-PDF cache.
+  void _clearAllCanvasMarkup() {
+    _cancelPinLongPressTimer();
+    setState(() {
+      _selectedTool = null;
+      _isSelectAllEnabled = false;
+      _regions.clear();
+      _canvasLines.clear();
+      _activeRegionIndex = null;
+      _draftStart = null;
+      _draftCurrent = null;
+      _lineDraftPoints.clear();
+      _lineDraftCurrent = null;
+      _movingRegionIndex = null;
+      _regionMoveAnchorScene = null;
+      _regionPressIndex = null;
+      _regionPressScene = null;
+      _selectAreaPointerDown = false;
+      _pinPointerDownHit = null;
+      _pinLongPressArmed = false;
+      _pinDraggingAfterLongPress = false;
+    });
+    for (final path in _uploadedPdfPaths) {
+      final k = _pdfStorageKey(path);
+      _regionsByPdfPath[k] = const <_PlotRegion>[];
+      _linesByPdfPath[k] = const <_CanvasLine>[];
+    }
+    final active = (_activeFilePath ?? '').trim();
+    if (active.isNotEmpty) {
+      _regionsByPdfPath[active] = const <_PlotRegion>[];
+      _linesByPdfPath[active] = const <_CanvasLine>[];
+    }
+  }
+
+  bool get _hasAnyCanvasMarkup =>
+      _regions.isNotEmpty ||
+      _canvasLines.isNotEmpty ||
+      _lineDraftPoints.isNotEmpty ||
+      _lineDraftCurrent != null ||
+      _draftStart != null ||
+      _draftCurrent != null;
 
   List<_PlotRegion> _snapshotRegions(List<_PlotRegion> regions) {
     return regions
@@ -462,25 +600,25 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: IgnorePointer(
-            // Keep zoom source single (InteractiveViewer) so PDF and
-            // selected regions scale together.
-            ignoring: true,
+            ignoring: _blockPdfGestures,
             child: PdfViewPinch(
               controller: _pdfController!,
+              minScale: 0.5,
+              maxScale: 8,
               builders: PdfViewPinchBuilders<DefaultBuilderOptions>(
-                options: const DefaultBuilderOptions(),
-                documentLoaderBuilder: (_) =>
-                    const Center(child: CircularProgressIndicator()),
-                pageLoaderBuilder: (_) => const Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                errorBuilder: (_, error) => Center(
-                  child: Text(
-                    'Could not open PDF',
-                    style: AppFonts.bodyMedium(color: AppColors.muted),
-                  ),
+              options: const DefaultBuilderOptions(),
+              documentLoaderBuilder: (_) =>
+                  const Center(child: CircularProgressIndicator()),
+              pageLoaderBuilder: (_) => const Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              errorBuilder: (_, error) => Center(
+                child: Text(
+                  'Could not open PDF',
+                  style: AppFonts.bodyMedium(color: AppColors.muted),
                 ),
               ),
+            ),
             ),
           ),
         ),
@@ -537,10 +675,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final trimmed = _pdfStorageKey(path);
     if (trimmed.isEmpty || trimmed == _activeFilePath) return;
     _persistActiveRegionsToCache();
-    _pdfController?.dispose();
+    _detachPdfController();
     final nextController = PdfControllerPinch(
       document: PdfDocument.openFile(trimmed),
     );
+    nextController.addListener(_onPdfLayoutChanged);
     final restored = _regionsByPdfPath[trimmed];
     final restoredLines = _linesByPdfPath[trimmed];
     setState(() {
@@ -564,16 +703,21 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _selectAreaPointerDown = false;
     });
     unawaited(_refreshActiveContentAspectRatio());
+    unawaited(_loadPdfMetadata(trimmed));
   }
 
-  Offset _globalPositionToScene(Offset global) {
+  /// Pointer → canvas coordinates (PDF viewport-local or IV scene for images).
+  Offset _globalToCanvas(Offset global) {
     final ctx = _viewportCanvasKey.currentContext;
     if (ctx == null) return Offset.zero;
     final box = ctx.findRenderObject();
     if (box is! RenderBox) return Offset.zero;
     final local = box.globalToLocal(global);
+    if (_isPdfFile && _pdfController != null) return local;
     return _viewerTransform.toScene(local);
   }
+
+  Offset _globalPositionToScene(Offset global) => _globalToCanvas(global);
 
   double _interactionScale() =>
       math.max(_viewerTransform.value.getMaxScaleOnAxis(), 0.001);
@@ -641,6 +785,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   void _observeViewportGeometry(Size viewportSize) {
+    if (_usePdfViewport) return;
     if (!viewportSize.width.isFinite ||
         !viewportSize.height.isFinite ||
         viewportSize.width <= 0 ||
@@ -694,17 +839,19 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       ),
                     )
                     .toList(growable: false);
-                final mappedPins = region.pins
-                    .map(
-                      (pin) => pin.copyWith(
-                        offset: _mapPointAcrossContentRects(
-                          pin.offset,
-                          qFrom,
-                          qTo,
-                        ),
-                      ),
-                    )
-                    .toList(growable: false);
+                final mappedPins = region.pins.map((pin) {
+                  if (_usePdfViewport && pin.pdfPoint != null) {
+                    final scene = _pinAnchorScene(pin);
+                    return pin.copyWith(offset: scene);
+                  }
+                  return pin.copyWith(
+                    offset: _mapPointAcrossContentRects(
+                      pin.offset,
+                      qFrom,
+                      qTo,
+                    ),
+                  );
+                }).toList(growable: false);
                 final mappedRect = region.safeLines.isNotEmpty
                     ? _boundingRectFromPoints(
                         mappedLines.map((line) => line.start).toList(),
@@ -873,16 +1020,32 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
   }
 
-  Offset _canvasPinOffsetFromApi(double x, double y) {
-    final pixelCandidate = Offset(x, y);
-    // If API already returns canvas/document pixels, keep exact position.
-    if (x.abs() > 1 || y.abs() > 1) {
-      return pixelCandidate;
+  Offset _canvasPinOffsetFromApi(double x, double y, {int page = 1}) {
+    final engine = _pdfEngine;
+    if (engine != null) {
+      final point = engine.annotationFromApiPercent(
+        xRaw: x,
+        yRaw: y,
+        page: page,
+      );
+      if (point != null) {
+        return engine.annotationToViewport(point) ??
+            _denormalizeScenePoint(
+              point.pdfX / point.pageWidth,
+              point.pdfY / point.pageHeight,
+            );
+      }
     }
-    // API stores normalized values in landscape orientation; rotate back into
-    // the portrait frame the mobile canvas paints in before denormalizing.
-    final portraitNorm = _landscapeApiToPortraitNorm(Offset(x, y));
-    return _denormalizeScenePoint(portraitNorm.dx, portraitNorm.dy);
+    final legacy = PdfCoordinateCodec.pageCoordinateFromApi(
+      xRaw: x,
+      yRaw: y,
+      page: page,
+    );
+    if (legacy != null) {
+      return _denormalizeScenePoint(legacy.xPercent, legacy.yPercent);
+    }
+    if (x.abs() > 1 || y.abs() > 1) return Offset(x, y);
+    return _denormalizeScenePoint(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
   }
 
   void _applyPinScenePosition(_PinHit hit, Offset scene) {
@@ -894,9 +1057,14 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
     if (!_regionContainsPoint(region, clamped)) return;
     if (hit.pinIndex < 0 || hit.pinIndex >= region.pins.length) return;
+    final engine = _pdfEngine;
+    final pdfPoint = engine?.viewportToAnnotation(clamped);
     setState(() {
       final pins = List<_CanvasPin>.from(region.pins);
-      pins[hit.pinIndex] = pins[hit.pinIndex].copyWith(offset: clamped);
+      pins[hit.pinIndex] = pins[hit.pinIndex].copyWith(
+        offset: clamped,
+        pdfPoint: pdfPoint ?? pins[hit.pinIndex].pdfPoint,
+      );
       _regions[hit.regionIndex] = region.copyWith(pins: pins);
     });
   }
@@ -916,6 +1084,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _lineDraftPoints.clear();
       _lineDraftCurrent = null;
       _selectAreaPointerDown = false;
+      _regionPressIndex = null;
+      _regionPressScene = null;
     });
   }
 
@@ -924,8 +1094,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   Future<void> _onDeleteSelection() async {
-    final hasSelections = _regions.isNotEmpty;
-    if (!hasSelections) {
+    if (!_hasAnyCanvasMarkup) {
       _showTopToast('No selection to remove');
       return;
     }
@@ -944,7 +1113,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             ).copyWith(fontWeight: FontWeight.w700),
           ),
           content: Text(
-            'Are you sure you want to remove all selected areas and pins from this drawing?',
+            'This removes all selected areas, pins, and lines from this level. '
+            'Tap Submit to save the cleared drawing to the server.',
             style: AppFonts.bodyMedium(color: AppColors.muted),
           ),
           actions: [
@@ -966,19 +1136,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
 
     if (!mounted || shouldDelete != true) return;
-    setState(() {
-      _selectedTool = null;
-      _isSelectAllEnabled = false;
-      _regions.clear();
-      _activeRegionIndex = null;
-      _draftStart = null;
-      _draftCurrent = null;
-      _movingRegionIndex = null;
-      _regionMoveAnchorScene = null;
-      _selectAreaPointerDown = false;
-    });
-    _persistActiveRegionsToCache();
-    _showTopToast('All selections removed');
+    _clearAllCanvasMarkup();
+    _showTopToast('All selections removed — tap Submit to update the server');
   }
 
   Rect _normalizedRect(Offset a, Offset b) {
@@ -1015,30 +1174,176 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return lines;
   }
 
-  Path _regionPath(_PlotRegion region) {
-    final shapeLines = region.safeLines;
-    if (shapeLines.length < 3) {
-      return Path()..addRect(region.rect);
+  Rect _regionSceneRect(_PlotRegion region) {
+    final engine = _pdfEngine;
+    final verts = region.pdfVertices;
+    if (verts != null && verts.length >= 2 && engine != null) {
+      var minX = 0.0;
+      var minY = 0.0;
+      var maxX = 0.0;
+      var maxY = 0.0;
+      var any = false;
+      for (final v in verts) {
+        final p = engine.pdfToScreen(v);
+        if (p == null) continue;
+        if (!any) {
+          minX = maxX = p.dx;
+          minY = maxY = p.dy;
+          any = true;
+        } else {
+          if (p.dx < minX) minX = p.dx;
+          if (p.dy < minY) minY = p.dy;
+          if (p.dx > maxX) maxX = p.dx;
+          if (p.dy > maxY) maxY = p.dy;
+        }
+      }
+      if (any) return Rect.fromLTRB(minX, minY, maxX, maxY);
     }
-    final path = Path()
-      ..moveTo(shapeLines.first.start.dx, shapeLines.first.start.dy);
-    for (final line in shapeLines) {
-      path.lineTo(line.end.dx, line.end.dy);
+    if (region.pdfAnchorA != null &&
+        region.pdfAnchorB != null &&
+        engine != null) {
+      final a = engine.pdfToScreen(region.pdfAnchorA!);
+      final b = engine.pdfToScreen(region.pdfAnchorB!);
+      if (a != null && b != null) return Rect.fromPoints(a, b);
+    }
+    return region.rect;
+  }
+
+  List<Offset> _regionScenePolygonPoints(_PlotRegion region) {
+    final engine = _pdfEngine;
+    final verts = region.pdfVertices;
+    if (verts != null && verts.length >= 2 && engine != null) {
+      final mapped = verts
+          .map(engine.pdfToScreen)
+          .whereType<Offset>()
+          .toList(growable: false);
+      if (mapped.length == 4) {
+        return _orderScreenQuadByPolarAngle(mapped);
+      }
+      return mapped;
+    }
+    final lines = region.safeLines;
+    if (lines.length >= 3) {
+      return lines.map((l) => l.start).toList(growable: false);
+    }
+    final r = _regionSceneRect(region);
+    return [
+      r.topLeft,
+      r.topRight,
+      r.bottomRight,
+      r.bottomLeft,
+    ];
+  }
+
+  Path _regionPath(_PlotRegion region) {
+    final points = _regionScenePolygonPoints(region);
+    if (points.length < 3) {
+      return Path()..addRect(_regionSceneRect(region));
+    }
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    for (var i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
     }
     path.close();
     return path;
   }
 
-  bool _regionContainsPoint(_PlotRegion region, Offset point) {
-    return _regionPath(region).contains(point);
+  /// API expects 0–100 style scalars; keep 4 decimals so plot corners do not drift
+  /// from integer rounding on large pages / other devices.
+  double _plotCoordinateApiPercent(double fraction) {
+    final pct = (fraction * 100.0).clamp(0.0, 100.0);
+    return (pct * 10000).round() / 10000;
   }
 
-  String _shortPlotName(String? value) {
-    final text = (value ?? '').trim();
-    if (text.isEmpty) return '';
-    const maxChars = 4;
-    if (text.length <= maxChars) return text;
-    return '${text.substring(0, maxChars)}...';
+  /// Clockwise order around centroid — fixes bow-tie fill when corner order from
+  /// the server does not match screen winding.
+  List<Offset> _orderScreenQuadByPolarAngle(List<Offset> pts) {
+    if (pts.length != 4) return pts;
+    var cx = 0.0;
+    var cy = 0.0;
+    for (final p in pts) {
+      cx += p.dx;
+      cy += p.dy;
+    }
+    cx /= 4;
+    cy /= 4;
+    final sorted = List<Offset>.from(pts)
+      ..sort(
+        (a, b) => math
+            .atan2(a.dy - cy, a.dx - cx)
+            .compareTo(math.atan2(b.dy - cy, b.dx - cx)),
+      );
+    return sorted;
+  }
+
+  /// Recompute [rect] from live PDF→viewport mapping so [rect], hit tests, and
+  /// paint stay aligned after save/load and across devices.
+  _PlotRegion? _plotRegionWithSyncedRect(_PlotRegion region) {
+    final engine = _pdfEngine;
+    final verts = region.pdfVertices;
+    if (engine == null || verts == null || verts.isEmpty) return null;
+    final pts = <Offset>[];
+    for (final v in verts) {
+      final p = engine.pdfToScreen(v);
+      if (p != null) pts.add(p);
+    }
+    if (pts.length < 2) return null;
+    var minX = pts.first.dx;
+    var minY = pts.first.dy;
+    var maxX = pts.first.dx;
+    var maxY = pts.first.dy;
+    for (final p in pts.skip(1)) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return region.copyWith(rect: Rect.fromLTRB(minX, minY, maxX, maxY));
+  }
+
+  Rect _regionLabelBounds(_PlotRegion region) {
+    final points = _regionScenePolygonPoints(region);
+    if (points.isEmpty) return _regionSceneRect(region);
+    var minX = points.first.dx;
+    var minY = points.first.dy;
+    var maxX = points.first.dx;
+    var maxY = points.first.dy;
+    for (final p in points.skip(1)) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  void _assignPdfAnchorsForRect(_PlotRegion region, Rect sceneRect) {
+    final engine = _pdfEngine;
+    if (engine == null || !_usePdfViewport) return;
+    final tl = engine.screenToPdf(sceneRect.topLeft);
+    final tr = engine.screenToPdf(sceneRect.topRight);
+    final br = engine.screenToPdf(sceneRect.bottomRight);
+    final bl = engine.screenToPdf(sceneRect.bottomLeft);
+    if (tl == null || tr == null || br == null || bl == null) return;
+    region.pdfAnchorA = tl;
+    region.pdfAnchorB = br;
+    // Four PDF corners = same persistence contract as pins (avoids scene-% vs PDF-% mismatch on reload).
+    region.pdfVertices = <PdfAnnotationPoint>[tl, tr, br, bl];
+  }
+
+  void _assignPdfVerticesForPoints(_PlotRegion region, List<Offset> scenePoints) {
+    final engine = _pdfEngine;
+    if (engine == null || !_usePdfViewport) return;
+    final verts = <PdfAnnotationPoint>[];
+    for (final p in scenePoints) {
+      final ann = engine.screenToPdf(p);
+      if (ann != null) verts.add(ann);
+    }
+    if (verts.length >= 3) region.pdfVertices = verts;
+  }
+
+  bool _regionContainsPoint(_PlotRegion region, Offset point) {
+    return _regionPath(region).contains(point);
   }
 
   Future<String?> _showPlotNameBottomSheet() async {
@@ -1065,15 +1370,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       });
       return;
     }
+    final region = _PlotRegion(
+      rect: rect,
+      name: null,
+      pins: <_CanvasPin>[],
+      lines: const <_CanvasLine>[],
+    );
+    _assignPdfAnchorsForRect(region, rect);
+    final toAdd = _plotRegionWithSyncedRect(region) ?? region;
     setState(() {
-      _regions.add(
-        _PlotRegion(
-          rect: rect,
-          name: null,
-          pins: <_CanvasPin>[],
-          lines: const <_CanvasLine>[],
-        ),
-      );
+      _regions.add(toAdd);
       _activeRegionIndex = _regions.length - 1;
       _draftStart = null;
       _draftCurrent = null;
@@ -1107,19 +1413,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _handleLineToolTap(scenePoint);
       return;
     }
-    if (_selectedTool == _CanvasTool.pin) {
-      return;
-    }
-    final tappedPin = _findPinAtScenePoint(scenePoint);
-    if (tappedPin != null) {
-      if (_suppressPinTapSheetOnce) {
-        _suppressPinTapSheetOnce = false;
-      } else {
-        _openPinDetailSheet(
-          regionIndex: tappedPin.regionIndex,
-          pinIndex: tappedPin.pinIndex,
-        );
-      }
+    if (_selectedTool == _CanvasTool.pin ||
+        _selectedTool == _CanvasTool.share ||
+        _selectedTool == _CanvasTool.selectArea) {
       return;
     }
 
@@ -1155,10 +1451,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     setState(() {
       _activeRegionIndex = targetIndex;
       final region = _regions[targetIndex!];
+      final engine = _pdfEngine;
+      final pdfPoint = engine?.viewportToAnnotation(p);
+      final anchor = pdfPoint != null
+          ? (engine!.annotationToViewport(pdfPoint) ?? p)
+          : p;
       final nextPins = List<_CanvasPin>.from(region.pins)
         ..add(
           _CanvasPin(
-            offset: p,
+            offset: anchor,
+            pdfPoint: pdfPoint,
             productName: product,
             status: 'In Progress',
             statusId: _statusIdByName('In Progress'),
@@ -1192,7 +1494,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     for (var r = 0; r < _regions.length; r++) {
       final pins = _regions[r].pins;
       for (var p = 0; p < pins.length; p++) {
-        final pinAnchor = pins[p].offset;
+        final pinAnchor = _pinAnchorScene(pins[p]);
         final bodyCenter = _pinBodyCenterFromAnchor(pinAnchor);
         final d = math.min(
           (pinAnchor - scenePoint).distance,
@@ -1572,10 +1874,27 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       final loaded = <_PlotRegion>[];
       for (final plot in level.plots) {
         final name = (plot['name'] ?? '').toString().trim();
-        final coordinatePoints = _pointsFromCoordinates(plot['coordinates']);
-        final rect = _rectFromCoordinatePoints(coordinatePoints);
-        if (rect == null) continue;
-        final shapeLines = _linesFromCoordinatePoints(coordinatePoints);
+        final plotPageRaw = plot['page'];
+        final plotPage = plotPageRaw is int
+            ? plotPageRaw
+            : (plotPageRaw is num ? plotPageRaw.toInt() : 1);
+        final pdfVerts = _isPdfFile
+            ? _pdfVerticesFromPlotCoordinates(
+                plot['coordinates'],
+                page: plotPage,
+              )
+            : null;
+        final coordinatePoints = pdfVerts != null
+            ? _viewportPointsFromPdfVertices(pdfVerts)
+            : _pointsFromCoordinates(plot['coordinates']);
+        if (pdfVerts == null && coordinatePoints.length < 2) continue;
+        final rect = coordinatePoints.length >= 2
+            ? _rectFromCoordinatePoints(coordinatePoints)
+            : (pdfVerts != null ? Rect.zero : null);
+        if (rect == null && pdfVerts == null) continue;
+        final shapeLines = coordinatePoints.length >= 3
+            ? _linesFromCoordinatePoints(coordinatePoints)
+            : const <_CanvasLine>[];
         final plotIdRaw = plot['id'];
         final serverPlotId = plotIdRaw is int
             ? plotIdRaw
@@ -1596,9 +1915,26 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             final serverPinId = pinIdRaw is int
                 ? pinIdRaw
                 : int.tryParse('${pinIdRaw ?? ''}');
+            final pageRaw = plot['page'];
+            final page = pageRaw is int
+                ? pageRaw
+                : (pageRaw is num ? pageRaw.toInt() : 1);
+            final engine = _pdfEngine;
+            final pdfPoint = engine?.annotationFromApiPercent(
+                  xRaw: x,
+                  yRaw: y,
+                  page: page,
+                ) ??
+                PdfCoordinateCodec.annotationFromApi(
+                  xRaw: x,
+                  yRaw: y,
+                  page: page,
+                  cache: _pdfMetadataCache,
+                );
             pins.add(
               _CanvasPin(
-                offset: _canvasPinOffsetFromApi(x, y),
+                offset: _canvasPinOffsetFromApi(x, y, page: page),
+                pdfPoint: pdfPoint,
                 productName: '',
                 status: _statusNameById(statusId),
                 statusId: statusId,
@@ -1624,15 +1960,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             );
           }
         }
-        loaded.add(
-          _PlotRegion(
-            rect: rect,
-            name: name,
-            pins: pins,
-            lines: shapeLines,
-            serverPlotId: serverPlotId,
-          ),
+        final region = _PlotRegion(
+          rect: rect ?? Rect.zero,
+          name: name,
+          pins: pins,
+          lines: shapeLines,
+          serverPlotId: serverPlotId,
         );
+        if (pdfVerts != null) {
+          _attachPdfPlotGeometry(region, pdfVerts);
+        }
+        loaded.add(_plotRegionWithSyncedRect(region) ?? region);
       }
       if (!mounted) return;
       setState(() {
@@ -1646,6 +1984,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           _linesByPdfPath[k] = List<_CanvasLine>.from(_canvasLines);
         }
       });
+      if (mounted) setState(() {});
     } catch (_) {
       // keep UI editable even if preload fails
     }
@@ -1656,9 +1995,93 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return double.tryParse('${value ?? ''}');
   }
 
+  /// Plot polygon vertices in PDF user space (same contract as pins).
+  List<PdfAnnotationPoint>? _pdfVerticesFromPlotCoordinates(
+    dynamic rawCoordinates, {
+    int page = 1,
+  }) {
+    if (rawCoordinates is! List || rawCoordinates.isEmpty) return null;
+    final engine = _pdfEngine;
+    final verts = <PdfAnnotationPoint>[];
+    for (final point in rawCoordinates) {
+      double? x;
+      double? y;
+      if (point is List && point.length >= 2) {
+        x = _toDouble(point[0]);
+        y = _toDouble(point[1]);
+      } else if (point is Map) {
+        final map = Map<String, dynamic>.from(point);
+        x = _toDouble(map['x'] ?? map['x_coordinate'] ?? map['left']);
+        y = _toDouble(map['y'] ?? map['y_coordinate'] ?? map['top']);
+      }
+      if (x == null || y == null) continue;
+      final ann =
+          engine?.annotationFromApiPercent(xRaw: x, yRaw: y, page: page) ??
+          PdfCoordinateCodec.annotationFromApi(
+            xRaw: x,
+            yRaw: y,
+            page: page,
+            cache: _pdfMetadataCache,
+          );
+      if (ann != null) verts.add(ann);
+    }
+    return verts.length >= 2 ? verts : null;
+  }
+
+  List<Offset> _viewportPointsFromPdfVertices(List<PdfAnnotationPoint> verts) {
+    final engine = _pdfEngine;
+    if (engine == null) return const <Offset>[];
+    return verts.map(engine.pdfToScreen).whereType<Offset>().toList(growable: false);
+  }
+
+  void _attachPdfPlotGeometry(_PlotRegion region, List<PdfAnnotationPoint> verts) {
+    region.pdfVertices = verts;
+    if (verts.length >= 2) {
+      region.pdfAnchorA = verts.first;
+      region.pdfAnchorB = verts.last;
+    }
+  }
+
+  List<List<double>> _plotCoordinatesPayloadForApi(_PlotRegion region) {
+    final verts = region.pdfVertices;
+    if (verts != null && verts.isNotEmpty) {
+      return verts.map((p) {
+        final w = p.pageWidth > 0 ? p.pageWidth : 1.0;
+        final h = p.pageHeight > 0 ? p.pageHeight : 1.0;
+        return <double>[
+          _plotCoordinateApiPercent(p.pdfX / w),
+          _plotCoordinateApiPercent(p.pdfY / h),
+        ];
+      }).toList(growable: false);
+    }
+    final coordinatePoints = region.safeLines.isNotEmpty
+        ? region.safeLines.map((line) => line.start).toList(growable: false)
+        : <Offset>[
+            region.rect.topLeft,
+            region.rect.topRight,
+            region.rect.bottomRight,
+            region.rect.bottomLeft,
+          ];
+    return coordinatePoints
+        .map((p) {
+          final portraitNorm = _normalizeScenePoint(p);
+          final landscapeNorm = _portraitNormToLandscapeApi(portraitNorm);
+          return <double>[landscapeNorm.dx, landscapeNorm.dy];
+        })
+        .toList(growable: false);
+  }
+
   List<Offset> _pointsFromCoordinates(dynamic rawCoordinates) {
-    if (rawCoordinates is! List || rawCoordinates.isEmpty)
+    if (rawCoordinates is! List || rawCoordinates.isEmpty) {
       return const <Offset>[];
+    }
+    if (_usePdfViewport) {
+      final verts = _pdfVerticesFromPlotCoordinates(rawCoordinates);
+      if (verts != null) {
+        final viewportPts = _viewportPointsFromPdfVertices(verts);
+        if (viewportPts.isNotEmpty) return viewportPts;
+      }
+    }
     final points = <Offset>[];
     for (final point in rawCoordinates) {
       double? x;
@@ -1673,7 +2096,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       }
       if (x == null || y == null) continue;
       if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
-        // Rotate landscape API coords back to portrait before denormalizing.
         final portraitNorm = _landscapeApiToPortraitNorm(Offset(x, y));
         points.add(_denormalizeScenePoint(portraitNorm.dx, portraitNorm.dy));
       } else {
@@ -1753,14 +2175,24 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         final pins = <Map<String, dynamic>>[];
         for (var p = 0; p < region.pins.length; p++) {
           final pin = region.pins[p];
-          // Capture in the portrait frame the user marked, then rotate into
-          // the landscape frame the website renders against.
-          final portraitNorm = _normalizeScenePoint(pin.offset);
-          final landscapeNorm = _portraitNormToLandscapeApi(portraitNorm);
+          final engine = _pdfEngine;
+          final pdfPoint =
+              pin.pdfPoint ??
+              (engine != null
+                  ? engine.viewportToAnnotation(pin.offset)
+                  : null);
+          final apiCoords = pdfPoint != null
+              ? PdfCoordinateCodec.annotationToApi(pdfPoint)
+              : <String, dynamic>{
+                  'x_coordinate':
+                      (_normalizeScenePoint(pin.offset).dx * 100).round(),
+                  'y_coordinate':
+                      (_normalizeScenePoint(pin.offset).dy * 100).round(),
+                };
           pins.add(<String, dynamic>{
             if (pin.serverPinId != null) 'id': pin.serverPinId,
-            'x_coordinate': landscapeNorm.dx,
-            'y_coordinate': landscapeNorm.dy,
+            if (pdfPoint != null) 'page': pdfPoint.page,
+            ...apiCoords,
             'status': pin.statusId ?? _statusIdByName(pin.status),
             'group': pin.groupId,
             'item': pin.compositeItemId,
@@ -1769,21 +2201,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               'variation': pin.variation.toLowerCase() == 'yes',
           });
         }
-        final coordinatePoints = region.safeLines.isNotEmpty
-            ? region.safeLines.map((line) => line.start).toList(growable: false)
-            : <Offset>[
-                region.rect.topLeft,
-                region.rect.topRight,
-                region.rect.bottomRight,
-                region.rect.bottomLeft,
-              ];
-        final normalizedCoordinates = coordinatePoints
-            .map((p) {
-              final portraitNorm = _normalizeScenePoint(p);
-              final landscapeNorm = _portraitNormToLandscapeApi(portraitNorm);
-              return <double>[landscapeNorm.dx, landscapeNorm.dy];
-            })
-            .toList(growable: false);
+        final normalizedCoordinates = _plotCoordinatesPayloadForApi(region);
         plotsPayload.add(<String, dynamic>{
           if (region.serverPlotId != null) 'id': region.serverPlotId,
           'name': (region.name ?? '').trim().isEmpty
@@ -1806,12 +2224,21 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         plots: plotsPayload,
       );
       if (!mounted) return;
+      final clearedAll = plotsPayload.isEmpty;
       if (context.canPop()) {
         context.pop(true);
       } else {
-        await _loadSavedLevelMarkup();
+        if (clearedAll) {
+          _clearAllCanvasMarkup();
+        } else {
+          await _loadSavedLevelMarkup();
+        }
         if (!mounted) return;
-        _showTopToast('Selection and pins saved successfully');
+        _showTopToast(
+          clearedAll
+              ? 'All plots and pins removed from the server'
+              : 'Selection and pins saved successfully',
+        );
       }
     } catch (e) {
       if (!mounted) return;
@@ -1826,7 +2253,92 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
   }
 
-  Widget _buildCanvasInteractionLayer() {
+  Widget _buildCanvasStack() {
+    final pinLayerInteractive =
+        !_overlayDrawListenerActive && _selectedTool == _CanvasTool.share;
+    return Stack(
+      fit: StackFit.expand,
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(child: _buildDrawingPreview()),
+        Positioned.fill(child: _buildRegionPaintLayer()),
+        // Always paint API and user pins; draw overlay sits on top when active.
+        Positioned.fill(
+          child: _buildPinHitTargetsLayer(interactive: pinLayerInteractive),
+        ),
+        if (_selectedTool == _CanvasTool.selectArea &&
+            _uploadedPdfPaths.length > 1)
+          Positioned(
+            left: 12,
+            right: 12,
+            top: 8,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.white.withValues(alpha: 0.94),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE3E3E5)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    'Each uploaded PDF keeps its own areas and pins — use the '
+                    'tabs above the canvas to switch.',
+                    style: AppFonts.bodySmall(color: AppColors.muted),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_overlayDrawListenerActive)
+          Positioned.fill(child: _buildDrawGestureOverlay()),
+      ],
+    );
+  }
+
+  /// Pins stay visible on every tool; share tool enables tap-to-open sheet.
+  Widget _buildPinHitTargetsLayer({required bool interactive}) {
+    return Stack(
+      clipBehavior: Clip.none,
+      fit: StackFit.expand,
+      children: [
+        for (var r = 0; r < _regions.length; r++)
+          for (var i = 0; i < _regions[r].pins.length; i++)
+            Builder(
+              builder: (context) {
+                final pin = _regions[r].pins[i];
+                final anchor = _pinAnchorScene(pin);
+                final pinSize = _pinSizeForScreen(context);
+                final pointerH = _pinPointerHeightForScreen(context);
+                final pinWidget = PinView(
+                  number: i + 1,
+                  size: pinSize,
+                  pointerHeight: pointerH,
+                );
+                return Positioned(
+                  left: anchor.dx - pinSize / 2,
+                  top: anchor.dy - pinSize - pointerH,
+                  child: interactive
+                      ? GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => _openPinDetailSheet(
+                            regionIndex: r,
+                            pinIndex: i,
+                          ),
+                          child: pinWidget,
+                        )
+                      : IgnorePointer(child: pinWidget),
+                );
+              },
+            ),
+      ],
+    );
+  }
+
+  Widget _buildRegionPaintLayer() {
     final draftRect = (_draftStart != null && _draftCurrent != null)
         ? _normalizedRect(_draftStart!, _draftCurrent!)
         : null;
@@ -1840,23 +2352,42 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               child: CustomPaint(
                 painter: _RegionShapePainter(
                   path: _regionPath(_regions[r]),
-                  fillColor: _regionPalette[r % _regionPalette.length],
-                  borderColor: r == _activeRegionIndex
-                      ? const Color(0xFF1E7DD8)
-                      : const Color(0xFF9CA3AF),
-                  borderWidth: r == _activeRegionIndex ? 2 : 1.4,
+                  fillColor: _regionFillColor(r),
+                  borderColor: _regionBorderColor(r),
+                  borderWidth:
+                      r == _activeRegionIndex &&
+                          _selectedTool == _CanvasTool.selectArea
+                      ? 2.0
+                      : _regionBorderWidth,
+                  dashPattern: _regionDashPattern,
+                  crossCorners: _regionScenePolygonPoints(_regions[r]),
+                  crossColor: _regionBorderColor(r).withValues(alpha: 0.38),
+                  crossDashPattern: _regionCrossDashPattern,
                 ),
               ),
             ),
           ),
         if (draftRect != null)
-          Positioned.fromRect(
-            rect: draftRect,
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0x221E7DD8),
-                border: Border.all(color: const Color(0xFF1E7DD8), width: 2),
-                borderRadius: BorderRadius.circular(4),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _RegionShapePainter(
+                  path: Path()..addRect(draftRect),
+                  fillColor: _regionFillColor(_regions.length),
+                  borderColor: _regionBorderColor(_regions.length),
+                  borderWidth: _regionBorderWidth,
+                  dashPattern: _regionDashPattern,
+                  crossCorners: [
+                    draftRect.topLeft,
+                    draftRect.topRight,
+                    draftRect.bottomRight,
+                    draftRect.bottomLeft,
+                  ],
+                  crossColor: _regionBorderColor(
+                    _regions.length,
+                  ).withValues(alpha: 0.32),
+                  crossDashPattern: _regionCrossDashPattern,
+                ),
               ),
             ),
           ),
@@ -1880,8 +2411,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 painter: _RegionLinePainter(
                   start: draftLinePoints[i - 1],
                   end: draftLinePoints[i],
-                  color: const Color(0xFF2563EB),
-                  strokeWidth: 2.0,
+                  color: _regionBorderColor(_regions.length),
+                  strokeWidth: 1.2,
                 ),
               ),
             ),
@@ -1893,8 +2424,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 painter: _RegionLinePainter(
                   start: draftLinePoints.last,
                   end: draftLineCurrent,
-                  color: const Color(0xFF2563EB),
-                  strokeWidth: 2.0,
+                  color: _regionBorderColor(_regions.length),
+                  strokeWidth: 1.2,
                 ),
               ),
             ),
@@ -1917,43 +2448,24 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         for (var r = 0; r < _regions.length; r++) ...[
           if ((_regions[r].name ?? '').trim().isNotEmpty)
             Positioned.fromRect(
-              rect: _regions[r].rect,
+              rect: _regionLabelBounds(_regions[r]),
               child: Center(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 140),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0E0F12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Text(
-                    _shortPlotName(_regions[r].name).toUpperCase(),
-                    maxLines: 1,
+                    _regions[r].name!.trim(),
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: AppFonts.bodySmall(
-                      color: AppColors.white,
-                    ).copyWith(fontWeight: FontWeight.w700),
+                      color: _regionBorderColor(r),
+                    ).copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      height: 1.2,
+                    ),
                   ),
                 ),
-              ),
-            ),
-          for (var i = 0; i < _regions[r].pins.length; i++)
-            Positioned(
-              left:
-                  _regions[r].pins[i].offset.dx -
-                  _pinSizeForScreen(context) / 2,
-              top:
-                  _regions[r].pins[i].offset.dy -
-                  _pinSizeForScreen(context) -
-                  _pinPointerHeightForScreen(context),
-              child: PinView(
-                number: i + 1,
-                size: _pinSizeForScreen(context),
-                pointerHeight: _pinPointerHeightForScreen(context),
               ),
             ),
         ],
@@ -1961,22 +2473,135 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
   }
 
+  Widget _buildDrawGestureOverlay() {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (PointerDownEvent e) {
+        _activePointers++;
+        if (_activePointers > 1) {
+          _selectAreaPointerDown = false;
+          _cancelPinLongPressTimer();
+          _pinPointerDownHit = null;
+          _pinLongPressArmed = false;
+          _pinDraggingAfterLongPress = false;
+          _lineDraftPoints.clear();
+          _lineDraftCurrent = null;
+          _regionPressIndex = null;
+          _regionPressScene = null;
+        } else {
+          _suppressPinTapSheetOnce = false;
+          _pinLongPressArmed = false;
+          _pinDraggingAfterLongPress = false;
+          _cancelPinLongPressTimer();
+          _selectAreaPointerDown = false;
+          _regionPressIndex = null;
+          _regionPressScene = null;
+          final downScene = _globalPositionToScene(e.position);
+          if (_selectedTool == _CanvasTool.location) {
+            _pinPointerDownHit = _findPinAtScenePoint(downScene);
+            if (_pinPointerDownHit != null) {
+              _schedulePinLongPressArm(_pinPointerDownHit!);
+            }
+          } else {
+            _pinPointerDownHit = null;
+          }
+          if (_pinPointerDownHit == null &&
+              _selectedTool == _CanvasTool.selectArea) {
+            _selectAreaPointerDown = true;
+            _startSelectAreaFromScene(downScene);
+          }
+        }
+      },
+      onPointerMove: (PointerMoveEvent e) {
+        if (_activePointers != 1) return;
+        final scene = _globalPositionToScene(e.position);
+        final hit = _pinPointerDownHit;
+        if (hit != null && _pinLongPressArmed) {
+          _applyPinScenePosition(hit, scene);
+          _pinDraggingAfterLongPress = true;
+          return;
+        }
+        if (_selectAreaPointerDown) {
+          _updateSelectAreaFromScene(scene);
+          return;
+        }
+        if (_selectedTool == _CanvasTool.line &&
+            _lineDraftPoints.isNotEmpty) {
+          setState(() => _lineDraftCurrent = scene);
+        }
+      },
+      onPointerUp: (PointerUpEvent e) {
+        _cancelPinLongPressTimer();
+        final hadPinSession = _pinPointerDownHit != null;
+        final skipTapSheet =
+            hadPinSession &&
+            (_pinLongPressArmed || _pinDraggingAfterLongPress);
+        if (hadPinSession && skipTapSheet) {
+          _suppressPinTapSheetOnce = true;
+        }
+        _pinPointerDownHit = null;
+        _pinLongPressArmed = false;
+        _pinDraggingAfterLongPress = false;
+        if (_selectAreaPointerDown) {
+          _selectAreaPointerDown = false;
+          _endSelectAreaGesture();
+        }
+        if (_activePointers > 0) _activePointers--;
+      },
+      onPointerCancel: (_) {
+        _cancelPinLongPressTimer();
+        _pinPointerDownHit = null;
+        _pinLongPressArmed = false;
+        _pinDraggingAfterLongPress = false;
+        _lineDraftPoints.clear();
+        _lineDraftCurrent = null;
+        _regionPressIndex = null;
+        _regionPressScene = null;
+        if (_selectAreaPointerDown) {
+          _selectAreaPointerDown = false;
+          if (_movingRegionIndex != null) {
+            setState(() {
+              _movingRegionIndex = null;
+              _regionMoveAnchorScene = null;
+            });
+          } else {
+            setState(() {
+              _draftStart = null;
+              _draftCurrent = null;
+            });
+          }
+        }
+        if (_activePointers > 0) _activePointers--;
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: _onCanvasTapUp,
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
   void _startSelectAreaFromScene(Offset p) {
     if (_selectedTool != _CanvasTool.selectArea) return;
-    final moveIdx = _topRegionIndexContaining(p);
-    if (moveIdx != null) {
+    final hitRegion = _topRegionIndexContaining(p);
+    if (hitRegion != null) {
       setState(() {
-        _movingRegionIndex = moveIdx;
-        _regionMoveAnchorScene = p;
-        _activeRegionIndex = moveIdx;
+        _regionPressIndex = hitRegion;
+        _regionPressScene = p;
+        _activeRegionIndex = hitRegion;
+        _movingRegionIndex = null;
+        _regionMoveAnchorScene = null;
         _draftStart = null;
         _draftCurrent = null;
       });
       return;
     }
     setState(() {
+      _regionPressIndex = null;
+      _regionPressScene = null;
       _movingRegionIndex = null;
       _regionMoveAnchorScene = null;
+      _activeRegionIndex = null;
       _draftStart = p;
       _draftCurrent = p;
     });
@@ -1985,6 +2610,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   void _updateSelectAreaFromScene(Offset p) {
     if (_selectedTool != _CanvasTool.selectArea || !_selectAreaPointerDown) {
       return;
+    }
+    final pressIdx = _regionPressIndex;
+    final pressScene = _regionPressScene;
+    if (pressIdx != null &&
+        pressScene != null &&
+        _movingRegionIndex == null &&
+        (p - pressScene).distance >= _regionDragThreshold) {
+      setState(() {
+        _movingRegionIndex = pressIdx;
+        _regionMoveAnchorScene = pressScene;
+      });
     }
     final moveIdx = _movingRegionIndex;
     final anchor = _regionMoveAnchorScene;
@@ -1998,20 +2634,35 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       setState(() {
         final region = _regions[moveIdx];
         final nextRect = region.rect.shift(delta);
-        final nextPins = region.pins
-            .map((pin) => pin.copyWith(offset: pin.offset + delta))
-            .toList();
+        final nextPins = region.pins.map((pin) {
+          final anchor = _pinAnchorScene(pin);
+          final newAnchor = anchor + delta;
+          final engine = _pdfEngine;
+          final newPoint = engine?.viewportToAnnotation(newAnchor);
+          return pin.copyWith(
+            offset: newAnchor,
+            pdfPoint: newPoint ?? pin.pdfPoint,
+          );
+        }).toList();
         final nextLines = region.safeLines
             .map(
               (line) =>
                   _CanvasLine(start: line.start + delta, end: line.end + delta),
             )
             .toList();
-        _regions[moveIdx] = region.copyWith(
+        final updated = region.copyWith(
           rect: nextRect,
           pins: nextPins,
           lines: nextLines,
         );
+        _assignPdfAnchorsForRect(updated, nextRect);
+        if (nextLines.length >= 3) {
+          _assignPdfVerticesForPoints(
+            updated,
+            nextLines.map((l) => l.start).toList(),
+          );
+        }
+        _regions[moveIdx] = _plotRegionWithSyncedRect(updated) ?? updated;
         _regionMoveAnchorScene = newAnchor;
       });
       return;
@@ -2025,6 +2676,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       setState(() {
         _movingRegionIndex = null;
         _regionMoveAnchorScene = null;
+        _regionPressIndex = null;
+        _regionPressScene = null;
+      });
+      return;
+    }
+    if (_regionPressIndex != null) {
+      setState(() {
+        _activeRegionIndex = _regionPressIndex;
+        _regionPressIndex = null;
+        _regionPressScene = null;
       });
       return;
     }
@@ -2050,15 +2711,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       final polygonPoints = List<Offset>.from(points);
       final polygonLines = _polygonLinesFromPoints(polygonPoints);
       final rect = _boundingRectFromPoints(polygonPoints);
+      final region = _PlotRegion(
+        rect: rect,
+        name: null,
+        pins: <_CanvasPin>[],
+        lines: polygonLines,
+      );
+      _assignPdfVerticesForPoints(region, polygonPoints);
+      final toAdd = _plotRegionWithSyncedRect(region) ?? region;
       setState(() {
-        _regions.add(
-          _PlotRegion(
-            rect: rect,
-            name: null,
-            pins: <_CanvasPin>[],
-            lines: polygonLines,
-          ),
-        );
+        _regions.add(toAdd);
         _activeRegionIndex = _regions.length - 1;
         _lineDraftPoints.clear();
         _lineDraftCurrent = null;
@@ -2077,6 +2739,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   void _zoomBy(double factor) {
+    if (_isPdfFile && _pdfController != null) {
+      _zoomPdfBy(factor);
+      return;
+    }
     final current = _viewerTransform.value;
     final currentScale = current.getMaxScaleOnAxis();
     final nextScale = (currentScale * factor).clamp(0.5, 8.0);
@@ -2084,6 +2750,33 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     _viewerTransform.value = current.multiplied(
       Matrix4.identity()..scale(ratio),
     );
+  }
+
+  Offset _viewportCenter() {
+    final box =
+        _viewportCanvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return Offset.zero;
+    return box.size.center(Offset.zero);
+  }
+
+  void _zoomPdfBy(double multiplier) {
+    final ctrl = _pdfController;
+    if (ctrl == null || !_isPdfFile) return;
+    final viewportCenter = _viewportCenter();
+    final scenePoint = MatrixUtils.transformPoint(
+      Matrix4.inverted(ctrl.value),
+      viewportCenter,
+    );
+    final current = ctrl.zoomRatio;
+    final target = (current * multiplier).clamp(0.5, 8.0);
+    final actualMult = target / current;
+    if ((actualMult - 1).abs() < 0.001) return;
+    final next = Matrix4.identity()
+      ..translate(scenePoint.dx, scenePoint.dy)
+      ..scale(actualMult)
+      ..translate(-scenePoint.dx, -scenePoint.dy)
+      ..multiply(ctrl.value);
+    ctrl.goTo(destination: next, duration: const Duration(milliseconds: 160));
   }
 
   Future<void> _openEditLevelNameDialog() async {
@@ -2258,34 +2951,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               ],
             ),
           ),
-          if (_selectedTool == _CanvasTool.selectArea)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // if (_isSelectAllEnabled)
-                  if (_uploadedPdfPaths.length > 1)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        'Each uploaded PDF keeps its own areas and pins — use the tabs above the canvas to switch.',
-                        style: AppFonts.bodySmall(color: AppColors.muted),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          if (_selectedTool == _CanvasTool.line)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text(
-                'Line tool: tap multiple points to draw shape edges, then tap near the first point to close and create the plot area.',
-                style: AppFonts.bodySmall(color: AppColors.muted),
-              ),
-            ),
           if (_uploadedPdfPaths.isNotEmpty)
             Container(
               width: double.infinity,
@@ -2318,135 +2983,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   return Stack(
                     children: [
                       Positioned.fill(
-                        child: InteractiveViewer(
-                          transformationController: _viewerTransform,
-                          minScale: 0.5,
-                          maxScale: 8,
-                          panEnabled: _canPanCanvas,
-                          boundaryMargin: const EdgeInsets.all(80),
-                          child: SizedBox.expand(
-                            child: Stack(
-                              children: [
-                                Positioned.fill(child: _buildDrawingPreview()),
-                                Positioned.fill(
-                                  child: _buildCanvasInteractionLayer(),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned.fill(
                         key: _viewportCanvasKey,
-                        child: Listener(
-                          behavior: HitTestBehavior.translucent,
-                          onPointerDown: (PointerDownEvent e) {
-                            _activePointers++;
-                            if (_activePointers > 1) {
-                              _selectAreaPointerDown = false;
-                              _cancelPinLongPressTimer();
-                              _pinPointerDownHit = null;
-                              _pinLongPressArmed = false;
-                              _pinDraggingAfterLongPress = false;
-                              _lineDraftPoints.clear();
-                              _lineDraftCurrent = null;
-                            } else {
-                              _suppressPinTapSheetOnce = false;
-                              _pinLongPressArmed = false;
-                              _pinDraggingAfterLongPress = false;
-                              _cancelPinLongPressTimer();
-                              _selectAreaPointerDown = false;
-                              final downScene = _globalPositionToScene(
-                                e.position,
-                              );
-                              if (_selectedTool == _CanvasTool.location) {
-                                _pinPointerDownHit = _findPinAtScenePoint(
-                                  downScene,
-                                );
-                                if (_pinPointerDownHit != null) {
-                                  _schedulePinLongPressArm(_pinPointerDownHit!);
-                                }
-                              } else {
-                                _pinPointerDownHit = null;
-                              }
-                              if (_pinPointerDownHit == null &&
-                                  _selectedTool == _CanvasTool.selectArea) {
-                                _selectAreaPointerDown = true;
-                                _startSelectAreaFromScene(downScene);
-                              }
-                            }
-                          },
-                          onPointerMove: (PointerMoveEvent e) {
-                            if (_activePointers != 1) return;
-                            final scene = _globalPositionToScene(e.position);
-                            final hit = _pinPointerDownHit;
-                            if (hit != null && _pinLongPressArmed) {
-                              _applyPinScenePosition(hit, scene);
-                              _pinDraggingAfterLongPress = true;
-                              return;
-                            }
-                            if (_selectAreaPointerDown) {
-                              _updateSelectAreaFromScene(scene);
-                              return;
-                            }
-                            if (_selectedTool == _CanvasTool.line &&
-                                _lineDraftPoints.isNotEmpty) {
-                              setState(() => _lineDraftCurrent = scene);
-                            }
-                          },
-                          onPointerUp: (PointerUpEvent e) {
-                            _cancelPinLongPressTimer();
-                            final hadPinSession = _pinPointerDownHit != null;
-                            final skipTapSheet =
-                                hadPinSession &&
-                                (_pinLongPressArmed ||
-                                    _pinDraggingAfterLongPress);
-                            if (hadPinSession && skipTapSheet) {
-                              _suppressPinTapSheetOnce = true;
-                            }
-                            _pinPointerDownHit = null;
-                            _pinLongPressArmed = false;
-                            _pinDraggingAfterLongPress = false;
-                            if (_selectAreaPointerDown) {
-                              _selectAreaPointerDown = false;
-                              _endSelectAreaGesture();
-                            }
-                            if (_activePointers > 0) _activePointers--;
-                          },
-                          onPointerCancel: (_) {
-                            _cancelPinLongPressTimer();
-                            _pinPointerDownHit = null;
-                            _pinLongPressArmed = false;
-                            _pinDraggingAfterLongPress = false;
-                            _lineDraftPoints.clear();
-                            _lineDraftCurrent = null;
-                            if (_selectAreaPointerDown) {
-                              _selectAreaPointerDown = false;
-                              if (_movingRegionIndex != null) {
-                                setState(() {
-                                  _movingRegionIndex = null;
-                                  _regionMoveAnchorScene = null;
-                                });
-                              } else {
-                                setState(() {
-                                  _draftStart = null;
-                                  _draftCurrent = null;
-                                });
-                              }
-                            }
-                            if (_activePointers > 0) _activePointers--;
-                          },
-                          child: IgnorePointer(
-                            // Let InteractiveViewer fully handle pinch/multi-touch.
-                            ignoring: _activePointers > 1,
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.translucent,
-                              // Select-area moves & pin drags use [Listener] only so PanGesture never
-                              // wins the arena and cancels pointers (that was breaking pin/long-press drag).
-                              onTapUp: _onCanvasTapUp,
-                            ),
-                          ),
-                        ),
+                        child: _usePdfViewport
+                            ? _buildCanvasStack()
+                            : InteractiveViewer(
+                                transformationController: _viewerTransform,
+                                minScale: 0.5,
+                                maxScale: 8,
+                                panEnabled: _canPanCanvas,
+                                boundaryMargin: const EdgeInsets.all(80),
+                                child: _buildCanvasStack(),
+                              ),
                       ),
                       Positioned(
                         right: 12,
@@ -2772,12 +3319,53 @@ class _RegionShapePainter extends CustomPainter {
     required this.fillColor,
     required this.borderColor,
     required this.borderWidth,
+    this.dashPattern = const <double>[5, 4],
+    this.crossCorners,
+    this.crossColor,
+    this.crossDashPattern = const <double>[4, 6],
   });
 
   final Path path;
   final Color fillColor;
   final Color borderColor;
   final double borderWidth;
+  final List<double> dashPattern;
+  /// Polygon corners; dashed lines run from centroid to each corner.
+  final List<Offset>? crossCorners;
+  final Color? crossColor;
+  final List<double> crossDashPattern;
+
+  static Offset _polygonCentroid(List<Offset> points) {
+    if (points.isEmpty) return Offset.zero;
+    if (points.length == 1) return points.first;
+    if (points.length == 2) {
+      return Offset(
+        (points[0].dx + points[1].dx) / 2,
+        (points[0].dy + points[1].dy) / 2,
+      );
+    }
+    var twiceArea = 0.0;
+    var cx = 0.0;
+    var cy = 0.0;
+    for (var i = 0; i < points.length; i++) {
+      final j = (i + 1) % points.length;
+      final cross = points[i].dx * points[j].dy - points[j].dx * points[i].dy;
+      twiceArea += cross;
+      cx += (points[i].dx + points[j].dx) * cross;
+      cy += (points[i].dy + points[j].dy) * cross;
+    }
+    if (twiceArea.abs() < 1e-6) {
+      var sx = 0.0;
+      var sy = 0.0;
+      for (final p in points) {
+        sx += p.dx;
+        sy += p.dy;
+      }
+      return Offset(sx / points.length, sy / points.length);
+    }
+    final area = twiceArea / 2;
+    return Offset(cx / (6 * area), cy / (6 * area));
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2787,9 +3375,72 @@ class _RegionShapePainter extends CustomPainter {
     final stroke = Paint()
       ..color = borderColor
       ..strokeWidth = borderWidth
-      ..style = PaintingStyle.stroke;
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
     canvas.drawPath(path, fill);
-    canvas.drawPath(path, stroke);
+    _paintDashedPath(canvas, path, stroke, dashPattern);
+
+    final corners = crossCorners;
+    final crossPaint = crossColor;
+    if (corners != null &&
+        corners.length >= 2 &&
+        crossPaint != null) {
+      final crossStroke = Paint()
+        ..color = crossPaint
+        ..strokeWidth = 0.8
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+      final center = _polygonCentroid(corners);
+      for (final corner in corners) {
+        _paintDashedLine(
+          canvas,
+          center,
+          corner,
+          crossStroke,
+          crossDashPattern,
+        );
+      }
+    }
+  }
+
+  static void _paintDashedLine(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    Paint paint,
+    List<double> dash,
+  ) {
+    final path = Path()
+      ..moveTo(start.dx, start.dy)
+      ..lineTo(end.dx, end.dy);
+    _paintDashedPath(canvas, path, paint, dash);
+  }
+
+  static void _paintDashedPath(
+    Canvas canvas,
+    Path source,
+    Paint paint,
+    List<double> dash,
+  ) {
+    if (dash.isEmpty) {
+      canvas.drawPath(source, paint);
+      return;
+    }
+    for (final metric in source.computeMetrics()) {
+      var distance = 0.0;
+      var draw = true;
+      var dashIndex = 0;
+      while (distance < metric.length) {
+        final segment = dash[dashIndex % dash.length];
+        final end = (distance + segment).clamp(0.0, metric.length);
+        if (draw && end > distance) {
+          canvas.drawPath(metric.extractPath(distance, end), paint);
+        }
+        distance = end;
+        draw = !draw;
+        dashIndex++;
+      }
+    }
   }
 
   @override
@@ -2797,17 +3448,24 @@ class _RegionShapePainter extends CustomPainter {
     return oldDelegate.path != path ||
         oldDelegate.fillColor != fillColor ||
         oldDelegate.borderColor != borderColor ||
-        oldDelegate.borderWidth != borderWidth;
+        oldDelegate.borderWidth != borderWidth ||
+        oldDelegate.dashPattern != dashPattern ||
+        oldDelegate.crossCorners != crossCorners ||
+        oldDelegate.crossColor != crossColor ||
+        oldDelegate.crossDashPattern != crossDashPattern;
   }
 }
 
 class _PlotRegion {
-  const _PlotRegion({
+  _PlotRegion({
     required this.rect,
     required this.name,
     required this.pins,
     this.lines,
     this.serverPlotId,
+    this.pdfAnchorA,
+    this.pdfAnchorB,
+    this.pdfVertices,
   });
 
   final Rect rect;
@@ -2815,6 +3473,12 @@ class _PlotRegion {
   final List<_CanvasPin> pins;
   final List<_CanvasLine>? lines;
   final int? serverPlotId;
+
+  /// PDF-space corners for box plots (survives zoom on PDF).
+  PdfAnnotationPoint? pdfAnchorA;
+  PdfAnnotationPoint? pdfAnchorB;
+  List<PdfAnnotationPoint>? pdfVertices;
+
   List<_CanvasLine> get safeLines => lines ?? const <_CanvasLine>[];
 
   _PlotRegion copyWith({
@@ -2823,6 +3487,9 @@ class _PlotRegion {
     List<_CanvasPin>? pins,
     List<_CanvasLine>? lines,
     int? serverPlotId,
+    PdfAnnotationPoint? pdfAnchorA,
+    PdfAnnotationPoint? pdfAnchorB,
+    List<PdfAnnotationPoint>? pdfVertices,
   }) {
     return _PlotRegion(
       rect: rect ?? this.rect,
@@ -2830,6 +3497,9 @@ class _PlotRegion {
       pins: pins ?? this.pins,
       lines: lines ?? this.lines ?? const <_CanvasLine>[],
       serverPlotId: serverPlotId ?? this.serverPlotId,
+      pdfAnchorA: pdfAnchorA ?? this.pdfAnchorA,
+      pdfAnchorB: pdfAnchorB ?? this.pdfAnchorB,
+      pdfVertices: pdfVertices ?? this.pdfVertices,
     );
   }
 }
@@ -2844,6 +3514,7 @@ class _CanvasLine {
 class _CanvasPin {
   const _CanvasPin({
     required this.offset,
+    this.pdfPoint,
     required this.productName,
     required this.status,
     this.statusId,
@@ -2860,6 +3531,10 @@ class _CanvasPin {
   });
 
   final Offset offset;
+
+  /// True PDF user-space position; source of truth on PDF (not screen pixels).
+  final PdfAnnotationPoint? pdfPoint;
+
   final String productName;
   final String status;
   final int? statusId;
@@ -2876,6 +3551,7 @@ class _CanvasPin {
 
   _CanvasPin copyWith({
     Offset? offset,
+    PdfAnnotationPoint? pdfPoint,
     String? productName,
     String? status,
     int? statusId,
@@ -2892,6 +3568,7 @@ class _CanvasPin {
   }) {
     return _CanvasPin(
       offset: offset ?? this.offset,
+      pdfPoint: pdfPoint ?? this.pdfPoint,
       productName: productName ?? this.productName,
       status: status ?? this.status,
       statusId: statusId ?? this.statusId,

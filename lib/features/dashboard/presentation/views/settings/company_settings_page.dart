@@ -1,19 +1,28 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
-import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
+import 'package:red5/core/storage/organization_id_storage.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/features/dashboard/data/organization_settings_api_client.dart';
 import 'package:red5/features/dashboard/data/organization_settings_models.dart';
+import 'package:red5/features/dashboard/data/organization_settings_codec.dart';
+import 'package:red5/features/dashboard/data/organization_settings_write.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
@@ -81,7 +90,8 @@ class HomeCurrencySettings {
     final parts = fixed.split('.');
     final grouped = _groupInteger(int.parse(parts[0]), digitSeparator);
     if (decimalPlaces == 0) return grouped;
-    final decSep = digitSeparator.contains(',') &&
+    final decSep =
+        digitSeparator.contains(',') &&
             digitSeparator.indexOf(',') > digitSeparator.indexOf('.')
         ? ','
         : '.';
@@ -144,20 +154,62 @@ class HomeCurrencySettings {
   static String _europeanGrouping(int n) => _usGrouping(n).replaceAll(',', '.');
 }
 
-enum _AppearanceMode { light, dark }
-
-enum _NavigationStyle { sidebar, bottomBar }
-
 class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     with SingleTickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final TabController _tabController;
   final _companyNameController = TextEditingController();
+  final _websiteController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _addr1Controller = TextEditingController();
+  final _addr2Controller = TextEditingController();
+  final _cityController = TextEditingController();
+  final _stateController = TextEditingController();
+  final _pincodeController = TextEditingController();
+
+  final ImagePicker _imagePicker = ImagePicker();
+
+  String _companySize = '1-10';
+  String _country = 'United States';
+
+  static const _companySizeOptions = <String>[
+    '1-10',
+    '11-50',
+    '50-100',
+    '100-500',
+    '500+',
+  ];
+
+  static const _timezoneOptions = <String>[
+    'UTC',
+    'UTC-8 (Pacific Time)',
+    'UTC-7 (Mountain Time)',
+    'UTC-6 (Central Time)',
+    'UTC-5 (Eastern Time)',
+    'UTC+0 (GMT)',
+    'UTC+1 (Central European Time)',
+    'UTC+5:30 (India Standard Time)',
+  ];
+
+  static const _countryOptions = <String>[
+    'United States',
+    'United Kingdom',
+    'Canada',
+    'India',
+    'Australia',
+    'Germany',
+    'France',
+  ];
 
   HomeCurrencySettings _currencySettings = HomeCurrencySettings.defaults();
   String? _companyLogoUrl;
-  String _timezone = 'GMT+0';
+  Uint8List? _companyLogoBytes;
+  String? _pickedLogoFilename;
+  bool _logoPickInFlight = false;
+  String _timezone = 'UTC';
+  int? _organizationId;
   bool _loading = true;
+  bool _saving = false;
   String? _loadError;
 
   static const _homeCurrencyOptions = <String>[
@@ -167,15 +219,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     'British Pound - GBP',
   ];
 
-  static const _weekDays = <String>[
-    'Monday',
-    'Tuesday',
-    'Wednesday',
-    'Thursday',
-    'Friday',
-    'Saturday',
-    'Sunday',
-  ];
+  static const _weekDays = WorkingDaysChoices.all;
 
   final Set<int> _operationalDays = {0, 1, 2, 3, 4};
   TimeOfDay _startTime = const TimeOfDay(hour: 9, minute: 0);
@@ -193,35 +237,12 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
   static const _scheduleAccentBg = Color(0xFFEFF6FF);
   static const _innerPanelBg = Color(0xFFF3F4F6);
 
-  _AppearanceMode _appearanceMode = _AppearanceMode.light;
-  _NavigationStyle _navigationStyle = _NavigationStyle.sidebar;
-  int _selectedBrandColor = 0;
-  Color? _customBrandColor;
-
   static const _pageBackground = Color(0xFFF3F4F6);
   static const _panelBorder = Color(0xFFE5E7EB);
   static const _labelGrey = Color(0xFF6B7280);
   static const _photoCaption = Color(0xFF6B8FA8);
 
-  static const _brandPalette = <Color>[
-    Color(0xFF000000), // #000000
-    Color(0xFFF97316), // #F97316
-    Color(0xFF2563EB), // #2563EB
-    Color(0xFF059669), // #059669
-    Color(0xFF4B5563), // #4B5563
-  ];
-  static const _customSheetPalette = <Color>[
-    Color(0xFF3B82F6),
-    Color(0xFF4F46E5),
-    Color(0xFF7C3AED),
-    Color(0xFF059669),
-    Color(0xFFF59E0B),
-    Color(0xFFEA580C),
-    Color(0xFFE11D48),
-    Color(0xFF1E293B),
-    Color(0xFF38BDF8),
-    Color(0xFF84CC16),
-  ];
+  static const _saveButtonColor = Color(0xFF111827);
 
   @override
   void initState() {
@@ -230,12 +251,26 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadCompanySettings());
   }
 
-  int? _resolveOrganizationId(LocalStorage storage) {
-    final stored = storage.getInt(LocalStorageKeys.authOrganizationId);
-    if (stored != null) return stored;
-    final raw = storage.getString(LocalStorageKeys.authOrganizationId)?.trim();
-    if (raw == null || raw.isEmpty) return null;
-    return int.tryParse(raw);
+  Future<int?> _resolveOrganizationId() async {
+    final storage = ref.read(localStorageProvider);
+    var orgId = OrganizationIdStorage.read(storage);
+    if (orgId != null) return orgId;
+
+    final userId = storage.getString(LocalStorageKeys.authUserId)?.trim() ?? '';
+    if (userId.isEmpty) return null;
+
+    try {
+      final profile = await ref
+          .read(userProfileApiClientProvider)
+          .fetchProfile(userId);
+      orgId = profile.organizationDetail?.idAsInt;
+      if (orgId != null) {
+        await OrganizationIdStorage.persist(storage, orgId);
+      }
+      return orgId;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _loadCompanySettings() async {
@@ -244,7 +279,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
       _loading = true;
       _loadError = null;
     });
-    final orgId = _resolveOrganizationId(ref.read(localStorageProvider));
+    final orgId = await _resolveOrganizationId();
     if (orgId == null) {
       if (!mounted) return;
       setState(() {
@@ -258,6 +293,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
       final api = ref.read(organizationSettingsApiClientProvider);
       final settings = await api.fetchSettings(organizationId: orgId);
       if (!mounted) return;
+      _organizationId = orgId;
       _applySettings(settings);
       setState(() => _loading = false);
     } catch (e) {
@@ -281,27 +317,36 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
   }
 
   String? _breakDurationFromApi(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return null;
-    final lower = trimmed.toLowerCase();
-    for (final option in _breakDurationOptions) {
-      if (option.toLowerCase() == lower) return option;
-    }
-    final digits = int.tryParse(trimmed.replaceAll(RegExp(r'[^0-9]'), ''));
-    if (digits != null) {
-      final match = _breakDurationOptions.where(
-        (o) => o.startsWith('$digits '),
-      );
-      if (match.isNotEmpty) return match.first;
-      return '$digits minutes';
-    }
-    return null;
+    return OrganizationSettingsCodec.breakDurationLabelFromApi(
+      raw,
+      dropdownOptions: _breakDurationOptions,
+    );
+  }
+
+  List<String> _menuWithCurrent(String current, List<String> options) {
+    if (current.trim().isEmpty) return options;
+    if (options.contains(current)) return options;
+    return [current, ...options];
   }
 
   void _applySettings(OrganizationSettingsModel settings) {
     _companyNameController.text = settings.companyName;
-    _companyLogoUrl =
-        settings.companyLogo.isNotEmpty ? settings.companyLogo : null;
+    _websiteController.text = settings.websiteLink;
+    _descriptionController.text = settings.description;
+    _addr1Controller.text = settings.streetAddress;
+    _addr2Controller.text = '';
+    _cityController.text = settings.city;
+    _stateController.text = settings.state;
+    _pincodeController.text = settings.pincode;
+    if (settings.companySize.isNotEmpty) {
+      _companySize = settings.companySize;
+    }
+    if (settings.country.isNotEmpty) {
+      _country = settings.country;
+    }
+    _companyLogoUrl = settings.companyLogo.isNotEmpty
+        ? settings.companyLogo
+        : null;
 
     final start = _parseTimeOfDay(settings.startTime);
     if (start != null) _startTime = start;
@@ -338,7 +383,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
         ? 'After Value'
         : 'Before Value';
     final separator = settings.digitSeparator.isNotEmpty
-        ? settings.digitSeparator
+        ? OrganizationSettingsCodec.digitSeparatorFromApi(
+            settings.digitSeparator,
+          )
         : HomeCurrencySettings.defaultSeparatorFor(homeCurrency);
     final formatMode = settings.format.toLowerCase().contains('code')
         ? CurrencyFormatMode.code
@@ -354,11 +401,226 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     );
   }
 
+  List<String> _selectedWorkingDays() {
+    final days = _operationalDays.map((i) => _weekDays[i]).toList();
+    days.sort((a, b) => _weekDays.indexOf(a).compareTo(_weekDays.indexOf(b)));
+    return days;
+  }
+
+  String _formatTimeForApi(TimeOfDay time) => '${_formatTime(time)}:00';
+
+  OrganizationSettingsWrite _buildUpdatePayload() {
+    return OrganizationSettingsWrite(
+      companyName: _companyNameController.text.trim(),
+      companySize: _companySize,
+      websiteLink: _websiteController.text.trim(),
+      description: _descriptionController.text.trim(),
+      timezone: _timezone,
+      streetAddress: _addr1Controller.text.trim(),
+      city: _cityController.text.trim(),
+      state: _stateController.text.trim(),
+      pincode: _pincodeController.text.trim(),
+      country: _country,
+      workingDays: _selectedWorkingDays(),
+      startTime: _formatTimeForApi(_startTime),
+      endTime: _formatTimeForApi(_endTime),
+      breakDuration: OrganizationSettingsCodec.breakDurationToApi(
+        _breakDuration,
+      ),
+      currency: _currencySettings.currencyCode,
+      format: _currencySettings.formatMode == CurrencyFormatMode.code
+          ? 'code'
+          : 'symbol',
+      symbol: _currencySettings.symbol,
+      symbolPosition: _currencySettings.symbolBefore ? 'before' : 'after',
+      digitSeparator: _currencySettings.digitSeparator,
+      decimalPlaces: _currencySettings.decimalPlaces,
+    );
+  }
+
+  Future<void> _saveChanges() async {
+    final orgId = _organizationId;
+    if (orgId == null) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text(
+            'Organization not found. Sign out and sign in again to continue.',
+          ),
+        ),
+      );
+      return;
+    }
+    final companyName = _companyNameController.text.trim();
+    if (companyName.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Company name is required.')),
+      );
+      return;
+    }
+    if (_country.trim().isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text(AppStrings.companySettingsCountryRequired),
+        ),
+      );
+      return;
+    }
+    if (_pincodeController.text.trim().isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text(AppStrings.companySettingsPincodeRequired),
+        ),
+      );
+      return;
+    }
+    if (_saving) return;
+
+    FocusScope.of(context).unfocus();
+    setState(() => _saving = true);
+    try {
+      final api = ref.read(organizationSettingsApiClientProvider);
+      final updated = await api.updateSettings(
+        organizationId: orgId,
+        body: _buildUpdatePayload(),
+        companyLogoBytes: _companyLogoBytes,
+        companyLogoFileName: _pickedLogoFilename ?? 'company_logo.jpg',
+      );
+      if (!mounted) return;
+      _applySettings(updated);
+      _companyLogoBytes = null;
+      _pickedLogoFilename = null;
+      context.showTopSnackBar(
+        const SnackBar(content: Text(AppStrings.companySettingsSaved)),
+      );
+    } on DioException catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromDioException(
+              e,
+              genericFallback: AppStrings.apiErrorSaveCompanySettings,
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: AppStrings.apiErrorSaveCompanySettings,
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
     _companyNameController.dispose();
+    _websiteController.dispose();
+    _descriptionController.dispose();
+    _addr1Controller.dispose();
+    _addr2Controller.dispose();
+    _cityController.dispose();
+    _stateController.dispose();
+    _pincodeController.dispose();
     super.dispose();
+  }
+
+  InputDecoration _orgFieldDecoration() {
+    return InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: AppColors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.inkStrong, width: 1.5),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+      ),
+    );
+  }
+
+  TextStyle _orgFieldTextStyle() {
+    return AppFonts.bodyMedium(
+      color: AppColors.inkStrong,
+    ).copyWith(fontWeight: FontWeight.w500, fontSize: 15);
+  }
+
+  Widget _orgLabel(String text, {bool required = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: RichText(
+        text: TextSpan(
+          style: AppFonts.labelMedium(color: AppColors.inkStrong).copyWith(
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+            letterSpacing: 0.2,
+          ),
+          children: [
+            TextSpan(text: text),
+            if (required)
+              const TextSpan(
+                text: ' *',
+                style: TextStyle(color: Color(0xFFE53935)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _orgDropdown({
+    required String value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final menu = _menuWithCurrent(value, items);
+    final effective = menu.contains(value) ? value : menu.first;
+    return InputDecorator(
+      decoration: _orgFieldDecoration(),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          isExpanded: true,
+          isDense: true,
+          value: effective,
+          icon: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: Color(0xFF6B7280),
+          ),
+          style: _orgFieldTextStyle(),
+          dropdownColor: AppColors.white,
+          items: menu
+              .map(
+                (e) => DropdownMenuItem<String>(
+                  value: e,
+                  child: Text(e, style: _orgFieldTextStyle()),
+                ),
+              )
+              .toList(),
+          onChanged: _saving ? null : onChanged,
+        ),
+      ),
+    );
   }
 
   Future<void> _openChangeHomeCurrency() async {
@@ -419,21 +681,202 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     );
   }
 
-  Widget _smallHeading(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title.toUpperCase(),
-        style: AppFonts.labelMedium(color: AppColors.inkStrong).copyWith(
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.4,
-          fontSize: 13,
-        ),
-      ),
+  ImageProvider? _companyLogoImageProvider() {
+    if (_companyLogoBytes != null) {
+      return MemoryImage(_companyLogoBytes!);
+    }
+    final url = _companyLogoUrl;
+    if (url != null && url.isNotEmpty) return NetworkImage(url);
+    return null;
+  }
+
+  String _logoPickErrorMessage(Object e) {
+    final s = e.toString().toLowerCase();
+    if (s.contains('camera')) return 'Could not open camera.';
+    if (s.contains('photo') ||
+        s.contains('gallery') ||
+        s.contains('permission') ||
+        s.contains('denied')) {
+      return 'Photos access was denied or unavailable.';
+    }
+    return 'Could not select image.';
+  }
+
+  Future<void> _pickCompanyLogo(ImageSource source) async {
+    if (_logoPickInFlight || _saving || !mounted) return;
+    setState(() => _logoPickInFlight = true);
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 82,
+        maxWidth: 2048,
+        maxHeight: 2048,
+      );
+      if (!mounted || picked == null) return;
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+      final name = picked.name.trim();
+      setState(() {
+        _companyLogoBytes = bytes;
+        _pickedLogoFilename = name.isEmpty ? 'company_logo.jpg' : name;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      context.showTopSnackBar(
+        SnackBar(content: Text(_logoPickErrorMessage(e))),
+      );
+    } finally {
+      if (mounted) setState(() => _logoPickInFlight = false);
+    }
+  }
+
+  void _showCompanyLogoOptionsSheet() {
+    if (_saving) return;
+    FocusScope.of(context).unfocus();
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x1A000000),
+                  blurRadius: 16,
+                  offset: Offset(0, -4),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE2E2E4),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 16, 22, 6),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Company logo',
+                        style: AppFonts.titleMedium(
+                          color: AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w700, fontSize: 17),
+                      ),
+                    ),
+                  ),
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: Color(0xFFEAEAEC),
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 4,
+                    ),
+                    leading: Icon(
+                      Icons.photo_camera_outlined,
+                      color: AppColors.inkStrong,
+                    ),
+                    title: Text(
+                      'Take photo',
+                      style: AppFonts.bodyLarge(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500),
+                    ),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      await _pickCompanyLogo(ImageSource.camera);
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 4,
+                    ),
+                    leading: Icon(
+                      Icons.photo_library_outlined,
+                      color: AppColors.inkStrong,
+                    ),
+                    title: Text(
+                      'Choose from gallery',
+                      style: AppFonts.bodyLarge(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500),
+                    ),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      await _pickCompanyLogo(ImageSource.gallery);
+                    },
+                  ),
+                  if (_companyLogoBytes != null ||
+                      (_companyLogoUrl?.isNotEmpty ?? false))
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 4,
+                      ),
+                      leading: const Icon(
+                        Icons.delete_outline_rounded,
+                        color: Color(0xFFE53935),
+                      ),
+                      title: Text(
+                        'Remove logo',
+                        style: AppFonts.bodyLarge(
+                          color: const Color(0xFFE53935),
+                        ).copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        setState(() {
+                          _companyLogoBytes = null;
+                          _pickedLogoFilename = null;
+                          _companyLogoUrl = null;
+                        });
+                      },
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: Text(
+                          'Cancel',
+                          style: AppFonts.bodyMedium(
+                            color: _labelGrey,
+                          ).copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
   Widget _profilePhotoPicker() {
+    final logo = _companyLogoImageProvider();
+    final hasLogo = logo != null;
+
     return Center(
       child: Column(
         children: [
@@ -450,32 +893,54 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                     color: const Color(0xFFD1D5DB),
                     dashPattern: const [5, 4],
                   ),
-                  child: Container(
+                  child: SizedBox(
                     width: 124,
                     height: 124,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Color(0xFFF5F6F8),
-                    ),
-                    child: _companyLogoUrl != null
-                        ? ClipOval(
-                            child: Image.network(
-                              _companyLogoUrl!,
-                              width: 124,
-                              height: 124,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Icon(
-                                Icons.business_rounded,
-                                size: 46,
-                                color: AppColors.mutedLight,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        DecoratedBox(
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFFF5F6F8),
+                          ),
+                          child: hasLogo
+                              ? ClipOval(
+                                  child: Image(
+                                    image: logo,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stack) =>
+                                        Icon(
+                                          Icons.business_rounded,
+                                          size: 46,
+                                          color: AppColors.mutedLight,
+                                        ),
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.business_rounded,
+                                  size: 46,
+                                  color: AppColors.mutedLight,
+                                ),
+                        ),
+                        if (_logoPickInFlight)
+                          ClipOval(
+                            child: ColoredBox(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              child: const Center(
+                                child: SizedBox(
+                                  width: 28,
+                                  height: 28,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                  ),
+                                ),
                               ),
                             ),
-                          )
-                        : Icon(
-                            Icons.business_rounded,
-                            size: 46,
-                            color: AppColors.mutedLight,
                           ),
+                      ],
+                    ),
                   ),
                 ),
                 Positioned(
@@ -487,7 +952,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       customBorder: const CircleBorder(),
-                      onTap: () {},
+                      onTap: _saving || _logoPickInFlight
+                          ? null
+                          : _showCompanyLogoOptionsSheet,
                       child: const Padding(
                         padding: EdgeInsets.all(8),
                         child: Icon(
@@ -503,317 +970,31 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            'Company Logo',
-            style: AppFonts.bodyMedium(
-              color: _photoCaption,
-            ).copyWith(fontWeight: FontWeight.w500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _appearanceToggle() {
-    final selectedBg = AppColors.white;
-    final baseBg = const Color(0xFFE5E7EB);
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: baseBg,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _AppearanceButton(
-              icon: Icons.wb_sunny_rounded,
-              label: 'Light',
-              selected: _appearanceMode == _AppearanceMode.light,
-              selectedColor: _brandPalette[1],
-              selectedBg: selectedBg,
-              onTap: () =>
-                  setState(() => _appearanceMode = _AppearanceMode.light),
-            ),
-          ),
-          Expanded(
-            child: _AppearanceButton(
-              icon: Icons.nightlight_round,
-              label: 'Dark',
-              selected: _appearanceMode == _AppearanceMode.dark,
-              selectedColor: _brandPalette[4],
-              selectedBg: selectedBg,
-              onTap: () =>
-                  setState(() => _appearanceMode = _AppearanceMode.dark),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _brandColorRow() {
-    return Row(
-      children: [
-        for (var i = 0; i < _brandPalette.length; i++)
-          Padding(
-            padding: EdgeInsets.only(
-              right: i == _brandPalette.length - 1 ? 0 : 10,
-            ),
-            child: InkWell(
-              onTap: () => setState(() => _selectedBrandColor = i),
-              borderRadius: BorderRadius.circular(999),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: _brandPalette[i],
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: _selectedBrandColor == i
-                        ? Colors.black
-                        : Colors.transparent,
-                    width: 2,
-                  ),
-                ),
-                child: _selectedBrandColor == i
-                    ? Icon(
-                        Icons.check_rounded,
-                        size: 18,
-                        color: i == 0 ? Colors.white : Colors.black,
-                      )
-                    : null,
-              ),
-            ),
-          ),
-        if (_customBrandColor != null) ...[
-          const SizedBox(width: 10),
-          InkWell(
-            onTap: () {},
-            borderRadius: BorderRadius.circular(999),
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: _customBrandColor,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.black, width: 2),
-              ),
-              child: const Icon(
-                Icons.check_rounded,
-                size: 18,
-                color: Colors.white,
+          GestureDetector(
+            onTap: _saving || _logoPickInFlight
+                ? null
+                : _showCompanyLogoOptionsSheet,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                _companyLogoBytes != null
+                    ? 'Logo selected — save to upload'
+                    : 'Upload Profile Photo (Optional)',
+                textAlign: TextAlign.center,
+                style: AppFonts.bodyMedium(
+                  color: _photoCaption,
+                ).copyWith(fontWeight: FontWeight.w500),
               ),
             ),
           ),
         ],
-        const SizedBox(width: 8),
-        InkWell(
-          onTap: _showBrandColorBottomSheet,
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFE5E7EB)),
-            ),
-            child: const Icon(Icons.add, color: Color(0xFF9CA3AF), size: 18),
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _hexOf(Color color) {
-    final hex = color.value.toRadixString(16).padLeft(8, '0').toUpperCase();
-    return '#${hex.substring(2)}';
-  }
-
-  void _showBrandColorBottomSheet() {
-    final initialColor = _brandPalette[_selectedBrandColor];
-    final initialIndex = _customSheetPalette.indexWhere(
-      (c) => c.value == initialColor.value,
-    );
-    var localIndex = initialIndex < 0 ? 0 : initialIndex;
-    var selectedColor = _customSheetPalette[localIndex];
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setBottomState) {
-            return SafeArea(
-              top: false,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD1D5DB),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Text(
-                          'Brand Color',
-                          style: AppFonts.titleMedium(
-                            color: AppColors.inkStrong,
-                          ).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const Spacer(),
-                        InkWell(
-                          onTap: () => Navigator.of(ctx).pop(),
-                          borderRadius: BorderRadius.circular(999),
-                          child: const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Icon(
-                              Icons.close_rounded,
-                              color: Color(0xFF94A3B8),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF3F4F6),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: selectedColor,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            _hexOf(selectedColor),
-                            style: AppFonts.bodyMedium(
-                              color: AppColors.inkStrong,
-                            ).copyWith(fontWeight: FontWeight.w600),
-                          ),
-                          const Spacer(),
-                          Text(
-                            'CUSTOM',
-                            style:
-                                AppFonts.labelSmall(
-                                  color: const Color(0xFF2563EB),
-                                ).copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.4,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        for (var i = 0; i < _customSheetPalette.length; i++)
-                          InkWell(
-                            onTap: () {
-                              setBottomState(() {
-                                localIndex = i;
-                                selectedColor = _customSheetPalette[i];
-                              });
-                            },
-                            borderRadius: BorderRadius.circular(12),
-                            child: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: _customSheetPalette[i],
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: i == localIndex
-                                      ? const Color(0xFF93C5FD)
-                                      : Colors.transparent,
-                                  width: 3,
-                                ),
-                              ),
-                              child: i == localIndex
-                                  ? const Icon(
-                                      Icons.check_rounded,
-                                      color: Colors.white,
-                                    )
-                                  : null,
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: FilledButton(
-                        onPressed: () {
-                          final color = _customSheetPalette[localIndex];
-                          setState(() {
-                            final existingIndex = _brandPalette.indexWhere(
-                              (c) => c.value == color.value,
-                            );
-                            if (existingIndex >= 0) {
-                              _selectedBrandColor = existingIndex;
-                              _customBrandColor = null;
-                            } else {
-                              _customBrandColor = color;
-                            }
-                          });
-                          Navigator.of(ctx).pop();
-                        },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF0F172A),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Text(
-                          'Apply Color',
-                          style: AppFonts.labelLarge(
-                            color: Colors.white,
-                          ).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+      ),
     );
   }
 
   Widget _buildOrganisationDetailsTab() {
+    final enabled = !_saving;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -821,46 +1002,110 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
         const SizedBox(height: 4),
         _profilePhotoPicker(),
         const SizedBox(height: 20),
-        _smallHeading('Company Name'),
+        _orgLabel('Company Name'),
         AppTextField(
           controller: _companyNameController,
           hintText: '',
-          textStyle: AppFonts.bodyLarge(
-            color: AppColors.inkStrong,
-          ).copyWith(fontWeight: FontWeight.w500),
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
           hintStyle: const TextStyle(color: Colors.transparent, height: 0),
         ),
-        const SizedBox(height: 22),
-        const Divider(color: _panelBorder, height: 1),
-        const SizedBox(height: 14),
-        _sectionHeader('VISUAL THEME'),
-        _smallHeading('Appearance'),
-        _appearanceToggle(),
-        const SizedBox(height: 18),
-        _smallHeading('Brand Color'),
-        _brandColorRow(),
-        const SizedBox(height: 22),
-        const Divider(color: _panelBorder, height: 1),
-        const SizedBox(height: 14),
-        _sectionHeader('PLATFORM LAYOUT'),
-        _smallHeading('Navigation Style'),
-        _NavigationTile(
-          selected: _navigationStyle == _NavigationStyle.sidebar,
-          title: 'Sidebar Navigation',
-          subtitle: 'Traditional vertical menu',
-          icon: Icons.apps_rounded,
-          onTap: () =>
-              setState(() => _navigationStyle = _NavigationStyle.sidebar),
+        const SizedBox(height: 16),
+        _orgLabel('Company Size'),
+        _orgDropdown(
+          value: _companySize,
+          items: _companySizeOptions,
+          onChanged: (v) {
+            if (v != null) setState(() => _companySize = v);
+          },
         ),
-        const SizedBox(height: 12),
-        _NavigationTile(
-          selected: _navigationStyle == _NavigationStyle.bottomBar,
-          title: 'Bottom Bar Menu',
-          subtitle: 'Compact tab style for mobile',
-          icon: Icons.space_dashboard_rounded,
-          onTap: () =>
-              setState(() => _navigationStyle = _NavigationStyle.bottomBar),
+        const SizedBox(height: 16),
+        _orgLabel('Website URL'),
+        AppTextField(
+          controller: _websiteController,
+          hintText: AppStrings.companySettingsWebsiteHint,
+          keyboardType: TextInputType.url,
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
         ),
+        const SizedBox(height: 16),
+        _orgLabel('Timezone'),
+        _orgDropdown(
+          value: _timezone,
+          items: _timezoneOptions,
+          onChanged: (v) {
+            if (v != null) setState(() => _timezone = v);
+          },
+        ),
+        const SizedBox(height: 16),
+        _orgLabel('Company Description'),
+        TextField(
+          controller: _descriptionController,
+          enabled: enabled,
+          maxLines: 5,
+          minLines: 4,
+          style: _orgFieldTextStyle(),
+          decoration: _orgFieldDecoration().copyWith(
+            hintText: AppStrings.companySettingsDescriptionHint,
+            hintStyle: AppFonts.bodyMedium(
+              color: _labelGrey,
+            ).copyWith(fontWeight: FontWeight.w400, fontSize: 15),
+            alignLabelWithHint: true,
+          ),
+        ),
+        const SizedBox(height: 28),
+        _sectionHeader('ADDRESS'),
+        const SizedBox(height: 4),
+        _orgLabel('Address Line 1'),
+        AppTextField(
+          controller: _addr1Controller,
+          hintText: AppStrings.companySettingsAddress1Hint,
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
+        ),
+        const SizedBox(height: 16),
+        _orgLabel('Address Line 2'),
+        AppTextField(
+          controller: _addr2Controller,
+          hintText: AppStrings.companySettingsAddress2Hint,
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
+        ),
+        const SizedBox(height: 16),
+        _orgLabel('Country', required: true),
+        _orgDropdown(
+          value: _country,
+          items: _countryOptions,
+          onChanged: (v) {
+            if (v != null) setState(() => _country = v);
+          },
+        ),
+        const SizedBox(height: 16),
+        _orgLabel('City'),
+        AppTextField(
+          controller: _cityController,
+          hintText: AppStrings.companySettingsCityHint,
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
+        ),
+        const SizedBox(height: 16),
+        _orgLabel('State / Province'),
+        AppTextField(
+          controller: _stateController,
+          hintText: AppStrings.companySettingsStateHint,
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
+        ),
+        const SizedBox(height: 16),
+        _orgLabel('Postal Code', required: true),
+        AppTextField(
+          controller: _pincodeController,
+          hintText: AppStrings.companySettingsPincodeHint,
+          keyboardType: TextInputType.text,
+          enabled: enabled,
+          textStyle: _orgFieldTextStyle(),
+        ),
+        const SizedBox(height: 8),
       ],
     );
   }
@@ -877,10 +1122,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
 
   Future<void> _pickTime({required bool isStart}) async {
     final initial = isStart ? _startTime : _endTime;
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: initial,
-    );
+    final picked = await showTimePicker(context: context, initialTime: initial);
     if (picked == null || !mounted) return;
     setState(() {
       if (isStart) {
@@ -909,11 +1151,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
   Widget _scheduleSectionLabel(String text) {
     return Text(
       text,
-      style: AppFonts.labelMedium(color: _labelGrey).copyWith(
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.6,
-        fontSize: 11,
-      ),
+      style: AppFonts.labelMedium(
+        color: _labelGrey,
+      ).copyWith(fontWeight: FontWeight.w700, letterSpacing: 0.6, fontSize: 11),
     );
   }
 
@@ -925,15 +1165,17 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () {
-          setState(() {
-            if (selected) {
-              _operationalDays.remove(index);
-            } else {
-              _operationalDays.add(index);
-            }
-          });
-        },
+        onTap: _saving
+            ? null
+            : () {
+                setState(() {
+                  if (selected) {
+                    _operationalDays.remove(index);
+                  } else {
+                    _operationalDays.add(index);
+                  }
+                });
+              },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
@@ -965,10 +1207,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                   label,
                   style: AppFonts.bodyMedium(
                     color: selected ? _scheduleAccent : _labelGrey,
-                  ).copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
+                  ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
                 ),
               ),
             ],
@@ -995,10 +1234,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
               Expanded(
                 child: Text(
                   timeText,
-                  style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
+                  style: AppFonts.bodyMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
                 ),
               ),
               const Icon(
@@ -1018,18 +1256,16 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
       children: [
         Text(
           'Working Schedule',
-          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w700,
-            fontSize: 20,
-          ),
+          style: AppFonts.titleMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w700, fontSize: 20),
         ),
         const SizedBox(height: 6),
         Text(
           'Current Timezone: $_timezone',
-          style: AppFonts.bodyMedium(color: _labelGrey).copyWith(
-            fontWeight: FontWeight.w500,
-            fontSize: 14,
-          ),
+          style: AppFonts.bodyMedium(
+            color: _labelGrey,
+          ).copyWith(fontWeight: FontWeight.w500, fontSize: 14),
         ),
         const SizedBox(height: 16),
         const Divider(height: 1, color: _panelBorder),
@@ -1045,10 +1281,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
               runSpacing: spacing,
               children: [
                 for (var i = 0; i < _weekDays.length; i++)
-                  SizedBox(
-                    width: itemWidth,
-                    child: _operationalDayChip(i),
-                  ),
+                  SizedBox(width: itemWidth, child: _operationalDayChip(i)),
               ],
             );
           },
@@ -1083,17 +1316,13 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                   Icons.keyboard_arrow_down_rounded,
                   color: Color(0xFF6B7280),
                 ),
-                style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 16,
-                ),
+                style: AppFonts.bodyMedium(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
                 dropdownColor: AppColors.white,
                 items: _breakDurationOptions
                     .map(
-                      (e) => DropdownMenuItem<String>(
-                        value: e,
-                        child: Text(e),
-                      ),
+                      (e) => DropdownMenuItem<String>(value: e, child: Text(e)),
                     )
                     .toList(),
                 onChanged: (v) {
@@ -1110,10 +1339,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
   Widget _currenciesSectionTitle(String title) {
     return Text(
       title,
-      style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-        fontWeight: FontWeight.w700,
-        fontSize: 16,
-      ),
+      style: AppFonts.bodyMedium(
+        color: AppColors.inkStrong,
+      ).copyWith(fontWeight: FontWeight.w700, fontSize: 16),
     );
   }
 
@@ -1143,8 +1371,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                     ),
                     child: Text(
                       _currencySymbol,
-                      style: AppFonts.titleMedium(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w700, fontSize: 22),
+                      style: AppFonts.titleMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w700, fontSize: 22),
                     ),
                   ),
                   const SizedBox(width: 14),
@@ -1161,10 +1390,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                         const SizedBox(height: 2),
                         Text(
                           'Your primary currency',
-                          style: AppFonts.bodySmall(color: _labelGrey).copyWith(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 13,
-                          ),
+                          style: AppFonts.bodySmall(
+                            color: _labelGrey,
+                          ).copyWith(fontWeight: FontWeight.w500, fontSize: 13),
                         ),
                       ],
                     ),
@@ -1192,16 +1420,16 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
             children: [
               Text(
                 _formatSample,
-                style: AppFonts.headlineSmall(color: AppColors.inkStrong)
-                    .copyWith(fontWeight: FontWeight.w800, fontSize: 26),
+                style: AppFonts.headlineSmall(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w800, fontSize: 26),
               ),
               const SizedBox(height: 6),
               Text(
                 'Current format',
-                style: AppFonts.bodySmall(color: _labelGrey).copyWith(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 13,
-                ),
+                style: AppFonts.bodySmall(
+                  color: _labelGrey,
+                ).copyWith(fontWeight: FontWeight.w500, fontSize: 13),
               ),
               const SizedBox(height: 16),
               SizedBox(
@@ -1218,9 +1446,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                   ),
                   child: Text(
                     'Customize',
-                    style: AppFonts.labelLarge(color: Colors.white).copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: AppFonts.labelLarge(
+                      color: Colors.white,
+                    ).copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),
@@ -1233,7 +1461,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
 
   Widget _buildTabContent() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppSkeletonScreenBody(scrollable: true, toastBlockCount: 5);
     }
     if (_loadError != null) {
       return Center(
@@ -1257,22 +1485,25 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
         ),
       );
     }
-    return TabBarView(
-      controller: _tabController,
-      children: [
-        ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-          children: [_buildOrganisationDetailsTab()],
-        ),
-        ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-          children: [_buildScheduleTab()],
-        ),
-        ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-          children: [_buildCurrenciesTab()],
-        ),
-      ],
+    return IgnorePointer(
+      ignoring: _saving,
+      child: TabBarView(
+        controller: _tabController,
+        children: [
+          ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+            children: [_buildOrganisationDetailsTab()],
+          ),
+          ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+            children: [_buildScheduleTab()],
+          ),
+          ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+            children: [_buildCurrenciesTab()],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1306,6 +1537,22 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
           ).copyWith(fontWeight: FontWeight.w700),
         ),
         centerTitle: true,
+        // actions: [
+        //   IconButton(
+        //     onPressed: _loading || _saving
+        //         ? null
+        //         : () {
+        //             if (_tabController.index != 0) {
+        //               _tabController.animateTo(0);
+        //             }
+        //           },
+        //     icon: const Icon(
+        //       Icons.edit_outlined,
+        //       color: AppColors.inkStrong,
+        //     ),
+        //     tooltip: 'Edit organisation details',
+        //   ),
+        // ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(49),
           child: Column(
@@ -1319,10 +1566,12 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                 indicatorWeight: 3,
                 labelColor: AppColors.inkStrong,
                 unselectedLabelColor: _labelGrey,
-                labelStyle: AppFonts.bodyMedium(color: AppColors.inkStrong)
-                    .copyWith(fontWeight: FontWeight.w600, fontSize: 15),
-                unselectedLabelStyle: AppFonts.bodyMedium(color: _labelGrey)
-                    .copyWith(fontWeight: FontWeight.w500, fontSize: 15),
+                labelStyle: AppFonts.bodyMedium(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w600, fontSize: 15),
+                unselectedLabelStyle: AppFonts.bodyMedium(
+                  color: _labelGrey,
+                ).copyWith(fontWeight: FontWeight.w500, fontSize: 15),
                 tabs: const [
                   Tab(text: 'Organisation Details'),
                   Tab(text: 'Schedule'),
@@ -1353,165 +1602,38 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
                 width: double.infinity,
                 height: 52,
                 child: FilledButton(
-                  onPressed: () {},
+                  onPressed: _loading || _saving || _loadError != null
+                      ? null
+                      : _saveChanges,
                   style: FilledButton.styleFrom(
-                    backgroundColor: _brandPalette[0],
+                    backgroundColor: _saveButtonColor,
                     foregroundColor: Colors.white,
+                    disabledBackgroundColor: _saveButtonColor.withValues(
+                      alpha: 0.45,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
-                  child: Text(
-                    'Save Changes',
-                    style: AppFonts.labelLarge(
-                      color: Colors.white,
-                    ).copyWith(fontWeight: FontWeight.w700),
-                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          'Save Changes',
+                          style: AppFonts.labelLarge(
+                            color: Colors.white,
+                          ).copyWith(fontWeight: FontWeight.w700),
+                        ),
                 ),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AppearanceButton extends StatelessWidget {
-  const _AppearanceButton({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.selectedColor,
-    required this.selectedBg,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final Color selectedColor;
-  final Color selectedBg;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? selectedBg : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 17,
-                color: selected ? selectedColor : const Color(0xFF6B7280),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: AppFonts.bodyMedium(
-                  color: selected
-                      ? AppColors.inkStrong
-                      : const Color(0xFF6B7280),
-                ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavigationTile extends StatelessWidget {
-  const _NavigationTile({
-    required this.selected,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final bool selected;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? Colors.white : const Color(0xFFF3F4F6),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? Colors.black : const Color(0xFFE5E7EB),
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF3F4F6),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: const Color(0xFF6B7280), size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: AppFonts.bodyMedium(
-                        color: AppColors.inkStrong,
-                      ).copyWith(fontWeight: FontWeight.w700, fontSize: 14),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: AppFonts.bodySmall(
-                        color: const Color(0xFF6B7280),
-                      ).copyWith(fontWeight: FontWeight.w500, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: selected ? Colors.black : Colors.transparent,
-                  border: Border.all(
-                    color: selected ? Colors.black : const Color(0xFFD1D5DB),
-                    width: 1.8,
-                  ),
-                ),
-                child: selected
-                    ? const Icon(Icons.circle, size: 6, color: Colors.white)
-                    : null,
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1700,10 +1822,7 @@ class _SettingsDrawer extends StatelessWidget {
 }
 
 class _ChangeHomeCurrencyPage extends StatefulWidget {
-  const _ChangeHomeCurrencyPage({
-    required this.initial,
-    required this.options,
-  });
+  const _ChangeHomeCurrencyPage({required this.initial, required this.options});
 
   final HomeCurrencySettings initial;
   final List<String> options;
@@ -1719,10 +1838,7 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
   static const _fieldFill = Color(0xFFF9FAFB);
   static const _toggleBg = Color(0xFFE5E7EB);
 
-  static const _symbolPositions = <String>[
-    'Before Value',
-    'After Value',
-  ];
+  static const _symbolPositions = <String>['Before Value', 'After Value'];
 
   static const _digitSeparators = <String>[
     '12,34,567.89',
@@ -1752,8 +1868,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
         ? s.digitSeparator
         : _digitSeparators.first;
     _symbolController = TextEditingController(text: s.symbol);
-    _decimalPlacesController =
-        TextEditingController(text: s.decimalPlaces.toString());
+    _decimalPlacesController = TextEditingController(
+      text: s.decimalPlaces.toString(),
+    );
   }
 
   @override
@@ -1764,15 +1881,15 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
   }
 
   HomeCurrencySettings get _draft => HomeCurrencySettings(
-        homeCurrency: _homeCurrency,
-        formatMode: _formatMode,
-        symbol: _symbolController.text.trim().isEmpty
-            ? HomeCurrencySettings.defaultSymbolFor(_homeCurrency)
-            : _symbolController.text.trim(),
-        symbolPosition: _symbolPosition,
-        digitSeparator: _digitSeparator,
-        decimalPlaces: int.tryParse(_decimalPlacesController.text.trim()) ?? 2,
-      );
+    homeCurrency: _homeCurrency,
+    formatMode: _formatMode,
+    symbol: _symbolController.text.trim().isEmpty
+        ? HomeCurrencySettings.defaultSymbolFor(_homeCurrency)
+        : _symbolController.text.trim(),
+    symbolPosition: _symbolPosition,
+    digitSeparator: _digitSeparator,
+    decimalPlaces: int.tryParse(_decimalPlacesController.text.trim()) ?? 2,
+  );
 
   InputDecoration _inputDecoration() {
     return InputDecoration(
@@ -1803,10 +1920,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
       padding: const EdgeInsets.only(bottom: 8),
       child: Text(
         text,
-        style: AppFonts.bodyMedium(color: _labelGrey).copyWith(
-          fontWeight: FontWeight.w500,
-          fontSize: 13,
-        ),
+        style: AppFonts.bodyMedium(
+          color: _labelGrey,
+        ).copyWith(fontWeight: FontWeight.w500, fontSize: 13),
       ),
     );
   }
@@ -1832,7 +1948,8 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
             child: _FormatModeChip(
               label: 'Code',
               selected: _formatMode == CurrencyFormatMode.code,
-              onTap: () => setState(() => _formatMode = CurrencyFormatMode.code),
+              onTap: () =>
+                  setState(() => _formatMode = CurrencyFormatMode.code),
             ),
           ),
         ],
@@ -1885,8 +2002,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                   const SizedBox(height: 6),
                   Text(
                     _draft.formatPreview(),
-                    style: AppFonts.headlineSmall(color: AppColors.inkStrong)
-                        .copyWith(fontWeight: FontWeight.w800, fontSize: 24),
+                    style: AppFonts.headlineSmall(
+                      color: AppColors.inkStrong,
+                    ).copyWith(fontWeight: FontWeight.w800, fontSize: 24),
                   ),
                 ],
               ),
@@ -1916,10 +2034,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
         ),
         title: Text(
           'Change Home Currency',
-          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
-            fontWeight: FontWeight.w700,
-            fontSize: 17,
-          ),
+          style: AppFonts.titleMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w700, fontSize: 17),
         ),
         actions: [
           IconButton(
@@ -1949,8 +2066,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                         Icons.keyboard_arrow_down_rounded,
                         color: Color(0xFF6B7280),
                       ),
-                      style: AppFonts.bodyMedium(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w500, fontSize: 15),
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500, fontSize: 15),
                       dropdownColor: AppColors.white,
                       items: widget.options
                           .map(
@@ -1980,10 +2098,7 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _fieldLabel('Format'),
-                          _formatModeToggle(),
-                        ],
+                        children: [_fieldLabel('Format'), _formatModeToggle()],
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1996,9 +2111,13 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                             controller: _symbolController,
                             enabled: _formatMode == CurrencyFormatMode.symbol,
                             onChanged: (_) => setState(() {}),
-                            style: AppFonts.bodyMedium(
-                              color: AppColors.inkStrong,
-                            ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
+                            style:
+                                AppFonts.bodyMedium(
+                                  color: AppColors.inkStrong,
+                                ).copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
                             decoration: _inputDecoration(),
                           ),
                         ],
@@ -2018,8 +2137,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                         Icons.keyboard_arrow_down_rounded,
                         color: Color(0xFF6B7280),
                       ),
-                      style: AppFonts.bodyMedium(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w500, fontSize: 15),
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w500, fontSize: 15),
                       items: _symbolPositions
                           .map(
                             (e) => DropdownMenuItem<String>(
@@ -2055,12 +2175,13 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                                   color: Color(0xFF6B7280),
                                   size: 20,
                                 ),
-                                style: AppFonts.bodyMedium(
-                                  color: AppColors.inkStrong,
-                                ).copyWith(
-                                  fontWeight: FontWeight.w500,
-                                  fontSize: 14,
-                                ),
+                                style:
+                                    AppFonts.bodyMedium(
+                                      color: AppColors.inkStrong,
+                                    ).copyWith(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 14,
+                                    ),
                                 items: _digitSeparators
                                     .map(
                                       (e) => DropdownMenuItem<String>(
@@ -2096,9 +2217,13 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                               LengthLimitingTextInputFormatter(1),
                             ],
                             onChanged: (_) => setState(() {}),
-                            style: AppFonts.bodyMedium(
-                              color: AppColors.inkStrong,
-                            ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
+                            style:
+                                AppFonts.bodyMedium(
+                                  color: AppColors.inkStrong,
+                                ).copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
                             decoration: _inputDecoration(),
                           ),
                         ],
@@ -2134,9 +2259,9 @@ class _ChangeHomeCurrencyPageState extends State<_ChangeHomeCurrencyPage> {
                     ),
                     child: Text(
                       'Confirm Changes',
-                      style: AppFonts.labelLarge(color: Colors.white).copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: AppFonts.labelLarge(
+                        color: Colors.white,
+                      ).copyWith(fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),

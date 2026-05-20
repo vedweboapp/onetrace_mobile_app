@@ -1,39 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:red5/core/pdf_coordinates/pdf_coordinates.dart';
 
-/// [PdfControllerPinch.getPageRect] can throw [RangeError] while layouts are empty
-/// (e.g. first frame after opening a document).
-Rect? safeGetPageRect(PdfControllerPinch pdf, int pageOneBased) {
-  final n = pdf.pagesCount ?? 0;
-  if (n < 1 || pageOneBased < 1 || pageOneBased > n) return null;
-  try {
-    return pdf.getPageRect(pageOneBased);
-  } on RangeError {
-    return null;
-  }
-}
-
-/// Converts viewport-local [local] (relative to the overlay, top-left origin)
-/// to document space using [PdfControllerPinch.value].
-Offset viewportLocalToDoc(PdfControllerPinch c, Offset local) {
-  final inv = Matrix4.inverted(c.value);
-  return MatrixUtils.transformPoint(inv, local);
-}
-
-/// Document space → viewport-local (for painting / pin [Positioned]).
-Offset docToViewportLocal(PdfControllerPinch c, Offset doc) {
-  return MatrixUtils.transformPoint(c.value, doc);
-}
-
-/// Finds a page whose [PdfControllerPinch.getPageRect] contains [doc], or null.
-int? findPageContainingDoc(PdfControllerPinch c, Offset doc) {
-  final n = c.pagesCount ?? 0;
-  for (var p = 1; p <= n; p++) {
-    final r = safeGetPageRect(c, p);
-    if (r != null && r.contains(doc)) return p;
-  }
-  return null;
-}
+export 'package:red5/core/pdf_coordinates/pdf_coordinate_transformer.dart'
+    show
+        docToViewportLocal,
+        findNearestPage,
+        findPageContainingDoc,
+        safeGetPageRect,
+        viewportLocalToDoc;
 
 /// Pin in page-local normalized coords (0–1 within page rect) for PDF,
 /// or layer-normalized (0–1 overlay) when [page] is null (raster image).
@@ -42,6 +17,7 @@ class PinEntry {
     required this.nx,
     required this.ny,
     this.page,
+    this.pdfPoint,
     this.productName,
     this.groupName,
     this.blockName,
@@ -60,6 +36,9 @@ class PinEntry {
   /// 1-based page index for PDF; null for images.
   final int? page;
 
+  /// True PDF user-space position (source of truth when set).
+  final PdfAnnotationPoint? pdfPoint;
+
   /// Captured when the pin is placed (product picker / “Place Pin”).
   final String? productName;
 
@@ -76,10 +55,42 @@ class PinEntry {
   final String variation;
   final DateTime? droppedAt;
 
+  factory PinEntry.fromAnnotation(
+    PdfAnnotationPoint point, {
+    String? productName,
+    String? groupName,
+    String? blockName,
+    String? levelName,
+    String? zoneLabel,
+    String description = '',
+    int quantity = 1,
+    String status = 'To Do',
+    String variation = 'No',
+    DateTime? droppedAt,
+  }) {
+    return PinEntry(
+      nx: point.fractionX,
+      ny: point.fractionY,
+      page: point.page,
+      pdfPoint: point,
+      productName: productName,
+      groupName: groupName,
+      blockName: blockName,
+      levelName: levelName,
+      zoneLabel: zoneLabel,
+      description: description,
+      quantity: quantity,
+      status: status,
+      variation: variation,
+      droppedAt: droppedAt,
+    );
+  }
+
   PinEntry copyWith({
     double? nx,
     double? ny,
     int? page,
+    PdfAnnotationPoint? pdfPoint,
     String? productName,
     String? groupName,
     String? blockName,
@@ -95,6 +106,7 @@ class PinEntry {
       nx: nx ?? this.nx,
       ny: ny ?? this.ny,
       page: page ?? this.page,
+      pdfPoint: pdfPoint ?? this.pdfPoint,
       productName: productName ?? this.productName,
       groupName: groupName ?? this.groupName,
       blockName: blockName ?? this.blockName,
@@ -139,10 +151,16 @@ class PinEntry {
     }
     if (e is Map) {
       final m = Map<String, dynamic>.from(e);
-      final nx = (m['nx'] as num?)?.toDouble();
-      final ny = (m['ny'] as num?)?.toDouble();
+      PdfAnnotationPoint? pdfPoint;
+      if (m.containsKey('pdfX') || m.containsKey('pdfWidth')) {
+        pdfPoint = PdfAnnotationPoint.fromJson(m);
+      }
+      final nx =
+          (m['nx'] as num?)?.toDouble() ?? pdfPoint?.fractionX;
+      final ny =
+          (m['ny'] as num?)?.toDouble() ?? pdfPoint?.fractionY;
       if (nx == null || ny == null) return null;
-      final pg = m['page'];
+      final pg = m['page'] ?? pdfPoint?.page;
       DateTime? dropped;
       final rawD = m['droppedAt'];
       if (rawD is String) {
@@ -152,6 +170,7 @@ class PinEntry {
         nx: nx,
         ny: ny,
         page: pg is int ? pg : (pg is num ? pg.toInt() : null),
+        pdfPoint: pdfPoint,
         productName: m['productName'] as String?,
         groupName: m['groupName'] as String?,
         blockName: m['blockName'] as String?,
@@ -171,15 +190,54 @@ class PinEntry {
     return null;
   }
 
+  PdfPageCoordinate get pageCoordinate =>
+      PdfPageCoordinate(page: page ?? 1, xPercent: nx, yPercent: ny);
+
+  PdfAnnotationPoint? toAnnotationPoint(PdfPageMetadataCache metadata) {
+    if (page == null) return null;
+    final meta = metadata.page(page!);
+    if (meta == null) return null;
+    return PdfAnnotationPoint.fromMetadata(
+      metadata: meta,
+      pdfX: nx * meta.width,
+      pdfY: ny * meta.height,
+    );
+  }
+
   /// Viewport pixel position for this pin (overlay top-left origin).
-  Offset? toViewportOffset(PdfControllerPinch? pdf, Size viewport, bool isPdf) {
+  Offset? toViewportOffset(
+    PdfControllerPinch? pdf,
+    Size viewport,
+    bool isPdf, {
+    PdfCoordinateEngine? engine,
+  }) {
     if (!isPdf || page == null || pdf == null) {
       return Offset(nx * viewport.width, ny * viewport.height);
     }
-    final pr = safeGetPageRect(pdf, page!);
-    if (pr == null) return null;
-    final doc = Offset(pr.left + nx * pr.width, pr.top + ny * pr.height);
-    return docToViewportLocal(pdf, doc);
+    if (engine != null) {
+      final ann =
+          pdfPoint ??
+          toAnnotationPoint(engine.metadata) ??
+          PdfAnnotationPoint(
+            page: page!,
+            pdfX: nx,
+            pdfY: ny,
+            pageWidth: 1,
+            pageHeight: 1,
+          );
+      return engine.pdfToScreen(ann);
+    }
+    if (pdfPoint != null) {
+      return PdfCoordinateTransformer.toViewportLocal(
+        pdf,
+        PdfPageCoordinate(
+          page: pdfPoint!.page,
+          xPercent: pdfPoint!.fractionX,
+          yPercent: pdfPoint!.fractionY,
+        ),
+      );
+    }
+    return PdfCoordinateTransformer.toViewportLocal(pdf, pageCoordinate);
   }
 }
 
@@ -330,35 +388,24 @@ BoxEntry? pdfCommitLayerNormBox(
 }
 
 /// Creates a pin from a tap in viewport-local coordinates (PDF).
-PinEntry? pdfPinFromViewportLocal(PdfControllerPinch c, Offset local) {
-  final doc = viewportLocalToDoc(c, local);
-  final page = findPageContainingDoc(c, doc) ?? findNearestPage(c, doc);
-  if (page == null) return null;
-  final pr = safeGetPageRect(c, page);
-  if (pr == null) return null;
+PinEntry? pdfPinFromViewportLocal(
+  PdfControllerPinch c,
+  Offset local, {
+  PdfCoordinateEngine? engine,
+}) {
+  if (engine != null) {
+    final point = engine.screenToPdf(local);
+    if (point == null) return null;
+    return PinEntry.fromAnnotation(point);
+  }
+  final coord = PdfCoordinateTransformer.fromViewportLocal(c, local);
+  if (coord == null) return null;
   return PinEntry(
-    nx: ((doc.dx - pr.left) / pr.width).clamp(0.0, 1.0),
-    ny: ((doc.dy - pr.top) / pr.height).clamp(0.0, 1.0),
-    page: page,
+    nx: coord.xPercent,
+    ny: coord.yPercent,
+    page: coord.page,
     droppedAt: null,
   );
-}
-
-int? findNearestPage(PdfControllerPinch c, Offset doc) {
-  final n = c.pagesCount ?? 0;
-  if (n == 0) return null;
-  double best = double.infinity;
-  int? bestP;
-  for (var p = 1; p <= n; p++) {
-    final r = safeGetPageRect(c, p);
-    if (r == null) continue;
-    final d = (r.center - doc).distance;
-    if (d < best) {
-      best = d;
-      bestP = p;
-    }
-  }
-  return bestP;
 }
 
 /// Converts polygon draft points (layer norm) to page-local normalized polygon.

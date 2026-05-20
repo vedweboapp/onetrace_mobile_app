@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -6,8 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/preferences/nav_menu_style_preference.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
+import 'package:red5/core/storage/organization_id_storage.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
@@ -22,7 +25,11 @@ import 'package:red5/features/dashboard/presentation/views/settings/users_settin
 import 'package:red5/features/user_profile/data/role_models.dart';
 import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
-import 'package:red5/features/user_profile/data/user_profile_models.dart';
+import 'package:red5/features/user_profile/data/user_profile_models.dart'
+    show
+        AppearanceSettingsModel,
+        UserAddressModel,
+        UserProfileModel;
 
 /// Personal profile + RED 5 sidebar; edit mode adds multi phone/email, add rows, save.
 class PersonalProfilePage extends ConsumerStatefulWidget {
@@ -89,9 +96,15 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   _AppearanceMode _appearanceMode = _AppearanceMode.light;
   int _selectedBrandColor = 0;
   String _systemLanguage = 'English (United States)';
+  String _organizationName = '';
 
-  static const _systemLanguages = <String>[
-    'English (United States)',
+  List<String> _systemLanguages = const ['English (United States)'];
+  List<Color> _accentColors = const [
+    Color(0xFF000000),
+    Color(0xFFF97316),
+    Color(0xFF2563EB),
+    Color(0xFF059669),
+    Color(0xFF4B5563),
   ];
 
   static const _brandPalette = <Color>[
@@ -102,13 +115,44 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     Color(0xFF4B5563), // #4B5563
   ];
 
+  // --- Main app navigation (dashboard overflow menu) ---
+  NavMenuStyle _navMenuStyle = NavMenuStyle.drawer;
+
   @override
   void initState() {
+    _accentColors = List<Color>.from(_brandPalette);
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _phoneControllers = [TextEditingController()];
     _emailControllers = [TextEditingController()];
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadProfile());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_loadProfile());
+      _loadNavMenuPreference();
+    });
+  }
+
+  void _loadNavMenuPreference() {
+    final storage = ref.read(localStorageProvider);
+    final style = NavMenuStylePreference.read(storage);
+    if (mounted) setState(() => _navMenuStyle = style);
+  }
+
+  Future<void> _setNavMenuStyle(NavMenuStyle style) async {
+    final storage = ref.read(localStorageProvider);
+    await NavMenuStylePreference.write(storage, style);
+    if (!mounted) return;
+    setState(() => _navMenuStyle = style);
+    if (mounted) {
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            style == NavMenuStyle.bottomSheet
+                ? 'Overflow menu will open as a bottom sheet.'
+                : 'Overflow menu will open from the side drawer.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _loadProfile() async {
@@ -258,7 +302,72 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
       _gender = gender.isNotEmpty ? _genderOptions.last : _genderOptions.first;
     }
     _photoUrl = profile.userImage.isEmpty ? null : profile.userImage;
+    _organizationName = profile.organizationDetail?.companyName ?? '';
+
+    final orgId = profile.organizationDetail?.idAsInt;
+    if (orgId != null) {
+      unawaited(
+        OrganizationIdStorage.persist(ref.read(localStorageProvider), orgId),
+      );
+    }
+
+    _applyAppearanceSettings(profile.appearanceSettings);
   }
+
+  void _applyAppearanceSettings(AppearanceSettingsModel? appearance) {
+    if (appearance == null) return;
+
+    _appearanceMode = appearance.themeMode == 'dark'
+        ? _AppearanceMode.dark
+        : _AppearanceMode.light;
+
+    if (appearance.languageOptions.isNotEmpty) {
+      _systemLanguages = appearance.languageOptions.map((o) => o.label).toList();
+      final selected = appearance.languageOptions.where(
+        (o) => o.id == appearance.language,
+      );
+      _systemLanguage = selected.isNotEmpty
+          ? selected.first.label
+          : appearance.languageOptions.first.label;
+    }
+
+    if (appearance.accentPresets.isNotEmpty) {
+      _accentColors = appearance.accentPresets
+          .map((p) => _colorFromHex(p.hex ?? '#000000'))
+          .toList();
+      final selectedHex = appearance.resolvedAccentHex;
+      var selectedIndex = 0;
+      for (var i = 0; i < appearance.accentPresets.length; i++) {
+        final hex = appearance.accentPresets[i].hex ?? '';
+        if (hex.toLowerCase() == selectedHex.toLowerCase() ||
+            appearance.accentPresets[i].id == appearance.accentPresetId) {
+          selectedIndex = i;
+          break;
+        }
+      }
+      _selectedBrandColor = selectedIndex.clamp(0, _accentColors.length - 1);
+    } else {
+      _accentColors = List<Color>.from(_brandPalette);
+      final hex = appearance.resolvedAccentHex;
+      if (hex.isNotEmpty) {
+        final target = _colorFromHex(hex);
+        final idx = _accentColors.indexWhere((c) => _colorsMatch(c, target));
+        if (idx >= 0) _selectedBrandColor = idx;
+      }
+    }
+  }
+
+  Color _colorFromHex(String hex) {
+    var value = hex.trim();
+    if (value.startsWith('#')) value = value.substring(1);
+    if (value.length == 6) value = 'FF$value';
+    final parsed = int.tryParse(value, radix: 16);
+    if (parsed == null) return _brandPalette.first;
+    return Color(parsed);
+  }
+
+  bool _colorsMatch(Color a, Color b) =>
+      a.red == b.red && a.green == b.green && a.blue == b.blue;
 
   static const _genderOptions = <String>['Male', 'Female', 'Other'];
 
@@ -774,10 +883,10 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     final enabled = interactive;
     return Row(
       children: [
-        for (var i = 0; i < _brandPalette.length; i++)
+        for (var i = 0; i < _accentColors.length; i++)
           Padding(
             padding: EdgeInsets.only(
-              right: i == _brandPalette.length - 1 ? 0 : 10,
+              right: i == _accentColors.length - 1 ? 0 : 10,
             ),
             child: InkWell(
               onTap: enabled ? () => setState(() => _selectedBrandColor = i) : null,
@@ -787,7 +896,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: _brandPalette[i],
+                  color: _accentColors[i],
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: _selectedBrandColor == i
@@ -1519,7 +1628,56 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         const SizedBox(height: 22),
         _sectionHeader('SYSTEM LANGUAGE'),
         _systemLanguageDropdown(interactive: true),
+        const SizedBox(height: 22),
+        _sectionHeader('NAVIGATION'),
+        _smallHeading('Overflow menu'),
+        Text(
+          'Side drawer: top bar shows the menu icon; bottom bar is Home, Clients, and Projects only. '
+          'Bottom sheet: no top menu icon; use More (⋯) on the bar to open Sites, Contacts, Groups, Products, and Quotations.',
+          style: AppFonts.bodySmall(color: _labelGrey).copyWith(
+            fontWeight: FontWeight.w500,
+            height: 1.45,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _navMenuStyleToggle(),
       ],
+    );
+  }
+
+  Widget _navMenuStyleToggle() {
+    final selectedBg = AppColors.white;
+    final baseBg = const Color(0xFFE5E7EB);
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: baseBg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _AppearanceButton(
+              icon: Icons.view_sidebar_rounded,
+              label: 'Side drawer',
+              selected: _navMenuStyle == NavMenuStyle.drawer,
+              selectedColor: _brandPalette[2],
+              selectedBg: selectedBg,
+              onTap: () => unawaited(_setNavMenuStyle(NavMenuStyle.drawer)),
+            ),
+          ),
+          Expanded(
+            child: _AppearanceButton(
+              icon: Icons.layers_rounded,
+              label: 'Bottom sheet',
+              selected: _navMenuStyle == NavMenuStyle.bottomSheet,
+              selectedColor: _brandPalette[1],
+              selectedBg: selectedBg,
+              onTap: () => unawaited(_setNavMenuStyle(NavMenuStyle.bottomSheet)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1549,6 +1707,14 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         const SizedBox(height: 14),
         _label('Role'),
         _roleDropdown(enabled),
+        if (_organizationName.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _label('Organization'),
+          InputDecorator(
+            decoration: _fieldDecoration(),
+            child: Text(_organizationName, style: _fieldTextStyle()),
+          ),
+        ],
         const SizedBox(height: 14),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,

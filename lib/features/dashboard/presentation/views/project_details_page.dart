@@ -12,6 +12,8 @@ import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
+import 'package:red5/features/dashboard/presentation/widgets/level_drawing_thumbnail.dart';
+import 'package:red5/features/dashboard/presentation/widgets/project_jobs_tab.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 String? _absoluteDrawingFileUrl(String drawingFileFromApi) {
@@ -84,17 +86,21 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
         final code = level.id.trim().isEmpty
             ? 'L${(index + 1).toString().padLeft(3, '0')}'
             : level.id.trim();
+        final pinCount = pinCountFromLevelPlots(level.plots);
         return _DrawingItem(
           code: code,
           title: title,
           meta: meta,
-          updated: 'Synced from API',
+          updated: pinCount > 0
+              ? 'Synced from API • $pinCount pin${pinCount == 1 ? '' : 's'}'
+              : 'Synced from API',
           accent: _accentForDrawing('$title|$code'),
           localFilePath: null,
           remoteDrawingUrl: _absoluteDrawingFileUrl(level.drawingFile),
           levelName: level.name.trim().isEmpty ? null : level.name.trim(),
           projectId: projectId,
           levelId: level.id.trim().isEmpty ? null : level.id.trim(),
+          pinCount: pinCount,
         );
       }).toList();
       setState(() {
@@ -479,7 +485,9 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
                             const Divider(height: 1, color: Color(0xFFE3E3E4)),
                         itemBuilder: (context, index) {
                           final item = _filteredDrawings[index];
-                          final darkTile = item.accent.computeLuminance() < 0.2;
+                          final thumbKey =
+                              (item.levelId ?? '${item.code}|${item.title}')
+                                  .trim();
                           return InkWell(
                             onTap: () async => _openDrawingCanvas(item),
                             child: Padding(
@@ -491,26 +499,11 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
                               ),
                               child: Row(
                                 children: [
-                                  Container(
-                                    width: 54,
-                                    height: 54,
-                                    decoration: BoxDecoration(
-                                      color: item.accent,
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: const Color(0xFFE2E2E4),
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        item.code.substring(0, 1),
-                                        style: AppFonts.titleMedium(
-                                          color: darkTile
-                                              ? AppColors.white
-                                              : AppColors.muted,
-                                        ).copyWith(fontWeight: FontWeight.w700),
-                                      ),
-                                    ),
+                                  LevelDrawingThumbnail(
+                                    cacheKey: thumbKey,
+                                    remoteDrawingUrl: item.remoteDrawingUrl,
+                                    localFilePath: item.localFilePath,
+                                    pinCount: item.pinCount,
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(
@@ -587,7 +580,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     final title = widget.project.quoteName;
 
     return DefaultTabController(
-      length: 9,
+      length: 8,
       child: Scaffold(
         backgroundColor: const Color(0xFFF7F7F8),
         appBar: AppBar(
@@ -660,7 +653,6 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               tabs: const [
                 Tab(text: 'Overview'),
                 Tab(text: 'Jobs'),
-                Tab(text: 'Job Sheet'),
                 Tab(text: 'Approval'),
                 Tab(text: 'Drawing'),
                 Tab(text: 'Location'),
@@ -673,8 +665,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               child: TabBarView(
                 children: [
                   _overviewTab(),
-                  _placeholderTab('Jobs'),
-                  _placeholderTab('Job Sheet'),
+                  const ProjectJobsTab(),
                   _placeholderTab('Approval'),
                   _drawingTab(),
                   _placeholderTab('Location'),
@@ -698,6 +689,7 @@ class _DrawingItem {
     required this.meta,
     required this.updated,
     required this.accent,
+    required this.pinCount,
     this.localFilePath,
     this.remoteDrawingUrl,
     this.levelName,
@@ -710,6 +702,7 @@ class _DrawingItem {
   final String meta;
   final String updated;
   final Color accent;
+  final int pinCount;
   final String? localFilePath;
   final String? remoteDrawingUrl;
   final String? levelName;

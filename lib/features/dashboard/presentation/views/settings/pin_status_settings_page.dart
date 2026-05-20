@@ -5,6 +5,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_brand_color_sheet.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
@@ -60,7 +61,7 @@ class _PinStatusSettingsPageState extends ConsumerState<PinStatusSettingsPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    context.showTopSnackBar(SnackBar(content: Text(msg)));
   }
 
   Future<void> _confirmDelete(PinStatusItem item) async {

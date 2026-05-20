@@ -11,6 +11,7 @@ import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
+import 'package:red5/core/storage/organization_id_storage.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
@@ -272,15 +273,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       } else {
         await storage.remove(LocalStorageKeys.authUserId);
       }
-      final organizationId = AuthSession.readOrganizationId(response.data);
-      if (organizationId != null) {
-        await storage.setInt(
-          LocalStorageKeys.authOrganizationId,
-          organizationId,
-        );
-      } else {
-        await storage.remove(LocalStorageKeys.authOrganizationId);
-      }
+      await OrganizationIdStorage.persist(
+        storage,
+        AuthSession.readOrganizationId(response.data),
+      );
       if (_rememberMe) {
         await storage.setBool(LocalStorageKeys.authRememberMe, true);
         await storage.setString(

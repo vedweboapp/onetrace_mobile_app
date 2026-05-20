@@ -488,8 +488,8 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
                 ),
-              ),
-              const SizedBox(height: 8),
+              ), 
+              const SizedBox(height: 8), 
               AppTextField(
                 controller: _postalCode,
                 hintText: 'ZIP or Postal Code',

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:red5/core/pdf_coordinates/pdf_coordinates.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/theme/app_screen_size.dart';
@@ -417,6 +418,7 @@ class QuoteCanvasMarkupLayer extends StatefulWidget {
     required this.onMarkupChanged,
     required this.child,
     this.pdfController,
+    this.pdfEngine,
     this.isPdf = false,
     this.onPinPlacementRejected,
     this.onPlotAreaNamed,
@@ -432,6 +434,7 @@ class QuoteCanvasMarkupLayer extends StatefulWidget {
   final VoidCallback onMarkupChanged;
   final Widget child;
   final PdfControllerPinch? pdfController;
+  final PdfCoordinateEngine? pdfEngine;
   final bool isPdf;
 
   /// When false, existing pins are not drawn (e.g. until group + product are chosen).
@@ -666,7 +669,11 @@ class _QuoteCanvasMarkupLayerState extends State<QuoteCanvasMarkupLayer>
 
   PinEntry? _pinGeometryFromViewport(Offset local, Size viewport) {
     if (widget.isPdf && widget.pdfController != null) {
-      return pdfPinFromViewportLocal(widget.pdfController!, local);
+      return pdfPinFromViewportLocal(
+        widget.pdfController!,
+        local,
+        engine: widget.pdfEngine,
+      );
     }
     final n = _toNorm(local, viewport);
     return PinEntry(nx: n.dx, ny: n.dy);
@@ -821,7 +828,11 @@ class _QuoteCanvasMarkupLayerState extends State<QuoteCanvasMarkupLayer>
     }
 
     if (widget.isPdf && widget.pdfController != null) {
-      final geo = pdfPinFromViewportLocal(widget.pdfController!, local);
+      final geo = pdfPinFromViewportLocal(
+        widget.pdfController!,
+        local,
+        engine: widget.pdfEngine,
+      );
       if (geo != null) {
         final pin = widget.pinMetadataBuilder?.call(geo, plotName) ?? geo;
         widget.markup.pins.add(pin);
@@ -1081,6 +1092,7 @@ class _QuoteCanvasMarkupLayerState extends State<QuoteCanvasMarkupLayer>
                                   widget.pdfController,
                                   overlaySize,
                                   widget.isPdf,
+                                  engine: widget.pdfEngine,
                                 );
                                 if (o == null) return const SizedBox.shrink();
                                 final isDragging = _dragPinIndex == i;

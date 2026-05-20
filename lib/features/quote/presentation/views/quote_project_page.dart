@@ -10,6 +10,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:red5/core/pdf_coordinates/pdf_coordinates.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/network/api_response_message.dart';
@@ -136,6 +137,16 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
   bool _didBootstrap = false;
 
   PdfControllerPinch? _pdfController;
+  final Map<String, PdfPageMetadataCache> _pdfMetadataByPath = {};
+
+  PdfCoordinateEngine? get _pdfEngine {
+    final ctrl = _pdfController;
+    final doc = _selectedDoc;
+    if (ctrl == null || doc == null || !doc.isPdf) return null;
+    final meta = _pdfMetadataByPath[doc.identityKey];
+    if (meta == null) return null;
+    return PdfCoordinateEngine(controller: ctrl, metadata: meta);
+  }
 
   final TransformationController _imageTransform = TransformationController();
 
@@ -267,6 +278,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       nx: geo.nx,
       ny: geo.ny,
       page: geo.page,
+      pdfPoint: geo.pdfPoint,
       productName: _selectedProduct?.trim(),
       groupName: _selectedGroup?.trim(),
       blockName: _blockName?.trim(),
@@ -316,6 +328,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
   void _syncZoomFromPdf() {
     if (!_selectedIsPdf || _pdfController == null) return;
     _applyZoomPercent(_pdfController!.zoomRatio);
+    if (mounted) setState(() {});
   }
 
   void _applyZoomPercent(double scale) {
@@ -460,6 +473,15 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     _scrollCarouselToIndex(_selectedIndex);
   }
 
+  Future<void> _loadPdfMetadataForDoc(_UploadedDoc doc) async {
+    if (!doc.isPdf) return;
+    try {
+      final cache = await PdfPageMetadataCache.fromFile(doc.path);
+      if (!mounted) return;
+      setState(() => _pdfMetadataByPath[doc.identityKey] = cache);
+    } catch (_) {}
+  }
+
   void _attachViewerForSelection() {
     _disposePdfViewer();
     _imageTransform.value = Matrix4.identity();
@@ -477,6 +499,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
         _pdfController = ctrl;
         _zoomPercent = 100;
       });
+      unawaited(_loadPdfMetadataForDoc(doc));
     } else {
       setState(() => _zoomPercent = 100);
     }
@@ -779,13 +802,49 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
         final x = _asDouble(pinRaw['x_coordinate']);
         final y = _asDouble(pinRaw['y_coordinate']);
         if (x == null || y == null) continue;
+        final pageRaw = plot['page'] ?? pinRaw['page'] ?? 1;
+        final page = pageRaw is int
+            ? pageRaw
+            : (pageRaw is num ? pageRaw.toInt() : 1);
+        final engine = _pdfEngine;
+        final pdfPoint = engine?.annotationFromApiPercent(
+              xRaw: x,
+              yRaw: y,
+              page: page,
+            ) ??
+            PdfCoordinateCodec.annotationFromApi(
+              xRaw: x,
+              yRaw: y,
+              page: page,
+              cache: _pdfMetadataByPath.values.isEmpty
+                  ? null
+                  : _pdfMetadataByPath[_selectedDoc?.identityKey ?? ''],
+            );
+        if (pdfPoint != null) {
+          markup.pins.add(
+            PinEntry.fromAnnotation(
+              pdfPoint,
+              status: _statusFromId(pinRaw['status']),
+              groupName: _groupFromId(pinRaw['group']),
+              productName: _productFromId(pinRaw['composite_item']),
+              quantity:
+                  (_asDouble(pinRaw['quantity']) ?? 1).round().clamp(1, 9999),
+              variation: (pinRaw['variation'] as bool?) == true ? 'Yes' : '',
+              blockName: _blockName?.trim(),
+              levelName: levelName,
+              zoneLabel: plotName.isEmpty ? null : plotName,
+              droppedAt: DateTime.now(),
+            ),
+          );
+          continue;
+        }
         final nx = (x > 1 ? x / 100.0 : x).clamp(0.0, 1.0);
         final ny = (y > 1 ? y / 100.0 : y).clamp(0.0, 1.0);
         markup.pins.add(
           PinEntry(
             nx: nx,
             ny: ny,
-            page: 1,
+            page: page,
             status: _statusFromId(pinRaw['status']),
             groupName: _groupFromId(pinRaw['group']),
             productName: _productFromId(pinRaw['composite_item']),
@@ -1654,9 +1713,26 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
         final pinPayload = <Map<String, dynamic>>[];
       for (var p = 0; p < pins.length; p++) {
         final pin = pins[p];
+        final engine = _pdfEngine;
+        final coords = pin.pdfPoint != null
+            ? PdfCoordinateCodec.annotationToApi(pin.pdfPoint!)
+            : (engine != null
+                  ? PdfCoordinateCodec.annotationToApi(
+                      PdfAnnotationPoint(
+                        page: pin.page ?? 1,
+                        pdfX: pin.nx * (engine.metadata.page(pin.page ?? 1)?.width ?? 1),
+                        pdfY: pin.ny * (engine.metadata.page(pin.page ?? 1)?.height ?? 1),
+                        pageWidth: engine.metadata.page(pin.page ?? 1)?.width ?? 1,
+                        pageHeight: engine.metadata.page(pin.page ?? 1)?.height ?? 1,
+                      ),
+                    )
+                  : {
+                      'x_coordinate': (pin.nx * 100).round(),
+                      'y_coordinate': (pin.ny * 100).round(),
+                    });
         final payload = <String, dynamic>{
-          'x_coordinate': (pin.nx * 100).round(),
-          'y_coordinate': (pin.ny * 100).round(),
+          ...coords,
+          if (pin.page != null) 'page': pin.page,
           'status': _statusToId(pin.status),
           'group': _groupToId(pin.groupName),
           'composite_item': _compositeItemToId(pin.productName),
@@ -2349,6 +2425,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
                     initialName: initialName,
                   ),
               pdfController: _pdfController,
+              pdfEngine: _pdfEngine,
               isPdf: true,
               showPinsOnCanvas: true,
               pinPrerequisitesMet: _pinContextReady,
