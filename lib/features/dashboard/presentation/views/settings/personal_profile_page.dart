@@ -8,32 +8,46 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/preferences/nav_menu_style_preference.dart';
-import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/storage/organization_id_storage.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:country_code_picker/country_code_picker.dart';
+import 'package:red5/core/utils/phone_number_utils.dart';
+import 'package:red5/core/widgets/app_phone_text_field.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/core/providers/local_storage_provider.dart';
+import 'package:red5/core/storage/local_storage_keys.dart';
+import 'package:red5/employee_role/employee_home/employee_home_page.dart';
+import 'package:red5/employee_role/presentation/employee_personal_profile_placeholder.dart';
+import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
+import 'package:red5/employee_role/presentation/widgets/technician_settings_drawer.dart';
+import 'package:red5/employee_role/data/role_session.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_feature_flags.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 import 'package:red5/features/user_profile/data/role_models.dart';
 import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_models.dart'
-    show
-        AppearanceSettingsModel,
-        UserAddressModel,
-        UserProfileModel;
+    show AppearanceSettingsModel, UserAddressModel, UserProfileModel;
 
 /// Personal profile + RED 5 sidebar; edit mode adds multi phone/email, add rows, save.
 class PersonalProfilePage extends ConsumerStatefulWidget {
-  const PersonalProfilePage({super.key});
+  const PersonalProfilePage({
+    super.key,
+    this.useTechnicianSettingsNav = false,
+  });
+
+  /// When true (technician/worker routes), drawer shows only Profile + Privacy,
+  /// exit returns to [TechnicianHomePage], and profile data stays local (no API).
+  final bool useTechnicianSettingsNav;
 
   static const path = '/settings/personal-profile';
   static const name = 'settings-personal-profile';
@@ -64,6 +78,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   final _zipController = TextEditingController();
 
   late final List<TextEditingController> _phoneControllers;
+  final List<CountryCode> _phoneCountries = <CountryCode>[];
   late final List<TextEditingController> _emailControllers;
 
   final _extraAddr1 = TextEditingController();
@@ -118,15 +133,23 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   // --- Main app navigation (dashboard overflow menu) ---
   NavMenuStyle _navMenuStyle = NavMenuStyle.drawer;
 
+  /// Admin settings use `/user-profile/`; technician/worker screens are UI-only.
+  bool get _usesProfileApi => !widget.useTechnicianSettingsNav;
+
   @override
   void initState() {
     _accentColors = List<Color>.from(_brandPalette);
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _phoneControllers = [TextEditingController()];
+    _phoneCountries.add(PhoneNumberUtils.defaultCountry);
     _emailControllers = [TextEditingController()];
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_loadProfile());
+      if (_usesProfileApi) {
+        unawaited(_loadProfile());
+      } else {
+        unawaited(_loadLocalProfile());
+      }
       _loadNavMenuPreference();
     });
   }
@@ -153,6 +176,26 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         ),
       );
     }
+  }
+
+  Future<void> _loadLocalProfile() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    final storage = ref.read(localStorageProvider);
+    final roleLabel = EmployeePersonalProfilePlaceholder.roleLabelFromStorage(
+      RoleSession.readRole(storage)?.slug ?? storage.getString(LocalStorageKeys.authRole),
+    );
+    setState(() {
+      _roles = EmployeePersonalProfilePlaceholder.rolesFor(roleLabel);
+      _loadError = null;
+      _loading = false;
+    });
+    _applyProfile(EmployeePersonalProfilePlaceholder.profile(roleLabel: roleLabel));
   }
 
   Future<void> _loadProfile() async {
@@ -229,6 +272,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
       c.dispose();
     }
     _phoneControllers.clear();
+    _phoneCountries.clear();
     for (final c in _emailControllers) {
       c.dispose();
     }
@@ -236,16 +280,23 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
 
     final comms = profile.communications;
     if (comms.isEmpty) {
-      _phoneControllers.add(TextEditingController(text: profile.phoneNumber));
+      final parsed = PhoneNumberUtils.parse(profile.phoneNumber);
+      _phoneCountries.add(parsed.country);
+      _phoneControllers.add(TextEditingController(text: parsed.nationalDigits));
       _emailControllers.add(TextEditingController(text: profile.email));
     } else {
       for (final c in comms) {
-        _phoneControllers.add(TextEditingController(text: c.phone));
+        final parsed = PhoneNumberUtils.parse(c.phone);
+        _phoneCountries.add(parsed.country);
+        _phoneControllers.add(
+          TextEditingController(text: parsed.nationalDigits),
+        );
         _emailControllers.add(TextEditingController(text: c.email));
       }
       final n = math.max(_phoneControllers.length, _emailControllers.length);
       while (_phoneControllers.length < n) {
         _phoneControllers.add(TextEditingController());
+        _phoneCountries.add(PhoneNumberUtils.defaultCountry);
       }
       while (_emailControllers.length < n) {
         _emailControllers.add(TextEditingController());
@@ -305,7 +356,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     _organizationName = profile.organizationDetail?.companyName ?? '';
 
     final orgId = profile.organizationDetail?.idAsInt;
-    if (orgId != null) {
+    if (orgId != null && profile.id != 'local-employee-profile') {
       unawaited(
         OrganizationIdStorage.persist(ref.read(localStorageProvider), orgId),
       );
@@ -322,7 +373,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         : _AppearanceMode.light;
 
     if (appearance.languageOptions.isNotEmpty) {
-      _systemLanguages = appearance.languageOptions.map((o) => o.label).toList();
+      _systemLanguages = appearance.languageOptions
+          .map((o) => o.label)
+          .toList();
       final selected = appearance.languageOptions.where(
         (o) => o.id == appearance.language,
       );
@@ -408,7 +461,11 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     _scaffoldKey.currentState?.closeDrawer();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.go(DashboardPage.path);
+      if (widget.useTechnicianSettingsNav) {
+        context.go(TechnicianHomePage.path);
+      } else {
+        context.go(DashboardPage.path);
+      }
     });
   }
 
@@ -422,6 +479,10 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   }
 
   Future<void> _saveChanges() async {
+    if (!_usesProfileApi) {
+      await _saveLocalChanges();
+      return;
+    }
     final profileId = _profileId;
     if (profileId == null || profileId.isEmpty) {
       context.showTopSnackBar(
@@ -460,12 +521,14 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     }
 
     String primaryPhone = '';
-    for (final c in _phoneControllers) {
-      final t = c.text.trim();
-      if (t.isNotEmpty) {
-        primaryPhone = t;
-        break;
-      }
+    for (var i = 0; i < _phoneControllers.length; i++) {
+      final national = _phoneControllers[i].text.trim();
+      if (national.isEmpty) continue;
+      final country = i < _phoneCountries.length
+          ? _phoneCountries[i]
+          : PhoneNumberUtils.defaultCountry;
+      primaryPhone = PhoneNumberUtils.formatFull(country, national);
+      break;
     }
     if (primaryPhone.isEmpty) {
       context.showTopSnackBar(
@@ -518,9 +581,73 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     }
   }
 
+  Future<void> _saveLocalChanges() async {
+    if (_saving) return;
+    FocusScope.of(context).unfocus();
+
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final gender = _gender.trim();
+    if (firstName.isEmpty || lastName.isEmpty || gender.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(
+          content: Text('First name, last name, and gender are required.'),
+        ),
+      );
+      return;
+    }
+
+    String primaryEmail = '';
+    for (final c in _emailControllers) {
+      final t = c.text.trim();
+      if (t.isNotEmpty) {
+        primaryEmail = t;
+        break;
+      }
+    }
+    if (primaryEmail.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Email is required.')),
+      );
+      return;
+    }
+
+    String primaryPhone = '';
+    for (var i = 0; i < _phoneControllers.length; i++) {
+      final national = _phoneControllers[i].text.trim();
+      if (national.isEmpty) continue;
+      final country = i < _phoneCountries.length
+          ? _phoneCountries[i]
+          : PhoneNumberUtils.defaultCountry;
+      primaryPhone = PhoneNumberUtils.formatFull(country, national);
+      break;
+    }
+    if (primaryPhone.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Phone number is required.')),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _editable = false;
+      _profilePhotoBytes = null;
+      _pickedImageFilename = null;
+    });
+    context.showSuccessTopPopup(
+      title: 'Profile updated',
+      subtitle: 'Saved on this device. Account sync is not connected yet.',
+    );
+  }
+
   void _addPhone() {
     setState(() {
       _phoneControllers.add(TextEditingController(text: ''));
+      _phoneCountries.add(PhoneNumberUtils.defaultCountry);
     });
   }
 
@@ -529,6 +656,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     setState(() {
       final removed = _phoneControllers.removeAt(index);
       removed.dispose();
+      if (index < _phoneCountries.length) {
+        _phoneCountries.removeAt(index);
+      }
     });
   }
 
@@ -858,7 +988,8 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
               selectedColor: _brandPalette[1],
               selectedBg: selectedBg,
               onTap: enabled
-                  ? () => setState(() => _appearanceMode = _AppearanceMode.light)
+                  ? () =>
+                        setState(() => _appearanceMode = _AppearanceMode.light)
                   : null,
             ),
           ),
@@ -889,7 +1020,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
               right: i == _accentColors.length - 1 ? 0 : 10,
             ),
             child: InkWell(
-              onTap: enabled ? () => setState(() => _selectedBrandColor = i) : null,
+              onTap: enabled
+                  ? () => setState(() => _selectedBrandColor = i)
+                  : null,
               borderRadius: BorderRadius.circular(999),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
@@ -941,7 +1074,10 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   Widget _systemLanguageDropdown({bool interactive = true}) {
     return InputDecorator(
       decoration: _fieldDecoration(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 12,
+        ),
       ),
       child: DropdownButtonHideUnderline(
         child: SizedBox(
@@ -991,15 +1127,22 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     required String iconAsset,
     required bool selected,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
+    final inactiveColor =
+        enabled ? const Color(0xFF525860) : const Color(0xFF9CA3AF);
+    final iconColor = enabled ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
-        color: selected ? const Color(0xFFF2F2F4) : Colors.transparent,
+        color: selected && enabled
+            ? const Color(0xFFF2F2F4)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
+          onTap: enabled ? onTap : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             child: Row(
@@ -1008,7 +1151,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
                   iconAsset,
                   width: 22,
                   height: 22,
-                  color: const Color(0xFF4B5563),
+                  color: iconColor,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -1016,11 +1159,11 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
                     title,
                     style:
                         AppFonts.bodyMedium(
-                          color: selected
+                          color: selected && enabled
                               ? AppColors.inkStrong
-                              : const Color(0xFF525860),
+                              : inactiveColor,
                         ).copyWith(
-                          fontWeight: selected
+                          fontWeight: selected && enabled
                               ? FontWeight.w600
                               : FontWeight.w500,
                           fontSize: 15,
@@ -1319,11 +1462,21 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (index == 0) _label('Phone'),
-          AppTextField(
+          AppPhoneTextField(
+            key: ValueKey('profile-phone-$index'),
             controller: _phoneControllers[index],
-            hintText: '',
-            keyboardType: TextInputType.phone,
+            hintText: 'Phone number',
             enabled: enabled,
+            initialCountry: index < _phoneCountries.length
+                ? _phoneCountries[index]
+                : PhoneNumberUtils.defaultCountry,
+            onCountryChanged: (country) {
+              if (index < _phoneCountries.length) {
+                _phoneCountries[index] = country;
+              } else {
+                _phoneCountries.add(country);
+              }
+            },
             hintStyle: const TextStyle(color: Colors.transparent, height: 0),
             suffixIcon: showTrash
                 ? IconButton(
@@ -1376,89 +1529,113 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
       key: _scaffoldKey,
       backgroundColor: AppColors.white,
       drawerEnableOpenDragGesture: true,
-      drawer: Drawer(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
-        width: MediaQuery.sizeOf(context).width * 0.82,
-        backgroundColor: AppColors.white,
-        surfaceTintColor: AppColors.white,
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
-                child: Row(
+      drawer: widget.useTechnicianSettingsNav
+          ? TechnicianSettingsDrawer(
+              selected: TechnicianSettingsSection.personalProfile,
+              onExit: _logoutToDashboard,
+              onPersonalProfile: () =>
+                  _scaffoldKey.currentState?.closeDrawer(),
+              onPrivacy: () {
+                _scaffoldKey.currentState?.closeDrawer();
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  context.push(EmployeeTechnicianSettingsRoutes.privacy);
+                });
+              },
+            )
+          : Drawer(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(0),
+              ),
+              width: MediaQuery.sizeOf(context).width * 0.82,
+              backgroundColor: AppColors.white,
+              surfaceTintColor: AppColors.white,
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'RED 5',
-                      style: AppFonts.headlineSmall(
-                        color: AppColors.inkStrong,
-                      ).copyWith(fontWeight: FontWeight.w800, fontSize: 22),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+                      child: Row(
+                        children: [
+                          Text(
+                            'RED 5',
+                            style: AppFonts.headlineSmall(
+                              color: AppColors.inkStrong,
+                            ).copyWith(fontWeight: FontWeight.w800, fontSize: 22),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Exit',
+                            onPressed: _logoutToDashboard,
+                            icon: Icon(
+                              Icons.exit_to_app_rounded,
+                              color: AppColors.inkStrong,
+                              size: 22,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: 'Exit',
-                      onPressed: _logoutToDashboard,
-                      icon: Icon(
-                        Icons.exit_to_app_rounded,
-                        color: AppColors.inkStrong,
-                        size: 22,
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.only(top: 8, bottom: 24),
+                        children: [
+                          _sectionLabelCaps('GENERAL'),
+                          _sidebarNavTile(
+                            title: 'Personal Profile',
+                            iconAsset: 'assets/images/person.png',
+                            selected: true,
+                            onTap: () =>
+                                _scaffoldKey.currentState?.closeDrawer(),
+                          ),
+                          _sidebarNavTile(
+                            title: 'Users',
+                            iconAsset: 'assets/images/public.png',
+                            selected: false,
+                            onTap: () =>
+                                _closeDrawerPush(UsersSettingsPage.path),
+                          ),
+                          _sidebarNavTile(
+                            title: 'Company Settings',
+                            iconAsset: 'assets/images/company.png',
+                            selected: false,
+                            onTap: () =>
+                                _closeDrawerPush(CompanySettingsPage.path),
+                          ),
+                          _sidebarNavTile(
+                            title: 'Privacy',
+                            iconAsset: 'assets/images/privacy.png',
+                            selected: false,
+                            onTap: () =>
+                                _closeDrawerPush(PrivacySettingsPage.path),
+                          ),
+                          if (SettingsFeatureFlags.showMetaData) ...[
+                            _sectionLabelCaps('CUSTOMISATION'),
+                            _sidebarNavTile(
+                              title: 'Meta Data',
+                              iconAsset: 'assets/images/database (1).png',
+                              selected: false,
+                              enabled: SettingsFeatureFlags.metadataEnabled,
+                              onTap: () =>
+                                  _closeDrawerPush(MetadataSettingsPage.path),
+                            ),
+                          ],
+                          _sectionLabelCaps('INTEGRATION'),
+                          _sidebarNavTile(
+                            title: 'Integration',
+                            iconAsset: 'assets/images/integration.png',
+                            selected: false,
+                            onTap: () =>
+                                _closeDrawerPush(IntegrationSettingsPage.path),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.only(top: 8, bottom: 24),
-                  children: [
-                    _sectionLabelCaps('GENERAL'),
-                    _sidebarNavTile(
-                      title: 'Personal Profile',
-                      iconAsset: 'assets/images/person.png',
-                      selected: true,
-                      onTap: () => _scaffoldKey.currentState?.closeDrawer(),
-                    ),
-                    _sidebarNavTile(
-                      title: 'Users',
-                      iconAsset: 'assets/images/public.png',
-                      selected: false,
-                      onTap: () => _closeDrawerPush(UsersSettingsPage.path),
-                    ),
-                    _sidebarNavTile(
-                      title: 'Company Settings',
-                      iconAsset: 'assets/images/company.png',
-                      selected: false,
-                      onTap: () => _closeDrawerPush(CompanySettingsPage.path),
-                    ),
-                    _sidebarNavTile(
-                      title: 'Privacy',
-                      iconAsset: 'assets/images/privacy.png',
-                      selected: false,
-                      onTap: () => _closeDrawerPush(PrivacySettingsPage.path),
-                    ),
-                    _sectionLabelCaps('CUSTOMISATION'),
-                    _sidebarNavTile(
-                      title: 'Module and Field',
-                      iconAsset: 'assets/images/database (1).png',
-                      selected: false,
-                      onTap: () => _closeDrawerPush(MetadataSettingsPage.path),
-                    ),
-                    _sectionLabelCaps('INTEGRATION'),
-                    _sidebarNavTile(
-                      title: 'Integration',
-                      iconAsset: 'assets/images/integration.png',
-                      selected: false,
-                      onTap: () =>
-                          _closeDrawerPush(IntegrationSettingsPage.path),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
       appBar: AppBar(
         backgroundColor: AppColors.white,
         surfaceTintColor: AppColors.white,
@@ -1540,15 +1717,12 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
             indicatorWeight: 3,
             labelColor: AppColors.inkStrong,
             unselectedLabelColor: _labelGrey,
-            labelStyle: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-              fontWeight: FontWeight.w600,
-              fontSize: 15,
-            ),
-            unselectedLabelStyle:
-                AppFonts.bodyMedium(color: _labelGrey).copyWith(
-              fontWeight: FontWeight.w500,
-              fontSize: 15,
-            ),
+            labelStyle: AppFonts.bodyMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w600, fontSize: 15),
+            unselectedLabelStyle: AppFonts.bodyMedium(
+              color: _labelGrey,
+            ).copyWith(fontWeight: FontWeight.w500, fontSize: 15),
             tabs: const [
               Tab(text: 'Personal Profile'),
               Tab(text: 'Appearance'),
@@ -1584,7 +1758,13 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
             ),
             const SizedBox(height: 16),
             FilledButton(
-              onPressed: _loadProfile,
+              onPressed: () {
+                if (_usesProfileApi) {
+                  unawaited(_loadProfile());
+                } else {
+                  unawaited(_loadLocalProfile());
+                }
+              },
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.inkStrong,
                 foregroundColor: AppColors.white,
@@ -1601,7 +1781,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
       controller: _tabController,
       children: [
         RefreshIndicator(
-          onRefresh: _loadProfile,
+          onRefresh: _usesProfileApi ? _loadProfile : _loadLocalProfile,
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
             children: [_buildProfileTabContent(enabled)],
@@ -1634,10 +1814,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         Text(
           'Side drawer: top bar shows the menu icon; bottom bar is Home, Clients, and Projects only. '
           'Bottom sheet: no top menu icon; use More (⋯) on the bar to open Sites, Contacts, Groups, Products, and Quotations.',
-          style: AppFonts.bodySmall(color: _labelGrey).copyWith(
-            fontWeight: FontWeight.w500,
-            height: 1.45,
-          ),
+          style: AppFonts.bodySmall(
+            color: _labelGrey,
+          ).copyWith(fontWeight: FontWeight.w500, height: 1.45),
         ),
         const SizedBox(height: 12),
         _navMenuStyleToggle(),
@@ -1673,7 +1852,8 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
               selected: _navMenuStyle == NavMenuStyle.bottomSheet,
               selectedColor: _brandPalette[1],
               selectedBg: selectedBg,
-              onTap: () => unawaited(_setNavMenuStyle(NavMenuStyle.bottomSheet)),
+              onTap: () =>
+                  unawaited(_setNavMenuStyle(NavMenuStyle.bottomSheet)),
             ),
           ),
         ],
@@ -1706,7 +1886,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         ),
         const SizedBox(height: 14),
         _label('Role'),
-        _roleDropdown(enabled),
+        _roleDropdown(enabled && _usesProfileApi),
         if (_organizationName.isNotEmpty) ...[
           const SizedBox(height: 14),
           _label('Organization'),
@@ -1758,11 +1938,14 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         const SizedBox(height: 14),
         if (!_editable) ...[
           _label('Phone'),
-          AppTextField(
+          AppPhoneTextField(
             controller: _phoneControllers.first,
             hintText: '',
-            keyboardType: TextInputType.phone,
             enabled: false,
+            showCountryPicker: false,
+            initialCountry: _phoneCountries.isNotEmpty
+                ? _phoneCountries.first
+                : PhoneNumberUtils.defaultCountry,
             hintStyle: const TextStyle(color: Colors.transparent, height: 0),
           ),
           const SizedBox(height: 14),
@@ -1990,7 +2173,9 @@ class _AppearanceButton extends StatelessWidget {
               Text(
                 label,
                 style: AppFonts.bodyMedium(
-                  color: selected ? AppColors.inkStrong : const Color(0xFF6B7280),
+                  color: selected
+                      ? AppColors.inkStrong
+                      : const Color(0xFF6B7280),
                 ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
               ),
             ],

@@ -7,6 +7,7 @@ import 'package:red5/features/dashboard/presentation/views/settings/company_sett
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_feature_flags.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 
@@ -113,26 +114,29 @@ class SettingsPage extends StatelessWidget {
                 title: 'Privacy',
                 route: PrivacySettingsPage.path,
               ),
-              const SizedBox(height: 20),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'CUSTOMISATION',
-                  style: AppFonts.labelMedium(color: const Color(0xFF5F6672))
-                      .copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.0,
-                        fontSize: 16,
-                      ),
+              if (SettingsFeatureFlags.showMetaData) ...[
+                const SizedBox(height: 20),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    'CUSTOMISATION',
+                    style: AppFonts.labelMedium(color: const Color(0xFF5F6672))
+                        .copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.0,
+                          fontSize: 16,
+                        ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              const _SettingsMenuRow(
-                iconAsset: 'assets/images/database (1).png',
-                title: 'Module and Field',
-                route: MetadataSettingsPage.path,
-              ),
-              const SizedBox(height: 20),
+                const SizedBox(height: 8),
+                _SettingsMenuRow(
+                  iconAsset: 'assets/images/database (1).png',
+                  title: 'Meta Data',
+                  route: MetadataSettingsPage.path,
+                  enabled: SettingsFeatureFlags.metadataEnabled,
+                ),
+                const SizedBox(height: 20),
+              ],
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
@@ -165,16 +169,25 @@ class _SettingsMenuRow extends StatelessWidget {
     required this.iconAsset,
     required this.title,
     required this.route,
+    this.enabled = true,
   });
 
   final String iconAsset;
   final String title;
   final String route;
+  final bool enabled;
+
+  static const _disabledFg = Color(0xFF9CA3AF);
 
   @override
   Widget build(BuildContext context) {
+    final fg = enabled ? AppColors.inkStrong : _disabledFg;
+    final iconColor = enabled
+        ? const Color.fromARGB(255, 18, 18, 18)
+        : _disabledFg;
+
     return InkWell(
-      onTap: () => context.push(route),
+      onTap: enabled ? () => context.push(route) : null,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
@@ -185,7 +198,7 @@ class _SettingsMenuRow extends StatelessWidget {
           children: [
             Image.asset(
               iconAsset,
-              color: const Color.fromARGB(255, 18, 18, 18),
+              color: iconColor,
               height: 24,
               width: 24,
             ),
@@ -194,11 +207,15 @@ class _SettingsMenuRow extends StatelessWidget {
               child: Text(
                 title,
                 style: AppFonts.titleMedium(
-                  color: AppColors.inkStrong,
+                  color: fg,
                 ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
               ),
             ),
-            const Icon(Icons.chevron_right, color: Color(0xFF4B5563), size: 28),
+            Icon(
+              Icons.chevron_right,
+              color: enabled ? const Color(0xFF4B5563) : _disabledFg,
+              size: 28,
+            ),
           ],
         ),
       ),

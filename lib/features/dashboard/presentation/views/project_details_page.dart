@@ -31,12 +31,19 @@ String? _absoluteDrawingFileUrl(String drawingFileFromApi) {
 }
 
 class ProjectDetailsPage extends ConsumerStatefulWidget {
-  const ProjectDetailsPage({super.key, required this.project});
+  const ProjectDetailsPage({
+    super.key,
+    required this.project,
+    this.initialTabIndex = 0,
+    this.jobsRefreshToken,
+  });
 
   static const pathPrefix = '/project-details';
   static const name = 'project-details';
 
   final QuoteSummary project;
+  final int initialTabIndex;
+  final Object? jobsRefreshToken;
 
   static String pathFor(String projectId) => '$pathPrefix/$projectId';
 
@@ -580,7 +587,8 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     final title = widget.project.quoteName;
 
     return DefaultTabController(
-      length: 8,
+      initialIndex: widget.initialTabIndex.clamp(0, 8),
+      length: 9,
       child: Scaffold(
         backgroundColor: const Color(0xFFF7F7F8),
         appBar: AppBar(
@@ -603,40 +611,6 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppFonts.headlineSmall(
-                      color: AppColors.inkStrong,
-                    ).copyWith(fontWeight: FontWeight.w700, fontSize: 36),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.calendar_today_outlined,
-                        color: AppColors.muted,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${_displayDate(widget.project.startDate)} – ${_displayDate(widget.project.endDate)}',
-                        style: AppFonts.bodySmall(
-                          color: AppColors.muted,
-                        ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
             TabBar(
               isScrollable: true,
               tabAlignment: TabAlignment.start,
@@ -653,6 +627,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               tabs: const [
                 Tab(text: 'Overview'),
                 Tab(text: 'Jobs'),
+                Tab(text: 'Job Sheet'),
                 Tab(text: 'Approval'),
                 Tab(text: 'Drawing'),
                 Tab(text: 'Location'),
@@ -665,7 +640,17 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               child: TabBarView(
                 children: [
                   _overviewTab(),
-                  const ProjectJobsTab(),
+                  ProjectJobsTab(
+                    key: ValueKey(
+                      'jobs-${widget.project.id}-${widget.jobsRefreshToken ?? 'base'}',
+                    ),
+                    projectId: widget.project.id,
+                    projectName:
+                        widget.project.projectName ?? widget.project.quoteName,
+                    clientName: widget.project.clientName,
+                    refreshToken: widget.jobsRefreshToken,
+                  ),
+                  _placeholderTab('Job Sheet'),
                   _placeholderTab('Approval'),
                   _drawingTab(),
                   _placeholderTab('Location'),

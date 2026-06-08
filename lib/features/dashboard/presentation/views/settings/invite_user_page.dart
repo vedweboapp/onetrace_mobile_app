@@ -8,6 +8,9 @@ import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:country_code_picker/country_code_picker.dart';
+import 'package:red5/core/utils/phone_number_utils.dart';
+import 'package:red5/core/widgets/app_phone_text_field.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/invite_user_service.dart';
@@ -32,7 +35,8 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
   final _lastNameController = TextEditingController(text: 'Doe');
   final _roleController = TextEditingController(text: 'Site Supervisor');
   final _dobController = TextEditingController(text: '01/01/1990');
-  final _phoneController = TextEditingController(text: '+1 (555) 000-1234');
+  final _phoneController = TextEditingController(text: '5550001234');
+  CountryCode _phoneCountry = PhoneNumberUtils.defaultCountry;
   final _emailController =
       TextEditingController(text: 'john.doe@acmeconstruction.com');
   final _addr1Controller = TextEditingController(text: '123 Industrial Way');
@@ -383,7 +387,7 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
         role: _roleController.text.trim(),
         gender: _gender,
         dateOfBirth: _dobController.text.trim(),
-        phone: _phoneController.text.trim(),
+        phone: PhoneNumberUtils.formatFull(_phoneCountry, _phoneController.text),
         email: _emailController.text.trim(),
         addressLine1: _addr1Controller.text.trim(),
         addressLine2: _addr2Controller.text.trim(),
@@ -632,16 +636,19 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                       ),
                       _sectionHeader('CONTACT'),
                       _label('Phone'),
-                      AppTextField(
+                      AppPhoneTextField(
                         controller: _phoneController,
-                        hintText: '',
-                        keyboardType: TextInputType.phone,
+                        hintText: 'Phone number',
                         enabled: !submitting,
                         hintStyle:
                             const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
-                        validator: (v) =>
-                            _required(v, 'Phone'),
+                        onCountryChanged: (c) => _phoneCountry = c,
+                        validator: (v) => PhoneNumberUtils.validateNational(
+                          national: v,
+                          emptyMessage: 'Phone is required',
+                          invalidMessage: 'Enter a valid phone number',
+                        ),
                       ),
                       const SizedBox(height: 14),
                       _label('Email'),

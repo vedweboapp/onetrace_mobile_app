@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/constants/app_image_string.dart';
@@ -25,6 +27,9 @@ import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
 import 'package:red5/features/login/presentation/widgets/signup_bottom_sheet.dart';
+import 'package:red5/employee_role/data/app_role.dart';
+import 'package:red5/employee_role/data/role_session.dart';
+import 'package:red5/employee_role/data/static_role_accounts.dart';
 
 import '../../../../core/widgets/app_const_widget.dart';
 
@@ -117,7 +122,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     });
     _onboardingPageController = PageController();
     _mobileAuthPaneController = PageController();
-    _onboardingAutoScrollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _onboardingAutoScrollTimer = Timer.periodic(const Duration(seconds: 2), (
+      _,
+    ) {
       if (!mounted || !_onboardingPageController.hasClients) return;
       final next = (_onboardingPageIndex + 1) % _onboardingSlideCount;
       _onboardingPageController.animateToPage(
@@ -245,20 +252,69 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
     setState(() => _isSigningIn = true);
     try {
+      final staticAccount = StaticRoleAccounts.authenticate(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+      if (staticAccount != null) {
+        final storage = ref.read(localStorageProvider);
+        await storage.setString(
+          LocalStorageKeys.authAccessToken,
+          RoleSession.staticAccessToken(staticAccount.role),
+        );
+        await storage.remove(LocalStorageKeys.authRefreshToken);
+        await storage.remove(LocalStorageKeys.authUserId);
+        await RoleSession.persistRole(storage, staticAccount.role);
+        if (_rememberMe) {
+          await storage.setBool(LocalStorageKeys.authRememberMe, true);
+          await storage.setString(
+            LocalStorageKeys.authSavedEmail,
+            _emailController.text.trim(),
+          );
+        } else {
+          await storage.setBool(LocalStorageKeys.authRememberMe, false);
+          await storage.remove(LocalStorageKeys.authSavedEmail);
+        }
+        if (!mounted) return;
+        sl<AuthRedirectNotifier>().notifyAuthChanged();
+        context.go(RoleSession.homePathFor(staticAccount.role));
+        return;
+      }
+
       final client = ref.read(authApiClientProvider);
       final response = await client.login(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
-      final storage = ref.read(localStorageProvider);
-      final accessToken = AuthSession.readAccessToken(response.data);
-      final refreshToken = AuthSession.readRefreshToken(response.data);
-      if (accessToken != null) {
-        await storage.setString(LocalStorageKeys.authAccessToken, accessToken);
-      } else {
-        await storage.remove(LocalStorageKeys.authAccessToken);
+      final payload = AuthSession.coerceAuthPayload(response.data);
+      if (payload == null) {
+        if (!mounted) return;
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text(
+              'Sign-in succeeded but the session response was invalid.',
+            ),
+          ),
+        );
+        return;
       }
+
+      final storage = ref.read(localStorageProvider);
+      final accessToken = AuthSession.readAccessToken(payload);
+      final refreshToken = AuthSession.readRefreshToken(payload);
+      if (accessToken == null || !AuthSession.isJwtValid(accessToken)) {
+        if (!mounted) return;
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text(
+              'Sign-in succeeded but no access token was returned. Please try again.',
+            ),
+          ),
+        );
+        return;
+      }
+      await storage.setString(LocalStorageKeys.authAccessToken, accessToken);
       if (refreshToken != null) {
         await storage.setString(
           LocalStorageKeys.authRefreshToken,
@@ -267,7 +323,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       } else {
         await storage.remove(LocalStorageKeys.authRefreshToken);
       }
-      final userId = AuthSession.readUserId(response.data);
+      final userId = AuthSession.readUserId(payload);
       if (userId != null && userId.isNotEmpty) {
         await storage.setString(LocalStorageKeys.authUserId, userId);
       } else {
@@ -275,8 +331,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       }
       await OrganizationIdStorage.persist(
         storage,
-        AuthSession.readOrganizationId(response.data),
+        AuthSession.readOrganizationId(payload),
       );
+      final role = AppRole.fromSlug(AuthSession.readRoleSlug(payload));
+      if (role != null) {
+        await RoleSession.persistRole(storage, role);
+      } else {
+        await RoleSession.clearRole(storage);
+      }
       if (_rememberMe) {
         await storage.setBool(LocalStorageKeys.authRememberMe, true);
         await storage.setString(
@@ -289,7 +351,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       }
 
       if (!mounted) return;
-      context.go(DashboardPage.path);
+      sl<AuthRedirectNotifier>().notifyAuthChanged();
+      context.go(
+        role == null ? DashboardPage.homePath : RoleSession.homePathFor(role),
+      );
     } on DioException catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(

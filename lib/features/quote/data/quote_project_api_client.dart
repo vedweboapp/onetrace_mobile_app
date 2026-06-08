@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
+import 'package:red5/core/network/api_int_parsing.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/features/dashboard/data/job_models.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 
 final class LevelSyncResult {
@@ -29,6 +31,7 @@ final class ProjectLevelItem {
   final String name;
   final String drawingFile;
   final List<Map<String, dynamic>> plots;
+
   /// API `order` field for stable display ordering (lower first).
   final int sortOrder;
 }
@@ -40,6 +43,20 @@ final class ClientOption {
   final String name;
 }
 
+final class ProjectOption {
+  const ProjectOption({
+    required this.id,
+    required this.name,
+    this.clientId,
+    this.clientName,
+  });
+
+  final String id;
+  final String name;
+  final int? clientId;
+  final String? clientName;
+}
+
 final class PinStatusItem {
   const PinStatusItem({
     required this.id,
@@ -47,6 +64,7 @@ final class PinStatusItem {
     required this.bgColour,
     required this.textColour,
     required this.isActive,
+    this.pinCount = 0,
   });
 
   final String id;
@@ -54,6 +72,42 @@ final class PinStatusItem {
   final String bgColour;
   final String textColour;
   final bool isActive;
+
+  /// Pins using this status (when returned by the API).
+  final int pinCount;
+
+  static PinStatusItem? tryFromMap(Map<String, dynamic> map) {
+    final id = QuoteProjectApiClient._readString(map, const ['id']) ?? '';
+    final statusName =
+        QuoteProjectApiClient._readString(map, const ['status_name']) ?? '';
+    if (id.isEmpty || statusName.isEmpty) return null;
+    final bg =
+        QuoteProjectApiClient._readString(map, const ['bg_colour']) ??
+        '#E5E7EB';
+    final text =
+        QuoteProjectApiClient._readString(map, const ['text_colour']) ??
+        '#374151';
+    final isActiveRaw = map['is_active'];
+    final isActive = isActiveRaw is bool
+        ? isActiveRaw
+        : '${isActiveRaw ?? 'true'}'.toLowerCase() != 'false';
+    final pinCount =
+        readApiIntFromMap(map, const [
+          'pin_count',
+          'pins_count',
+          'pins_affected',
+          'affected_pins',
+        ]) ??
+        0;
+    return PinStatusItem(
+      id: id,
+      statusName: statusName,
+      bgColour: bg,
+      textColour: text,
+      isActive: isActive,
+      pinCount: pinCount,
+    );
+  }
 }
 
 final class TagItem {
@@ -67,6 +121,7 @@ final class TagItem {
 
   final String id;
   final String name;
+
   /// Primary colour for chips (API: `colour` / `color` / `bg_colour`).
   final String colourHex;
   final String? textColourHex;
@@ -80,16 +135,28 @@ final class GroupItemOption {
   final String name;
 }
 
+/// Generic `{ id, name }` row for admin dropdowns (forms, job status, QR codes).
+final class NamedIdOption {
+  const NamedIdOption({required this.id, required this.name});
+
+  final int id;
+  final String name;
+}
+
 final class CompositeItemOption {
   const CompositeItemOption({
     required this.id,
     required this.name,
     this.groupId,
+    this.abbreviation = '',
   });
 
   final int id;
   final String name;
   final int? groupId;
+
+  /// Short code shown on map pins (e.g. "SRK").
+  final String abbreviation;
 }
 
 final class GroupCompositeCatalog {
@@ -202,6 +269,72 @@ final class QuoteProjectApiClient {
     return clients;
   }
 
+  /// Projects list for admin dropdowns (create job, etc.).
+  Future<List<ProjectOption>> fetchProjects({int pageSize = 100}) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.projects,
+      queryParameters: <String, dynamic>{'page': 1, 'page_size': pageSize},
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final rows = root['data'] is List
+        ? (root['data'] as List<dynamic>)
+        : (root['results'] is List
+              ? (root['results'] as List<dynamic>)
+              : const <dynamic>[]);
+
+    final projects = <ProjectOption>[];
+    final seenIds = <String>{};
+    for (final row in rows) {
+      final map = _coerceMap(row);
+      final id =
+          _readString(map, const ['id', 'project_id', 'quote_id']) ?? '';
+      if (id.isEmpty || !seenIds.add(id)) continue;
+      final name =
+          _readString(map, const [
+            'name',
+            'Subject',
+            'project_name',
+            'title',
+            'quote_name',
+          ]) ??
+          'Project $id';
+      final clientRaw = map['client'] ?? map['client_id'];
+      int? clientId;
+      String? clientName;
+      if (clientRaw is Map) {
+        final clientMap = _coerceMap(clientRaw);
+        final cid = clientMap['id'] ?? clientMap['client_id'];
+        clientId = cid is int ? cid : int.tryParse('${cid ?? ''}');
+        clientName = _readString(clientMap, const [
+          'name',
+          'client_name',
+          'company_name',
+          'title',
+        ]);
+      } else {
+        clientId = clientRaw is int
+            ? clientRaw
+            : int.tryParse('${clientRaw ?? ''}');
+      }
+      if (clientName == null || clientName.isEmpty) {
+        clientName = _readString(map, const [
+          'client_name',
+          'customer_name',
+          'account_name',
+        ]);
+      }
+      projects.add(
+        ProjectOption(
+          id: id,
+          name: name,
+          clientId: clientId,
+          clientName: clientName,
+        ),
+      );
+    }
+    return projects;
+  }
+
   Future<LevelSyncResult> upsertLevel({
     required String projectId,
     String? levelId,
@@ -250,22 +383,64 @@ final class QuoteProjectApiClient {
   }
 
   /// `PUT` [project_level_update] — JSON body per API: `{ "plots": [...] }`.
-  Future<void> updateLevelPlots({
+  /// To clear markup, send each plot id with `coordinates` / `pins` set to null.
+  /// Per-plot pin removal: omit deleted pins from `pins` and/or send `deleted_pin_ids`.
+  /// Returns normalized response `data` (when present) for pin/plot id sync.
+  Future<Map<String, dynamic>?> updateLevelPlots({
     required String projectId,
     required String levelId,
     required List<Map<String, dynamic>> plots,
   }) async {
     final payload = <String, dynamic>{'plots': plots};
+    final endpoint = AppApiUrls.projectLevelById(projectId, levelId);
     _logOutgoingPayload(
       methodName: 'updateLevelPlots',
-      endpoint: AppApiUrls.projectLevelById(projectId, levelId),
+      endpoint: endpoint,
       payload: payload,
     );
-    await _dio.put<dynamic>(
-      AppApiUrls.projectLevelById(projectId, levelId),
-      data: payload,
-      options: Options(contentType: Headers.jsonContentType),
+    final response = await _dio.put<dynamic>(
+      endpoint,
+      data: jsonEncode(payload),
+      options: Options(
+        contentType: Headers.jsonContentType,
+        headers: const <String, dynamic>{
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
     );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    if (kDebugMode) {
+      final plotsRaw = body['plots'] ?? root['plots'];
+      final plotCount = plotsRaw is List ? plotsRaw.length : 0;
+      debugPrint(
+        '[API RESPONSE] updateLevelPlots $endpoint status=${response.statusCode} plots=$plotCount',
+      );
+    }
+    return body.isNotEmpty ? body : (root.isEmpty ? null : root);
+  }
+
+  /// Plot entries returned after level update (for debugging / id sync).
+  static List<Map<String, dynamic>> plotsFromLevelResponse(
+    Map<String, dynamic>? body,
+  ) {
+    if (body == null || body.isEmpty) return const <Map<String, dynamic>>[];
+    final raw = body['plots'];
+    return _asMapList(raw);
+  }
+
+  /// Pin ids listed under a plot payload (`deleted_pin_ids` / `deleted_pins`).
+  static List<int> deletedPinIdsFromPlotPayload(Map<String, dynamic> plot) {
+    final out = <int>{};
+    for (final key in ['deleted_pin_ids', 'deleted_pins', 'pins_delete']) {
+      final raw = plot[key];
+      if (raw is! List) continue;
+      for (final entry in raw) {
+        final id = readApiInt(entry);
+        if (id != null) out.add(id);
+      }
+    }
+    return out.toList(growable: false);
   }
 
   Future<String?> _resolveLevelIdByName({
@@ -388,7 +563,9 @@ final class QuoteProjectApiClient {
 
   Future<List<PinStatusItem>> fetchPinStatuses({
     int page = 1,
-    int pageSize = 20,
+    int pageSize = 100,
+    bool? isActive,
+    String? search,
   }) async {
     final out = <PinStatusItem>[];
     var nextPage = page < 1 ? 1 : page;
@@ -398,39 +575,61 @@ final class QuoteProjectApiClient {
         queryParameters: <String, dynamic>{
           'page': nextPage,
           'page_size': pageSize,
+          if (isActive != null) 'is_active': isActive.toString(),
+          if (search != null && search.trim().isNotEmpty)
+            'search': search.trim(),
         },
       );
       final root = _coerceMap(_normalizeResponseData(response.data));
-      final rows = root['data'] is List
-          ? (root['data'] as List<dynamic>)
-          : const <dynamic>[];
+      final rows = _pinStatusRowsFromRoot(root);
       for (final row in rows) {
-        final map = _coerceMap(row);
-        final id = _readString(map, const ['id']) ?? '';
-        final statusName = _readString(map, const ['status_name']) ?? '';
-        if (id.isEmpty || statusName.isEmpty) continue;
-        final bg = _readString(map, const ['bg_colour']) ?? '#E5E7EB';
-        final text = _readString(map, const ['text_colour']) ?? '#374151';
-        final isActiveRaw = map['is_active'];
-        final isActive = isActiveRaw is bool
-            ? isActiveRaw
-            : '${isActiveRaw ?? ''}'.toLowerCase() == 'true';
-        out.add(
-          PinStatusItem(
-            id: id,
-            statusName: statusName,
-            bgColour: bg,
-            textColour: text,
-            isActive: isActive,
-          ),
-        );
+        final item = PinStatusItem.tryFromMap(_coerceMap(row));
+        if (item != null) out.add(item);
       }
-      final pagination = _coerceMap(root['pagination']);
-      final hasNext = pagination['next'] != null;
-      if (!hasNext) break;
+      if (!_pinStatusListHasNextPage(root)) break;
       nextPage += 1;
     }
     return out;
+  }
+
+  /// `GET /pin-status/{id}/` — pin-status_read
+  Future<PinStatusItem> fetchPinStatusById(String statusId) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.pinStatusById(statusId),
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final item = PinStatusItem.tryFromMap(body);
+    if (item == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Pin status response is invalid.',
+      );
+    }
+    return item;
+  }
+
+  static List<dynamic> _pinStatusRowsFromRoot(Map<String, dynamic> root) {
+    if (root['results'] is List) return root['results'] as List<dynamic>;
+    if (root['data'] is List) return root['data'] as List<dynamic>;
+    final pagination = _coerceMap(root['pagination']);
+    if (pagination['results'] is List) {
+      return pagination['results'] as List<dynamic>;
+    }
+    if (pagination['data'] is List) {
+      return pagination['data'] as List<dynamic>;
+    }
+    return const <dynamic>[];
+  }
+
+  static bool _pinStatusListHasNextPage(Map<String, dynamic> root) {
+    final next = root['next'];
+    if (next != null && next.toString().trim().isNotEmpty) return true;
+    final pagination = _coerceMap(root['pagination']);
+    final pagNext = pagination['next'];
+    return pagNext != null && pagNext.toString().trim().isNotEmpty;
   }
 
   Future<List<GroupItemOption>> fetchGroups() async {
@@ -459,6 +658,52 @@ final class QuoteProjectApiClient {
   }
 
   Future<List<CompositeItemOption>> fetchCompositeItems({int? groupId}) async {
+    if (groupId != null) {
+      try {
+        final response = await _dio.get<dynamic>(
+          AppApiUrls.groupById(groupId.toString()),
+        );
+        final root = _coerceMap(_normalizeResponseData(response.data));
+        final body = _entityBody(root);
+        final rows = _asMapList(body['items'] ?? root['items']);
+        if (rows.isNotEmpty) {
+          final out = <CompositeItemOption>[];
+          final seen = <int>{};
+          for (final map in rows) {
+            final idRaw =
+                map['item'] ??
+                map['composite_item'] ??
+                map['composite_item_id'] ??
+                map['item_id'] ??
+                map['id'];
+            final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+            if (id == null || !seen.add(id)) continue;
+            final name =
+                _readString(map, const ['item_name', 'name', 'title']) ??
+                'Item $id';
+            final abbreviation =
+                _readString(map, const [
+                  'abbreviation',
+                  'short_code',
+                  'code',
+                ]) ??
+                '';
+            out.add(
+              CompositeItemOption(
+                id: id,
+                name: name,
+                groupId: groupId,
+                abbreviation: abbreviation,
+              ),
+            );
+          }
+          return out;
+        }
+      } catch (_) {
+        // Fallback to list endpoint below.
+      }
+    }
+
     final response = await _dio.get<dynamic>(
       AppApiUrls.items,
       queryParameters: <String, dynamic>{
@@ -477,7 +722,12 @@ final class QuoteProjectApiClient {
     final out = <CompositeItemOption>[];
     for (final row in rows) {
       final map = _coerceMap(row);
-      final idRaw = map['id'] ?? map['item_id'] ?? map['composite_item_id'];
+      final idRaw =
+          map['item'] ??
+          map['composite_item'] ??
+          map['composite_item_id'] ??
+          map['item_id'] ??
+          map['id'];
       final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
       if (id == null) continue;
       final rawGroup = map['group'] ?? map['group_id'];
@@ -490,8 +740,23 @@ final class QuoteProjectApiClient {
         continue;
       }
       final name =
-          _readString(map, const ['name', 'item_name', 'title']) ?? 'Item $id';
-      out.add(CompositeItemOption(id: id, name: name, groupId: parsedGroupId));
+          _readString(map, const ['name', 'item_name', 'title']) ??
+          'Item $id';
+      final abbreviation =
+          _readString(map, const [
+            'abbreviation',
+            'short_code',
+            'code',
+          ]) ??
+          '';
+      out.add(
+        CompositeItemOption(
+          id: id,
+          name: name,
+          groupId: parsedGroupId,
+          abbreviation: abbreviation,
+        ),
+      );
     }
     return out;
   }
@@ -500,9 +765,7 @@ final class QuoteProjectApiClient {
   ///
   /// Quotation `site` expects this FK, not `/item/` rows.
   Future<List<SiteModel>> fetchProjectSites({required String projectId}) async {
-    final response = await _dio.get<dynamic>(
-      AppApiUrls.projectById(projectId),
-    );
+    final response = await _dio.get<dynamic>(AppApiUrls.projectById(projectId));
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
     final raw = body['sites'] ?? root['sites'];
@@ -553,7 +816,11 @@ final class QuoteProjectApiClient {
       );
       for (final item in itemNodes) {
         final itemIdRaw =
-            item['id'] ?? item['item_id'] ?? item['composite_item_id'];
+            item['item'] ??
+            item['composite_item'] ??
+            item['composite_item_id'] ??
+            item['item_id'] ??
+            item['id'];
         final itemId = itemIdRaw is int
             ? itemIdRaw
             : int.tryParse('${itemIdRaw ?? ''}');
@@ -566,6 +833,13 @@ final class QuoteProjectApiClient {
               'product_name',
             ]) ??
             'Item $itemId';
+        final abbreviation =
+            _readString(item, const [
+              'abbreviation',
+              'short_code',
+              'code',
+            ]) ??
+            '';
         final nestedGroupRaw = item['group'] ?? item['group_id'];
         final nestedGroupId = nestedGroupRaw is Map
             ? int.tryParse('${nestedGroupRaw['id'] ?? ''}')
@@ -577,6 +851,7 @@ final class QuoteProjectApiClient {
             id: itemId,
             name: name,
             groupId: nestedGroupId ?? groupId,
+            abbreviation: abbreviation,
           ),
         );
       }
@@ -608,9 +883,8 @@ final class QuoteProjectApiClient {
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
-    final id = _readString(body, const ['id']);
-    final name = _readString(body, const ['status_name']);
-    if (id == null || id.isEmpty || name == null || name.isEmpty) {
+    final item = PinStatusItem.tryFromMap(body);
+    if (item == null) {
       throw DioException(
         requestOptions: response.requestOptions,
         response: response,
@@ -618,13 +892,7 @@ final class QuoteProjectApiClient {
         message: 'Pin status created but payload is invalid.',
       );
     }
-    return PinStatusItem(
-      id: id,
-      statusName: name,
-      bgColour: _readString(body, const ['bg_colour']) ?? '#E5E7EB',
-      textColour: _readString(body, const ['text_colour']) ?? '#374151',
-      isActive: body['is_active'] is bool ? body['is_active'] as bool : true,
-    );
+    return item;
   }
 
   Future<PinStatusItem> updatePinStatus({
@@ -651,35 +919,282 @@ final class QuoteProjectApiClient {
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
-    final id = _readString(body, const ['id']) ?? statusId;
-    final name = _readString(body, const ['status_name']) ?? statusName;
-    if (id.trim().isEmpty || name.trim().isEmpty) {
+    final item = PinStatusItem.tryFromMap(body);
+    if (item == null) {
+      return PinStatusItem(
+        id: statusId,
+        statusName: statusName,
+        bgColour: bgColour,
+        textColour: textColour,
+        isActive: isActive,
+      );
+    }
+    return item;
+  }
+
+  /// `PATCH /pin-status/{id}/` — pin-status_partial_update
+  Future<PinStatusItem> patchPinStatus({
+    required String statusId,
+    String? statusName,
+    String? bgColour,
+    String? textColour,
+    bool? isActive,
+  }) async {
+    final payload = <String, dynamic>{
+      if (statusName != null) 'status_name': statusName,
+      if (bgColour != null) 'bg_colour': bgColour,
+      if (textColour != null) 'text_colour': textColour,
+      if (isActive != null) 'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'patchPinStatus',
+      endpoint: AppApiUrls.pinStatusById(statusId),
+      payload: payload,
+    );
+    final response = await _dio.patch<dynamic>(
+      AppApiUrls.pinStatusById(statusId),
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final item = PinStatusItem.tryFromMap(body);
+    if (item != null) return item;
+    return fetchPinStatusById(statusId);
+  }
+
+  /// `DELETE /pin-status/{id}/` — pin-status_delete
+  ///
+  /// When [moveToStatusId] is set, sends reassignment in the request body
+  /// (`move_to` / `reassign_to`) for backends that support it.
+  Future<void> deletePinStatus(
+    String statusId, {
+    String? moveToStatusId,
+  }) async {
+    final moveTo = moveToStatusId?.trim();
+    await _dio.delete<void>(
+      AppApiUrls.pinStatusById(statusId),
+      data: moveTo != null && moveTo.isNotEmpty
+          ? <String, dynamic>{'move_to': moveTo, 'reassign_to': moveTo}
+          : null,
+    );
+  }
+
+  /// `GET /jobs/` — jobs_list
+  Future<List<JobRead>> fetchJobs({
+    String? jobStatus,
+    String? assignedWorker,
+    String? jobSource,
+    String? search,
+    int page = 1,
+    int pageSize = 50,
+  }) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.jobs,
+      queryParameters: <String, dynamic>{
+        if (jobStatus != null && jobStatus.trim().isNotEmpty)
+          'job_status': jobStatus.trim(),
+        if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
+          'assigned_worker': assignedWorker.trim(),
+        if (jobSource != null && jobSource.trim().isNotEmpty)
+          'job_source': jobSource.trim(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        'page': page < 1 ? 1 : page,
+        'page_size': pageSize,
+      },
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final rows = root['results'] is List
+        ? (root['results'] as List<dynamic>)
+        : (root['data'] is List
+              ? (root['data'] as List<dynamic>)
+              : const <dynamic>[]);
+    return rows
+        .whereType<Map>()
+        .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
+        .whereType<JobRead>()
+        .toList(growable: false);
+  }
+
+  /// Fetches all pages from `GET /jobs/`.
+  Future<List<JobRead>> fetchAllJobs({
+    String? jobStatus,
+    String? assignedWorker,
+    String? jobSource,
+    String? search,
+    int pageSize = 50,
+  }) async {
+    final jobs = <JobRead>[];
+    var page = 1;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.jobs,
+        queryParameters: <String, dynamic>{
+          if (jobStatus != null && jobStatus.trim().isNotEmpty)
+            'job_status': jobStatus.trim(),
+          if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
+            'assigned_worker': assignedWorker.trim(),
+          if (jobSource != null && jobSource.trim().isNotEmpty)
+            'job_source': jobSource.trim(),
+          if (search != null && search.trim().isNotEmpty)
+            'search': search.trim(),
+          'page': page,
+          'page_size': pageSize,
+        },
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = root['results'] is List
+          ? (root['results'] as List<dynamic>)
+          : (root['data'] is List
+                ? (root['data'] as List<dynamic>)
+                : const <dynamic>[]);
+      jobs.addAll(
+        rows
+            .whereType<Map>()
+            .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
+            .whereType<JobRead>(),
+      );
+      if (root['next'] == null || rows.isEmpty) break;
+      page += 1;
+    }
+    return jobs;
+  }
+
+  /// Job status options for create/edit job forms.
+  Future<List<NamedIdOption>> fetchJobStatusOptions() async {
+    return _fetchNamedIdOptions(
+      AppApiUrls.jobStatuses,
+      nameKeys: const ['status_name', 'name', 'title', 'label'],
+    );
+  }
+
+  /// Registered QR codes for create/edit job forms.
+  Future<List<NamedIdOption>> fetchQrCodeOptions() async {
+    return _fetchNamedIdOptions(
+      AppApiUrls.qrCodes,
+      nameKeys: const ['qr_code_id', 'code', 'name', 'title', 'label', 'qr_code'],
+    );
+  }
+
+  Future<List<NamedIdOption>> _fetchNamedIdOptions(
+    String endpoint, {
+    required List<String> nameKeys,
+  }) async {
+    try {
+      final response = await _dio.get<dynamic>(
+        endpoint,
+        queryParameters: const <String, dynamic>{'page': 1, 'page_size': 100},
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = root['data'] is List
+          ? (root['data'] as List<dynamic>)
+          : (root['results'] is List
+                ? (root['results'] as List<dynamic>)
+                : const <dynamic>[]);
+      final out = <NamedIdOption>[];
+      final seen = <int>{};
+      for (final row in rows) {
+        final map = _coerceMap(row);
+        final idRaw = map['id'];
+        final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+        if (id == null || !seen.add(id)) continue;
+        final name = _readString(map, nameKeys) ?? 'Item $id';
+        out.add(NamedIdOption(id: id, name: name));
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// `GET /jobs/{id}/` — jobs_read
+  Future<JobRead> fetchJobById(String jobId) async {
+    final response = await _dio.get<dynamic>(AppApiUrls.jobById(jobId));
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final job = JobRead.tryFromMap(body);
+    if (job == null) {
       throw DioException(
         requestOptions: response.requestOptions,
         response: response,
         type: DioExceptionType.badResponse,
-        message: 'Pin status updated but payload is invalid.',
+        message: 'Job response missing id.',
       );
     }
-    return PinStatusItem(
-      id: id,
-      statusName: name,
-      bgColour: _readString(body, const ['bg_colour']) ?? bgColour,
-      textColour: _readString(body, const ['text_colour']) ?? textColour,
-      isActive: body['is_active'] is bool
-          ? body['is_active'] as bool
-          : isActive,
+    return job;
+  }
+
+  /// `POST /jobs/` — jobs_create
+  Future<JobRead> createJob(Map<String, dynamic> payload) async {
+    _logOutgoingPayload(
+      methodName: 'createJob',
+      endpoint: AppApiUrls.jobs,
+      payload: payload,
     );
+    final response = await _dio.post<dynamic>(AppApiUrls.jobs, data: payload);
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final job = JobRead.tryFromMap(body);
+    if (job == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Job created but response missing id.',
+      );
+    }
+    return job;
   }
 
-  Future<void> deletePinStatus(String statusId) async {
-    await _dio.delete<void>(AppApiUrls.pinStatusById(statusId));
+  /// `POST /jobs/create-from-quotation/` — jobs_create_from_quotation
+  Future<JobRead> createJobFromQuotation(Map<String, dynamic> payload) async {
+    _logOutgoingPayload(
+      methodName: 'createJobFromQuotation',
+      endpoint: AppApiUrls.jobsCreateFromQuotation,
+      payload: payload,
+    );
+    final response = await _dio.post<dynamic>(
+      AppApiUrls.jobsCreateFromQuotation,
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final job = JobRead.tryFromMap(body);
+    if (job == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Job created but response missing id.',
+      );
+    }
+    return job;
   }
 
-  Future<List<TagItem>> fetchTags({
-    int page = 1,
-    int pageSize = 50,
+  /// `PUT /jobs/{id}/` — jobs_update
+  Future<JobRead> updateJob({
+    required String jobId,
+    required Map<String, dynamic> payload,
   }) async {
+    _logOutgoingPayload(
+      methodName: 'updateJob',
+      endpoint: AppApiUrls.jobById(jobId),
+      payload: payload,
+    );
+    final response = await _dio.put<dynamic>(
+      AppApiUrls.jobById(jobId),
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return JobRead.tryFromMap(body) ?? fetchJobById(jobId);
+  }
+
+  /// `DELETE /jobs/{id}/` — jobs_delete
+  Future<void> deleteJob(String jobId) async {
+    await _dio.delete<void>(AppApiUrls.jobById(jobId));
+  }
+
+  Future<List<TagItem>> fetchTags({int page = 1, int pageSize = 50}) async {
     final out = <TagItem>[];
     var nextPage = page < 1 ? 1 : page;
     while (true) {
@@ -697,20 +1212,12 @@ final class QuoteProjectApiClient {
       for (final row in rows) {
         final map = _coerceMap(row);
         final id = _readString(map, const ['id', 'tag_id']) ?? '';
-        final name = _readString(map, const [
-              'name',
-              'tag_name',
-              'label',
-              'title',
-            ]) ??
+        final name =
+            _readString(map, const ['name', 'tag_name', 'label', 'title']) ??
             '';
         if (id.isEmpty || name.isEmpty) continue;
-        final colour = _readString(map, const [
-              'colour',
-              'color',
-              'bg_colour',
-              'hex',
-            ]) ??
+        final colour =
+            _readString(map, const ['colour', 'color', 'bg_colour', 'hex']) ??
             '#3B82F6';
         final textC = _readString(map, const ['text_colour', 'text_color']);
         final isActiveRaw = map['is_active'];
@@ -752,10 +1259,7 @@ final class QuoteProjectApiClient {
       endpoint: AppApiUrls.tags,
       payload: payload,
     );
-    final response = await _dio.post<dynamic>(
-      AppApiUrls.tags,
-      data: payload,
-    );
+    final response = await _dio.post<dynamic>(AppApiUrls.tags, data: payload);
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
     return _tagItemFromMap(body);
@@ -794,12 +1298,7 @@ final class QuoteProjectApiClient {
 
   TagItem _tagItemFromMap(Map<String, dynamic> body, {String? fallbackId}) {
     final id = _readString(body, const ['id', 'tag_id']) ?? fallbackId ?? '';
-    final name = _readString(body, const [
-          'name',
-          'tag_name',
-          'label',
-        ]) ??
-        '';
+    final name = _readString(body, const ['name', 'tag_name', 'label']) ?? '';
     if (id.isEmpty || name.isEmpty) {
       throw DioException(
         requestOptions: RequestOptions(path: AppApiUrls.tags),
@@ -807,12 +1306,8 @@ final class QuoteProjectApiClient {
         message: 'Tag response missing id or name.',
       );
     }
-    final colour = _readString(body, const [
-          'colour',
-          'color',
-          'bg_colour',
-        ]) ??
-        '#3B82F6';
+    final colour =
+        _readString(body, const ['colour', 'color', 'bg_colour']) ?? '#3B82F6';
     final textC = _readString(body, const ['text_colour', 'text_color']);
     final isActiveRaw = body['is_active'];
     final isActive = isActiveRaw is bool

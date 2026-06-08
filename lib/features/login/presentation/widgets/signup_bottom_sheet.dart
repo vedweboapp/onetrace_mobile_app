@@ -10,6 +10,9 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:country_code_picker/country_code_picker.dart';
+import 'package:red5/core/utils/phone_number_utils.dart';
+import 'package:red5/core/widgets/app_phone_text_field.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 
@@ -42,6 +45,7 @@ class _SignupBottomSheetState extends ConsumerState<SignupBottomSheet> {
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
+  CountryCode _phoneCountry = PhoneNumberUtils.defaultCountry;
   final _passwordController = TextEditingController();
 
   late final List<TextEditingController> _otpControllers;
@@ -321,7 +325,10 @@ class _SignupBottomSheetState extends ConsumerState<SignupBottomSheet> {
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
         email: _emailController.text.trim(),
-        phoneNumber: _phoneController.text.trim(),
+        phoneNumber: PhoneNumberUtils.formatFull(
+          _phoneCountry,
+          _phoneController.text,
+        ),
         password: _passwordController.text,
       );
       if (!mounted) return;
@@ -613,18 +620,16 @@ class _SignupBottomSheetState extends ConsumerState<SignupBottomSheet> {
                         ),
                         if (_otpSection() != null) _otpSection()!,
                         _fieldLabel(AppStrings.signupPhoneLabel),
-                        AppTextField(
+                        AppPhoneTextField(
                           controller: _phoneController,
                           hintText: AppStrings.signupPhoneHint,
-                          keyboardType: TextInputType.phone,
-                          prefixIcon: Icons.phone_outlined,
                           textInputAction: TextInputAction.next,
-                          validator: (v) {
-                            if ((v ?? '').trim().isEmpty) {
-                              return AppStrings.signupFieldRequired;
-                            }
-                            return null;
-                          },
+                          onCountryChanged: (c) => _phoneCountry = c,
+                          validator: (v) => PhoneNumberUtils.validateNational(
+                            national: v,
+                            emptyMessage: AppStrings.signupFieldRequired,
+                            invalidMessage: AppStrings.signupFieldRequired,
+                          ),
                         ),
                         const SizedBox(height: 18),
                         _fieldLabel(AppStrings.passwordLabel),

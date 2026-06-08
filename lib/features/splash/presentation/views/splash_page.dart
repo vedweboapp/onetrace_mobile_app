@@ -3,24 +3,26 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
 import 'package:red5/core/constants/app_strings.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
-import 'package:red5/core/widgets/app_branded_logo_block.dart';
-import 'package:red5/core/widgets/app_frosted_panel.dart';
-import 'package:red5/core/widgets/app_screen_stack.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
+import 'package:red5/employee_role/data/role_session.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
 
   static const path = '/';
   static const name = 'splash';
+
+  static const _simhoLogoAsset = 'assets/images/Simho logo.jpg';
 
   @override
   State<SplashPage> createState() => _SplashPageState();
@@ -57,23 +59,40 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
     final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
     if (AuthSession.isJwtValid(access)) {
       if (!mounted) return;
-      context.go(DashboardPage.path);
+      sl<AuthRedirectNotifier>().notifyAuthChanged();
+      context.go(
+        RoleSession.homePathForStoredRole(storage) ?? DashboardPage.homePath,
+      );
       return;
     }
 
-    final refresh = storage.getString(LocalStorageKeys.authRefreshToken)?.trim();
+    final refresh = storage
+        .getString(LocalStorageKeys.authRefreshToken)
+        ?.trim();
     if (refresh != null && refresh.isNotEmpty) {
       try {
-        final refreshResponse = await authApi.refreshToken(refreshToken: refresh);
-        final newAccess = AuthSession.readAccessToken(refreshResponse.data);
-        final newRefresh = AuthSession.readRefreshToken(refreshResponse.data);
+        final refreshResponse = await authApi.refreshToken(
+          refreshToken: refresh,
+        );
+        final refreshPayload = AuthSession.coerceAuthPayload(
+          refreshResponse.data,
+        );
+        final newAccess = AuthSession.readAccessToken(refreshPayload);
+        final newRefresh = AuthSession.readRefreshToken(refreshPayload);
         if (newAccess != null && newAccess.isNotEmpty) {
           await storage.setString(LocalStorageKeys.authAccessToken, newAccess);
           if (newRefresh != null && newRefresh.isNotEmpty) {
-            await storage.setString(LocalStorageKeys.authRefreshToken, newRefresh);
+            await storage.setString(
+              LocalStorageKeys.authRefreshToken,
+              newRefresh,
+            );
           }
           if (!mounted) return;
-          context.go(DashboardPage.path);
+          sl<AuthRedirectNotifier>().notifyAuthChanged();
+          context.go(
+            RoleSession.homePathForStoredRole(storage) ??
+                DashboardPage.homePath,
+          );
           return;
         }
       } catch (_) {
@@ -84,7 +103,9 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
     await storage.remove(LocalStorageKeys.authAccessToken);
     await storage.remove(LocalStorageKeys.authRefreshToken);
     await storage.remove(LocalStorageKeys.authUserId);
+    await RoleSession.clearRole(storage);
     if (!mounted) return;
+    sl<AuthRedirectNotifier>().notifyAuthChanged();
     context.go(LoginPage.path);
   }
 
@@ -99,88 +120,113 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.transparent,
-      body: AppScreenStack(
-        child: SafeArea(
-          child: Column(
-            children: [
-              const Spacer(),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: AppFrostedPanel(
-                  padding: const EdgeInsets.all(28),
-                  fillAlpha: 0.82,
-                  child: AppBrandedLogoBlock(
-                    tagline: AppStrings.splashTagline.toUpperCase(),
-                    titleStyle: AppFonts.displayLarge(color: AppColors.brandPrimary)
-                        .copyWith(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -3,
-                    ),
-                    taglineStyle:
-                        AppFonts.labelMedium(color: AppColors.brown).copyWith(
-                      letterSpacing: 3,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-              const Spacer(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
-                child: Column(
-                  children: [
-                    AnimatedBuilder(
-                      animation: _loaderController,
-                      builder: (context, _) {
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: LinearProgressIndicator(
-                            minHeight: 5,
-                            value: _loaderController.value,
-                            backgroundColor: AppColors.muted.withValues(alpha: 0.2),
-                            valueColor:
-                                const AlwaysStoppedAnimation<Color>(AppColors.brandPrimary),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+      backgroundColor: AppColors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(flex: 2),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320, maxHeight: 200),
+                child: Image.asset(
+                  SplashPage._simhoLogoAsset,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  filterQuality: FilterQuality.high,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        AnimatedBuilder(
-                          animation: _pulseController,
-                          builder: (context, _) {
-                            return Container(
-                              width: 7,
-                              height: 7,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: AppColors.brandPrimary.withValues(
-                                  alpha: 0.35 + (_pulseController.value * 0.55),
-                                ),
-                              ),
-                            );
-                          },
+                        Icon(
+                          Icons.apartment_rounded,
+                          size: 72,
+                          color: AppColors.muted.withValues(alpha: 0.6),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(height: 12),
                         Text(
-                          AppStrings.splashLoadingText.toUpperCase(),
-                          style: AppFonts.labelSmall(
-                            color: AppColors.ink.withValues(alpha: 0.75),
-                          ).copyWith(
-                            letterSpacing: 1.2,
-                            fontWeight: FontWeight.w600,
-                          ),
+                          AppStrings.appName,
+                          style: AppFonts.headlineSmall(
+                            color: AppColors.inkStrong,
+                          ).copyWith(fontWeight: FontWeight.w800),
                         ),
                       ],
-                    ),
-                  ],
+                    );
+                  },
                 ),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 28),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 48),
+              child: Text(
+                AppStrings.splashTagline,
+                textAlign: TextAlign.center,
+                style: AppFonts.bodyMedium(
+                  color: AppColors.muted,
+                ).copyWith(
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
+            const Spacer(flex: 3),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(32, 0, 32, 36),
+              child: Column(
+                children: [
+                  AnimatedBuilder(
+                    animation: _loaderController,
+                    builder: (context, _) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          minHeight: 4,
+                          value: _loaderController.value,
+                          backgroundColor: AppColors.borderLight,
+                          valueColor: const AlwaysStoppedAnimation<Color>(
+                            AppColors.inkStrong,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      AnimatedBuilder(
+                        animation: _pulseController,
+                        builder: (context, _) {
+                          return Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppColors.inkStrong.withValues(
+                                alpha: 0.25 + (_pulseController.value * 0.45),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        AppStrings.splashLoadingText.toUpperCase(),
+                        style: AppFonts.labelSmall(
+                          color: AppColors.muted,
+                        ).copyWith(
+                          letterSpacing: 1.4,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

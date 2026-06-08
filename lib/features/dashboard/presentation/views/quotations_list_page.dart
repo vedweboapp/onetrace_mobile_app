@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
@@ -21,6 +22,7 @@ class QuotationsListPage extends ConsumerStatefulWidget {
 
 class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
   final _searchController = TextEditingController();
+  final _searchDebounce = DebouncedSearch();
   final List<QuotationListItem> _items = <QuotationListItem>[];
   bool _isLoading = false;
   bool _isLoadingMore = false;
@@ -34,12 +36,19 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_onSearchChanged);
     _fetchPage(reset: true);
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    _searchDebounce.schedule(() => _fetchPage(reset: true));
   }
 
   @override
   void dispose() {
+    _searchDebounce.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -64,26 +73,6 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
     return '—';
   }
 
-  String _siteLine(QuotationListItem q) {
-    final s = q.siteName?.trim();
-    if (s != null && s.isNotEmpty) return s;
-    return '—';
-  }
-
-  List<QuotationListItem> _filtered(List<QuotationListItem> all) {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) return all;
-    return all.where((q) {
-      return q.id.toLowerCase().contains(query) ||
-          q.quoteName.toLowerCase().contains(query) ||
-          q.quoteNumber.toLowerCase().contains(query) ||
-          _clientLine(q).toLowerCase().contains(query) ||
-          _projectLine(q).toLowerCase().contains(query) ||
-          _siteLine(q).toLowerCase().contains(query) ||
-          _phoneLine(q).toLowerCase().contains(query);
-    }).toList();
-  }
-
   Future<void> _fetchPage({bool reset = false}) async {
     if (reset) {
       setState(() {
@@ -100,6 +89,7 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
       final result = await api.fetchQuotationsPage(
         page: nextPage,
         pageSize: QuotationsApiClient.defaultPageSize,
+        search: _searchController.text.trim(),
       );
       if (!mounted) return;
       setState(() {
@@ -283,7 +273,6 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
       }
     });
 
-    final filtered = _filtered(_items);
     final hasQuery = _searchController.text.trim().isNotEmpty;
 
     return Scaffold(
@@ -299,7 +288,7 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
                 border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
               ),
               child: Text(
-                'SEARCH RESULTS (${filtered.length})',
+                'SEARCH RESULTS (${_items.length})',
                 style: AppFonts.labelLarge(color: const Color(0xFF8A8A8A))
                     .copyWith(
                       letterSpacing: 0.7,
@@ -354,10 +343,10 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
                     color: const Color(0xFF121212),
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
-                      itemCount: filtered.length + 1,
+                      itemCount: _items.length + 1,
                       itemBuilder: (context, index) {
-                        if (index == filtered.length) {
-                          if (_searchController.text.trim().isEmpty &&
+                        if (index == _items.length) {
+                          if (!hasQuery &&
                               !_isLoadingMore &&
                               _page < _totalPages) {
                             _fetchPage(reset: false);
@@ -374,7 +363,7 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
                           }
                           return const SizedBox(height: 12);
                         }
-                        return _quoteTile(filtered[index]);
+                        return _quoteTile(_items[index]);
                       },
                     ),
                   ),

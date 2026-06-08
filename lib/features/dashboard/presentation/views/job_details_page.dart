@@ -1,0 +1,1495 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/dashboard/data/quote_summary.dart';
+import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+class JobDetailsPage extends ConsumerStatefulWidget {
+  const JobDetailsPage({
+    super.key,
+    required this.projectId,
+    required this.jobId,
+    required this.jobTitle,
+    required this.projectName,
+    required this.clientName,
+    required this.workerName,
+    required this.startDate,
+    required this.scheduleDate,
+    required this.status,
+    this.latitude,
+    this.longitude,
+  });
+
+  static const name = 'job-details';
+
+  final String projectId;
+  final String jobId;
+  final String jobTitle;
+  final String projectName;
+  final String clientName;
+  final String workerName;
+  final DateTime? startDate;
+  final DateTime? scheduleDate;
+  final String status;
+  final double? latitude;
+  final double? longitude;
+
+  static String pathFor(String projectId, String jobId) {
+    return '${ProjectDetailsPage.pathPrefix}/$projectId/jobs/$jobId';
+  }
+
+  @override
+  ConsumerState<JobDetailsPage> createState() => _JobDetailsPageState();
+}
+
+class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  JobRead? _job;
+  bool _isLoadingJob = false;
+  bool _isUpdatingJob = false;
+  String? _jobLoadError;
+  String? _scannedQrValue;
+  final TextEditingController _commentsController = TextEditingController();
+  bool _ppeConfirmed = true;
+  bool _powerIsolated = true;
+  bool _groundingVerified = false;
+  bool _panelDelivered = true;
+  bool _materialInspected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    Future.microtask(_loadJobDetails);
+  }
+
+  @override
+  void dispose() {
+    _commentsController.dispose();
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  String _formatDate(DateTime? value) {
+    if (value == null) return '--';
+    return DateFormat('MMM d, yyyy').format(value);
+  }
+
+  String _formatMoney(double value) {
+    return NumberFormat.currency(symbol: r'$ ', decimalDigits: 2).format(value);
+  }
+
+  String get _jobIdText => _job?.id.toString() ?? widget.jobId;
+
+  String get _jobTitle => _job?.title ?? widget.jobTitle;
+
+  String get _description =>
+      _job?.description ??
+      'Install and configure electrical panel at site location. Ensure all safety protocols are followed during the high-voltage setup.';
+
+  String get _workerName => _job?.displayWorker ?? widget.workerName;
+
+  String get _statusText => _job?.displayStatus ?? widget.status;
+
+  DateTime? get _startDate => _job?.startDate ?? widget.startDate;
+
+  DateTime? get _endDate => _job?.endDate ?? widget.scheduleDate;
+
+  String get _sourceText => _job?.jobSource ?? 'Manual';
+
+  String get _itemName => _job?.itemName ?? 'Main Electrical Panel';
+
+  String get _sectionName => _job?.sectionName ?? 'Main Electrical Panel';
+
+  int get _quantity => _job?.quantity ?? 10;
+
+  double get _unitPrice => _job?.sellingPrice ?? 1500;
+
+  double get _total => _job?.total ?? (_quantity * _unitPrice);
+
+  Future<void> _loadJobDetails() async {
+    final id = int.tryParse(widget.jobId.trim());
+    if (id == null) return;
+    setState(() {
+      _isLoadingJob = true;
+      _jobLoadError = null;
+    });
+    try {
+      final job = await ref
+          .read(quoteProjectApiClientProvider)
+          .fetchJobById(id.toString());
+      if (!mounted) return;
+      setState(() {
+        _job = job;
+        _isLoadingJob = false;
+        if (job.qrCode != null) {
+          _scannedQrValue = job.qrCode.toString();
+        }
+        _commentsController.text = (job.comments ?? '').trim();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingJob = false;
+        _jobLoadError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Could not load job details',
+        );
+      });
+    }
+  }
+
+  Color get _statusColor {
+    switch (_statusText.toLowerCase()) {
+      case 'active':
+      case 'in progress':
+        return const Color(0xFF10B981);
+      case 'completed':
+        return const Color(0xFF2563EB);
+      default:
+        return const Color(0xFF9CA3AF);
+    }
+  }
+
+  Future<void> _scanQrCode() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const _JobQrScannerPage()),
+    );
+    final value = code?.trim();
+    if (value == null || value.isEmpty || !mounted) return;
+    setState(() => _scannedQrValue = value);
+    if (_job != null) {
+      final qrId = int.tryParse(value);
+      if (qrId != null) {
+        unawaited(_persistQrCode(qrId));
+      }
+    }
+    context.showTopSnackBar(
+      const SnackBar(content: Text('QR code scanned successfully.')),
+    );
+  }
+
+  Future<void> _persistQrCode(int qrId) async {
+    final job = _job;
+    if (job == null || _isUpdatingJob) return;
+    setState(() => _isUpdatingJob = true);
+    try {
+      final payload = job.toWritePayload()
+        ..['qr_code'] = qrId
+        ..['form'] = job.form;
+      final updated = await ref
+          .read(quoteProjectApiClientProvider)
+          .updateJob(jobId: job.id.toString(), payload: payload);
+      if (!mounted) return;
+      setState(() {
+        _job = updated;
+        _isUpdatingJob = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isUpdatingJob = false);
+    }
+  }
+
+  String get _mapQuery {
+    final lat = widget.latitude;
+    final lng = widget.longitude;
+    if (lat != null && lng != null) return '$lat,$lng';
+
+    final fallback = [
+      widget.projectName,
+      widget.clientName,
+    ].where((part) => part.trim().isNotEmpty && part.trim() != '--').join(', ');
+    return fallback.isEmpty ? _jobTitle : fallback;
+  }
+
+  double get _mapLatitude => widget.latitude ?? 40.712776;
+
+  double get _mapLongitude => widget.longitude ?? -74.005974;
+
+  void _handleBack() {
+    if (Navigator.of(context).canPop()) {
+      context.pop();
+      return;
+    }
+    final fallbackSummary = QuoteSummary(
+      id: widget.projectId.trim(),
+      quoteName: widget.projectName.trim().isEmpty
+          ? 'Project'
+          : widget.projectName.trim(),
+      quoteNumber: '—',
+      clientName: widget.clientName,
+      projectName: widget.projectName,
+    );
+    context.go(
+      ProjectDetailsPage.pathFor(widget.projectId),
+      extra: <String, dynamic>{
+        ...fallbackSummary.toJson(),
+        'initialTabIndex': 1, // Jobs tab
+      },
+    );
+  }
+
+  Future<void> _openMap() async {
+    final uri = Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': _mapQuery,
+    });
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (opened || !mounted) return;
+    context.showTopSnackBar(
+      const SnackBar(content: Text('Could not open map for this job.')),
+    );
+  }
+
+  Widget _sectionTitle(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 10),
+      child: Text(
+        text,
+        style: AppFonts.labelLarge(
+          color: AppColors.inkStrong,
+        ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.6),
+      ),
+    );
+  }
+
+  Widget _card({required Widget child, EdgeInsetsGeometry? padding}) {
+    return Container(
+      width: double.infinity,
+      padding: padding ?? const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _detailLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: AppFonts.labelSmall(
+              color: AppColors.muted,
+            ).copyWith(fontWeight: FontWeight.w700, letterSpacing: 0.2),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value.trim().isEmpty ? '--' : value,
+            style: AppFonts.bodyMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w500, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mapCard() {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _openMap,
+        child: SizedBox(
+          height: 160,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _VisibleMapTiles(
+                latitude: _mapLatitude,
+                longitude: _mapLongitude,
+              ),
+              Container(color: Colors.black.withValues(alpha: 0.08)),
+              Center(
+                child: Icon(
+                  Icons.location_on,
+                  color: AppColors.accentRed,
+                  size: 82,
+                  shadows: const [
+                    Shadow(
+                      color: Color(0x66000000),
+                      offset: Offset(0, 4),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: 10,
+                bottom: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: AppColors.shadowCard,
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.map_outlined,
+                        size: 15,
+                        color: AppColors.inkStrong,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Open in Maps',
+                        style: AppFonts.labelSmall(
+                          color: AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 10,
+                bottom: 10,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: AppColors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.my_location_rounded,
+                    size: 18,
+                    color: AppColors.inkStrong,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _scheduleRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: _dateTile(label: 'Start Date', value: _formatDate(_startDate)),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _dateTile(
+            label: 'Schedule Date',
+            value: _formatDate(_endDate),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dateTile({required String label, required String value}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppFonts.labelSmall(
+            color: AppColors.muted,
+          ).copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            const Icon(
+              Icons.calendar_month_outlined,
+              size: 16,
+              color: AppColors.inkStrong,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                value,
+                style: AppFonts.bodySmall(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _formsCard() {
+    return _card(
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.assignment_outlined,
+              size: 20,
+              color: AppColors.inkStrong,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Safety Checklist',
+                  style: AppFonts.titleSmall(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Site-level safety form',
+                  style: AppFonts.bodySmall(color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+        ],
+      ),
+    );
+  }
+
+  Widget _linkedDrawingCard() {
+    return _card(
+      child: Row(
+        children: [
+          const Icon(Icons.folder_rounded, color: AppColors.inkStrong),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'E305 - Power Layout',
+                  style: AppFonts.titleSmall(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Last updated 5 days ago',
+                  style: AppFonts.bodySmall(color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+        ],
+      ),
+    );
+  }
+
+  Widget _photosRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: _photoSlot(
+            label: 'BEFORE PROCESS',
+            child: const Icon(
+              Icons.electrical_services_rounded,
+              color: AppColors.accentRed,
+              size: 34,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _photoSlot(
+            label: 'AFTER PROCESS',
+            child: const Icon(
+              Icons.camera_alt_rounded,
+              color: AppColors.muted,
+              size: 22,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _photoSlot(
+            label: '',
+            child: const Icon(Icons.add, color: AppColors.muted),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _photoSlot(
+            label: '',
+            child: const Icon(Icons.add, color: AppColors.muted),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _photoSlot({required String label, required Widget child}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 16,
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppFonts.labelSmall(
+              color: AppColors.muted,
+            ).copyWith(fontSize: 9, fontWeight: FontWeight.w800),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Container(
+          height: 76,
+          decoration: BoxDecoration(
+            color: AppColors.surfaceHigh,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.borderLight),
+          ),
+          child: Center(child: child),
+        ),
+      ],
+    );
+  }
+
+  Widget _commentsCard() {
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Latest comments from response',
+            style: AppFonts.labelSmall(
+              color: AppColors.muted,
+            ).copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          AppTextField(
+            controller: _commentsController,
+            hintText: 'Add a comment...',
+            minLines: 2,
+            maxLines: 4,
+            borderRadius: 10,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _qrRow() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'QR Code',
+            style: AppFonts.labelSmall(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+        Material(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: _scanQrCode,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              height: 48,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.borderLight),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _scannedQrValue ?? 'Scan QR Code',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.qr_code_scanner_rounded,
+                    color: AppColors.inkStrong,
+                    size: 22,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _overviewTab() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 96),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'JOB #${_jobIdText.toUpperCase()}',
+                style: AppFonts.labelSmall(
+                  color: AppColors.muted,
+                ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.4),
+              ),
+            ),
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: _statusColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _statusText.toUpperCase(),
+              style: AppFonts.labelSmall(
+                color: _statusColor,
+              ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.5),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (_isLoadingJob)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              color: AppColors.inkStrong,
+            ),
+          ),
+        if (_jobLoadError != null)
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFBEDEE),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF2D3D6)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _jobLoadError!,
+                    style: AppFonts.bodySmall(color: AppColors.error),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _loadJobDetails,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        _mapCard(),
+        _sectionTitle('JOB DETAILS'),
+        _detailLine('Job Title', _jobTitle),
+        _detailLine('Project Name', widget.projectName),
+        _detailLine('Client Name', widget.clientName),
+        const Divider(height: 22, color: AppColors.borderLight),
+        _detailLine('Description', _description),
+        _detailLine('Source', _sourceText),
+        _sectionTitle('SCHEDULE'),
+        _card(
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: const Color(0xFFD4E4F7),
+                child: Text(
+                  _initials(_workerName),
+                  style: AppFonts.labelSmall(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Assigned Worker',
+                      style: AppFonts.labelSmall(color: AppColors.muted),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _workerName,
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _scheduleRow(),
+        _sectionTitle('MATERIALS'),
+        _card(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _itemName,
+                            style: AppFonts.titleSmall(
+                              color: AppColors.inkStrong,
+                            ).copyWith(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Qty: $_quantity units',
+                            style: AppFonts.bodySmall(color: AppColors.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      '${_formatMoney(_unitPrice)} / unit',
+                      style: AppFonts.bodySmall(
+                        color: AppColors.muted,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: AppColors.borderLight),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Text(
+                      'Subtotal',
+                      style: AppFonts.bodySmall(color: AppColors.muted),
+                    ),
+                    const Spacer(),
+                    Text(
+                      _formatMoney(_total),
+                      style: AppFonts.titleMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        _sectionTitle('FORMS'),
+        _formsCard(),
+        _sectionTitle('LINKED DRAWINGS'),
+        _linkedDrawingCard(),
+        _sectionTitle('JOB PHOTOS'),
+        _photosRow(),
+        _sectionTitle('COMMENTS'),
+        _commentsCard(),
+        const SizedBox(height: 18),
+        _qrRow(),
+      ],
+    );
+  }
+
+  Future<void> _saveJobProgressToApi() async {
+    final job = _job;
+    if (job == null) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Job must load before saving updates.')),
+      );
+      return;
+    }
+    if (_isUpdatingJob) return;
+    setState(() => _isUpdatingJob = true);
+    try {
+      final nextMeta = Map<String, dynamic>.from(job.jobMeta)
+        ..['form_progress'] = <String, dynamic>{
+          'ppe_confirmed': _ppeConfirmed,
+          'power_isolated': _powerIsolated,
+          'grounding_verified': _groundingVerified,
+        }
+        ..['material_progress'] = <String, dynamic>{
+          'panel_delivered': _panelDelivered,
+          'material_inspected': _materialInspected,
+        };
+      final payload = job.toWritePayload(jobMetaOverride: nextMeta);
+      payload['comments'] = _commentsController.text.trim();
+      final scannedQrId = _scannedQrValue == null
+          ? null
+          : int.tryParse(_scannedQrValue!.trim());
+      if (scannedQrId != null) {
+        payload['qr_code'] = scannedQrId;
+      }
+
+      final updated = await ref
+          .read(quoteProjectApiClientProvider)
+          .updateJob(
+            jobId: job.id.toString(),
+            payload: payload,
+          );
+      if (!mounted) return;
+      setState(() {
+        _job = updated;
+        _isUpdatingJob = false;
+      });
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Job updated successfully.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isUpdatingJob = false);
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: 'Could not update job',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _formTab() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 96),
+      children: [
+        Text(
+          'Safety Checklist',
+          style: AppFonts.headlineSmall(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800, fontSize: 24),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Complete the required checklist before marking this job ready.',
+          style: AppFonts.bodyMedium(
+            color: AppColors.muted,
+          ).copyWith(height: 1.35),
+        ),
+        const SizedBox(height: 16),
+        _checklistTile(
+          title: 'PPE and safety barricade confirmed',
+          subtitle: 'Area is marked and assigned worker is equipped.',
+          value: _ppeConfirmed,
+          onChanged: (value) => setState(() => _ppeConfirmed = value),
+        ),
+        const SizedBox(height: 10),
+        _checklistTile(
+          title: 'Power isolation verified',
+          subtitle: 'Lockout/tagout has been completed for the panel.',
+          value: _powerIsolated,
+          onChanged: (value) => setState(() => _powerIsolated = value),
+        ),
+        const SizedBox(height: 10),
+        _checklistTile(
+          title: 'Grounding wire size verified',
+          subtitle: 'Pending confirmation from the site manager comment.',
+          value: _groundingVerified,
+          onChanged: (value) => setState(() => _groundingVerified = value),
+        ),
+        const SizedBox(height: 18),
+        _card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Supervisor Notes',
+                style: AppFonts.titleMedium(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Verify the grounding wire size before proceeding with Section A. Upload final photos after installation.',
+                style: AppFonts.bodyMedium(
+                  color: AppColors.muted,
+                ).copyWith(height: 1.35),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        SizedBox(
+          height: 48,
+          child: FilledButton(
+            onPressed: _isUpdatingJob ? null : _saveJobProgressToApi,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF111111),
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              _isUpdatingJob ? 'Saving...' : 'Save Form',
+              style: AppFonts.titleMedium(
+                color: AppColors.white,
+              ).copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _materialTab() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 96),
+      children: [
+        Text(
+          'Materials',
+          style: AppFonts.headlineSmall(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800, fontSize: 24),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Track materials assigned to $_jobTitle.',
+          style: AppFonts.bodyMedium(color: AppColors.muted),
+        ),
+        const SizedBox(height: 16),
+        _materialStatusCard(
+          title: _itemName,
+          section: _sectionName,
+          quantity: '$_quantity units',
+          unitPrice: _formatMoney(_unitPrice),
+          total: _formatMoney(_total),
+          delivered: _panelDelivered,
+          onChanged: (value) => setState(() => _panelDelivered = value),
+        ),
+        const SizedBox(height: 12),
+        _materialStatusCard(
+          title: 'Copper Wire 12 AWG',
+          section: 'Electrical wiring',
+          quantity: '4 rolls',
+          unitPrice: r'$ 240.00',
+          total: r'$ 960.00',
+          delivered: _materialInspected,
+          onChanged: (value) => setState(() => _materialInspected = value),
+        ),
+        const SizedBox(height: 16),
+        _card(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              _summaryRow('Material subtotal', _formatMoney(_total + 960)),
+              const Divider(height: 1, color: AppColors.borderLight),
+              _summaryRow('Tax / extra charges', r'$ 0.00'),
+              const Divider(height: 1, color: AppColors.borderLight),
+              _summaryRow('Total', _formatMoney(_total + 960), strong: true),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _checklistTile({
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return _card(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: value,
+            onChanged: (next) => onChanged(next ?? false),
+            activeColor: const Color(0xFF111111),
+            visualDensity: VisualDensity.compact,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppFonts.titleSmall(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: AppFonts.bodySmall(
+                    color: AppColors.muted,
+                  ).copyWith(height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _materialStatusCard({
+    required String title,
+    required String section,
+    required String quantity,
+    required String unitPrice,
+    required String total,
+    required bool delivered,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return _card(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: AppFonts.titleSmall(
+                          color: AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        section,
+                        style: AppFonts.bodySmall(color: AppColors.muted),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: delivered,
+                  onChanged: onChanged,
+                  activeThumbColor: const Color(0xFF111111),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.borderLight),
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Expanded(child: _materialMetric('Qty', quantity)),
+                Expanded(child: _materialMetric('Unit Price', unitPrice)),
+                Expanded(
+                  child: _materialMetric('Total', total, alignEnd: true),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: Text(
+              delivered ? 'Delivered / ready' : 'Pending confirmation',
+              style: AppFonts.labelSmall(
+                color: delivered ? const Color(0xFF10B981) : AppColors.muted,
+              ).copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _materialMetric(String label, String value, {bool alignEnd = false}) {
+    return Column(
+      crossAxisAlignment: alignEnd
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppFonts.labelSmall(
+            color: AppColors.muted,
+          ).copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: AppFonts.bodySmall(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800),
+        ),
+      ],
+    );
+  }
+
+  Widget _summaryRow(String label, String value, {bool strong = false}) {
+    return Padding(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style:
+                (strong
+                        ? AppFonts.titleMedium(color: AppColors.inkStrong)
+                        : AppFonts.bodyMedium(color: AppColors.muted))
+                    .copyWith(
+                      fontWeight: strong ? FontWeight.w900 : FontWeight.w600,
+                    ),
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style:
+                (strong
+                        ? AppFonts.titleMedium(color: AppColors.inkStrong)
+                        : AppFonts.bodyMedium(color: AppColors.inkStrong))
+                    .copyWith(fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _initials(String value) {
+    final parts = value.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return 'W';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F7F8),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF7F7F8),
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          onPressed: _handleBack,
+          icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
+        ),
+        centerTitle: true,
+        title: Text(
+          'Job Details',
+          style: AppFonts.titleLarge(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800),
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: CircleAvatar(
+              radius: 17,
+              backgroundColor: AppColors.surface,
+              child: IconButton(
+                onPressed: () {
+                  context.showTopSnackBar(
+                    const SnackBar(content: Text('Edit job coming soon.')),
+                  );
+                },
+                padding: EdgeInsets.zero,
+                icon: const Icon(
+                  Icons.edit_outlined,
+                  size: 17,
+                  color: AppColors.inkStrong,
+                ),
+              ),
+            ),
+          ),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(42),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TabBar(
+              controller: _tabController,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              labelColor: AppColors.inkStrong,
+              unselectedLabelColor: AppColors.muted,
+              indicatorColor: AppColors.inkStrong,
+              indicatorWeight: 2,
+              labelStyle: AppFonts.labelMedium(
+                color: AppColors.inkStrong,
+              ).copyWith(fontWeight: FontWeight.w800),
+              unselectedLabelStyle: AppFonts.labelMedium(
+                color: AppColors.muted,
+              ).copyWith(fontWeight: FontWeight.w600),
+              tabs: const [
+                Tab(text: 'Overview'),
+                Tab(text: 'Form'),
+                Tab(text: 'Material'),
+              ],
+            ),
+          ),
+        ),
+      ),
+      body: Stack(
+        children: [
+          TabBarView(
+            controller: _tabController,
+            children: [_overviewTab(), _formTab(), _materialTab()],
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16 + bottom,
+            child: SizedBox(
+              height: 52,
+              child: FilledButton(
+                onPressed: () {
+                  context.showTopSnackBar(
+                    const SnackBar(content: Text('User manual coming soon.')),
+                  );
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF111111),
+                  foregroundColor: AppColors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.info_rounded, size: 17),
+                    const SizedBox(width: 8),
+                    Text(
+                      'User Manual',
+                      style: AppFonts.titleMedium(
+                        color: AppColors.white,
+                      ).copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.arrow_forward_rounded, size: 18),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VisibleMapTiles extends StatelessWidget {
+  const _VisibleMapTiles({required this.latitude, required this.longitude});
+
+  final double latitude;
+  final double longitude;
+
+  static const _zoom = 15;
+  static const _tileSize = 256.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
+        final center = _worldPixel(latitude, longitude, _zoom);
+        final left = center.dx - width / 2;
+        final top = center.dy - height / 2;
+        final firstTileX = (left / _tileSize).floor();
+        final firstTileY = (top / _tileSize).floor();
+        final lastTileX = ((left + width) / _tileSize).floor();
+        final lastTileY = ((top + height) / _tileSize).floor();
+        final maxTile = 1 << _zoom;
+        final tiles = <Widget>[];
+
+        for (var x = firstTileX; x <= lastTileX; x++) {
+          for (var y = firstTileY; y <= lastTileY; y++) {
+            if (y < 0 || y >= maxTile) continue;
+            final wrappedX = ((x % maxTile) + maxTile) % maxTile;
+            tiles.add(
+              Positioned(
+                left: x * _tileSize - left,
+                top: y * _tileSize - top,
+                width: _tileSize,
+                height: _tileSize,
+                child: Image.network(
+                  'https://tile.openstreetmap.org/$_zoom/$wrappedX/$y.png',
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Container(
+                    color: const Color(0xFFE5E7EB),
+                    child: const Icon(
+                      Icons.map_outlined,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+        }
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(color: const Color(0xFFE5E7EB)),
+            ...tiles,
+          ],
+        );
+      },
+    );
+  }
+
+  static Offset _worldPixel(double lat, double lng, int zoom) {
+    final sinLat = math.sin(lat * math.pi / 180).clamp(-0.9999, 0.9999);
+    final scale = (1 << zoom) * _tileSize;
+    final x = (lng + 180) / 360 * scale;
+    final y =
+        (0.5 - math.log((1 + sinLat) / (1 - sinLat)) / (4 * math.pi)) * scale;
+    return Offset(x, y);
+  }
+}
+
+class _JobQrScannerPage extends StatefulWidget {
+  const _JobQrScannerPage();
+
+  @override
+  State<_JobQrScannerPage> createState() => _JobQrScannerPageState();
+}
+
+class _JobQrScannerPageState extends State<_JobQrScannerPage> {
+  late final MobileScannerController _controller;
+  bool _didReturn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = MobileScannerController(
+      formats: const [BarcodeFormat.qrCode],
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_didReturn) return;
+    String? value;
+    for (final barcode in capture.barcodes) {
+      final code = barcode.rawValue?.trim();
+      if (code != null && code.isNotEmpty) {
+        value = code;
+        break;
+      }
+    }
+    if (value == null) return;
+    _didReturn = true;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: AppColors.white,
+        title: Text(
+          'Scan QR Code',
+          style: AppFonts.titleLarge(
+            color: AppColors.white,
+          ).copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          MobileScanner(controller: _controller, onDetect: _onDetect),
+          Center(
+            child: Container(
+              width: 240,
+              height: 240,
+              decoration: BoxDecoration(
+                border: Border.all(color: AppColors.white, width: 3),
+                borderRadius: BorderRadius.circular(18),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 24,
+            right: 24,
+            bottom: 40 + MediaQuery.paddingOf(context).bottom,
+            child: Text(
+              'Place the QR code inside the frame',
+              textAlign: TextAlign.center,
+              style: AppFonts.bodyMedium(
+                color: AppColors.white,
+              ).copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

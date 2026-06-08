@@ -53,10 +53,21 @@ class GroupItem {
     if (nested is Map) {
       return CompositeItemRef.fromJson(Map<String, dynamic>.from(nested));
     }
+    final itemField = json['item'];
+    if (itemField is num) {
+      final id = itemField.toInt().toString();
+      final name = _readString(json, const [
+        'composite_item_name',
+        'item_name',
+        'name',
+      ], fallback: 'Composite Item');
+      return CompositeItemRef(id: id, name: name);
+    }
     final id = _readString(json, const [
       'composite_item_id',
       'composite_item',
       'item_id',
+      'item',
     ]);
     if (id.isEmpty) return null;
     final name = _readString(json, const [

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/items/data/item_models.dart';
 
@@ -23,35 +24,32 @@ final class ItemsApiClient {
   ItemsApiClient({required Dio dio}) : _dio = dio;
 
   final Dio _dio;
-
-  static const int defaultPageSize = 20;
+  static const int defaultPageSize = kDefaultApiPageSize;
 
   Future<ItemsPageResult> fetchItemsPage({
     int page = 1,
     int pageSize = defaultPageSize,
     bool isComposite = false,
+    String? search,
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.items,
-      queryParameters: <String, dynamic>{
-        'page': page,
-        'page_size': pageSize,
-        'is_composite': isComposite,
-      },
+      queryParameters: buildListQuery(
+        page: page,
+        pageSize: pageSize,
+        search: search,
+        extra: <String, dynamic>{'is_composite': isComposite},
+      ),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final rows = _readRows(root);
+    final rows = readApiRows(root);
     final items = rows.map(ItemModel.fromJson).toList();
-    final pagination = _readMap(root['pagination']);
-    final currentPage = _readInt(pagination, const ['current_page']) ?? page;
-    final totalPages = _readInt(pagination, const ['total_pages']) ?? 1;
-    final totalRecords =
-        _readInt(pagination, const ['total_records']) ?? items.length;
+    final meta = readApiPageMeta(root, page: page);
     return ItemsPageResult(
       items: items,
-      currentPage: currentPage < 1 ? 1 : currentPage,
-      totalPages: totalPages < 1 ? 1 : totalPages,
-      totalRecords: totalRecords < 0 ? 0 : totalRecords,
+      currentPage: meta.currentPage,
+      totalPages: meta.totalPages,
+      totalRecords: meta.totalRecords,
     );
   }
 
@@ -61,9 +59,7 @@ final class ItemsApiClient {
       AppApiUrls.itemById(id),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ItemDetailModel.fromJson(payload);
+    return ItemDetailModel.fromJson(readApiEntityBody(root));
   }
 
   /// `POST /api/v1/item/` — create a non-composite catalog row.
@@ -86,12 +82,10 @@ final class ItemsApiClient {
       },
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ItemModel.fromJson(payload);
+    return ItemModel.fromJson(readApiEntityBody(root));
   }
 
-  /// `POST /api/v1/item/` — composite row with child lines (`items`: `[{ item, quantity }]`).
+  /// `POST /api/v1/item/` — composite row
   Future<ItemModel> createCompositeItem({
     required String name,
     required String sku,
@@ -120,12 +114,10 @@ final class ItemsApiClient {
       },
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ItemModel.fromJson(payload);
+    return ItemModel.fromJson(readApiEntityBody(root));
   }
 
-  /// `PUT /api/v1/item/{id}/` — update a catalog row (same body shape as create).
+  /// `PUT /api/v1/item/{id}/` — update a catalog row
   Future<ItemModel> updateItem({
     required String id,
     required String name,
@@ -146,12 +138,10 @@ final class ItemsApiClient {
       },
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ItemModel.fromJson(payload);
+    return ItemModel.fromJson(readApiEntityBody(root));
   }
 
-  /// `PUT /api/v1/item/{id}/` — update composite item + component lines.
+  /// `PUT /api/v1/item/{id}/` — update composite item
   Future<ItemModel> updateCompositeItem({
     required String id,
     required String name,
@@ -181,38 +171,7 @@ final class ItemsApiClient {
       },
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ItemModel.fromJson(payload);
-  }
-
-  static List<Map<String, dynamic>> _readRows(Map<String, dynamic> root) {
-    final raw = root['data'];
-    if (raw is List) {
-      return raw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-    return const <Map<String, dynamic>>[];
-  }
-
-  static Map<String, dynamic> _readMap(dynamic raw) {
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return const <String, dynamic>{};
-  }
-
-  static int? _readInt(Map<String, dynamic> map, List<String> keys) {
-    for (final key in keys) {
-      final value = map[key];
-      if (value is int) return value;
-      if (value is num) return value.toInt();
-      if (value is String) {
-        final parsed = int.tryParse(value.trim());
-        if (parsed != null) return parsed;
-      }
-    }
-    return null;
+    return ItemModel.fromJson(readApiEntityBody(root));
   }
 }
 

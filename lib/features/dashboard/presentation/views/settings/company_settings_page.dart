@@ -26,6 +26,7 @@ import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_feature_flags.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
@@ -1734,13 +1735,16 @@ class _SettingsDrawer extends StatelessWidget {
                     selected: selected == _SettingsDrawerSelection.privacy,
                     onTap: onPrivacy,
                   ),
-                  _sectionLabelCaps('CUSTOMISATION'),
-                  _sidebarNavTile(
-                    title: 'Module and Field',
-                    iconAsset: 'assets/images/database (1).png',
-                    selected: selected == _SettingsDrawerSelection.metadata,
-                    onTap: onMetadata,
-                  ),
+                  if (SettingsFeatureFlags.showMetaData) ...[
+                    _sectionLabelCaps('CUSTOMISATION'),
+                    _sidebarNavTile(
+                      title: 'Meta Data',
+                      iconAsset: 'assets/images/database (1).png',
+                      selected: selected == _SettingsDrawerSelection.metadata,
+                      enabled: SettingsFeatureFlags.metadataEnabled,
+                      onTap: onMetadata,
+                    ),
+                  ],
                   _sectionLabelCaps('INTEGRATION'),
                   _sidebarNavTile(
                     title: 'Integration',
@@ -1776,15 +1780,22 @@ class _SettingsDrawer extends StatelessWidget {
     required String iconAsset,
     required bool selected,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
+    final inactiveColor =
+        enabled ? const Color(0xFF525860) : const Color(0xFF9CA3AF);
+    final iconColor = enabled ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
-        color: selected ? const Color(0xFFF2F2F4) : Colors.transparent,
+        color: selected && enabled
+            ? const Color(0xFFF2F2F4)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
+          onTap: enabled ? onTap : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             child: Row(
@@ -1793,7 +1804,7 @@ class _SettingsDrawer extends StatelessWidget {
                   iconAsset,
                   width: 22,
                   height: 22,
-                  color: const Color(0xFF4B5563),
+                  color: iconColor,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -1801,11 +1812,11 @@ class _SettingsDrawer extends StatelessWidget {
                     title,
                     style:
                         AppFonts.bodyMedium(
-                          color: selected
+                          color: selected && enabled
                               ? AppColors.inkStrong
-                              : const Color(0xFF525860),
+                              : inactiveColor,
                         ).copyWith(
-                          fontWeight: selected
+                          fontWeight: selected && enabled
                               ? FontWeight.w600
                               : FontWeight.w500,
                           fontSize: 15,

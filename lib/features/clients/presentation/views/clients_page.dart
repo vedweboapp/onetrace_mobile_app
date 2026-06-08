@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/clients/data/client_models.dart';
@@ -20,6 +21,7 @@ class ClientsPage extends ConsumerStatefulWidget {
 
 class _ClientsPageState extends ConsumerState<ClientsPage> {
   final _searchController = TextEditingController();
+  final _searchDebounce = DebouncedSearch();
   final List<ClientModel> _clients = <ClientModel>[];
   bool _isLoading = false;
   bool _isLoadingMore = false;
@@ -30,27 +32,21 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_onSearchChanged);
     _fetchClients(reset: true);
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    _searchDebounce.schedule(() => _fetchClients(reset: true));
   }
 
   @override
   void dispose() {
+    _searchDebounce.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
-  }
-
-  List<ClientModel> _filtered(List<ClientModel> all) {
-    final q = _searchController.text.trim().toLowerCase();
-    if (q.isEmpty) return all;
-    return all
-        .where(
-          (c) =>
-              c.name.toLowerCase().contains(q) ||
-              c.contactPerson.toLowerCase().contains(q) ||
-              c.phone.toLowerCase().contains(q),
-        )
-        .toList();
   }
 
   Future<void> _fetchClients({bool reset = false}) async {
@@ -66,7 +62,11 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
     try {
       final api = ref.read(clientsApiClientProvider);
       final nextPage = reset ? 1 : (_page + 1);
-      final result = await api.fetchClientsPage(page: nextPage);
+      final result = await api.fetchClientsPage(
+        page: nextPage,
+        pageSize: ClientsApiClient.defaultPageSize,
+        search: _searchController.text.trim(),
+      );
       if (!mounted) return;
       setState(() {
         if (reset) {
@@ -272,7 +272,6 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered(_clients);
     final hasQuery = _searchController.text.trim().isNotEmpty;
 
     return Scaffold(
@@ -288,7 +287,7 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
                 border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
               ),
               child: Text(
-                'SEARCH RESULTS (${filtered.length})',
+                'SEARCH RESULTS (${_clients.length})',
                 style: AppFonts.labelLarge(color: const Color(0xFF8A8A8A))
                     .copyWith(
                   letterSpacing: 0.7,
@@ -332,9 +331,9 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
                             onRefresh: () => _fetchClients(reset: true),
                             child: ListView.builder(
                               padding: EdgeInsets.zero,
-                              itemCount: filtered.length + 1,
+                              itemCount: _clients.length + 1,
                               itemBuilder: (context, index) {
-                                if (index == filtered.length) {
+                                if (index == _clients.length) {
                                   if (!hasQuery &&
                                       !_isLoadingMore &&
                                       _page < _totalPages) {
@@ -350,7 +349,7 @@ class _ClientsPageState extends ConsumerState<ClientsPage> {
                                   }
                                   return const SizedBox(height: 10);
                                 }
-                                return _clientRow(filtered[index]);
+                                return _clientRow(_clients[index]);
                               },
                             ),
                           ),

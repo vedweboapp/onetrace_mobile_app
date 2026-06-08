@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/composite_items/presentation/view/add_composite_item_page.dart';
 import 'package:red5/features/composite_items/presentation/view/composite_item_details_page.dart';
@@ -20,6 +21,7 @@ class CompositeItemPage extends ConsumerStatefulWidget {
 
 class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
   final _searchController = TextEditingController();
+  final _searchDebounce = DebouncedSearch();
   final List<ItemModel> _items = <ItemModel>[];
   bool _isLoading = false;
   bool _isLoadingMore = false;
@@ -33,23 +35,21 @@ class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_onSearchChanged);
     _fetchItems(reset: true);
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    _searchDebounce.schedule(() => _fetchItems(reset: true));
   }
 
   @override
   void dispose() {
+    _searchDebounce.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
-  }
-
-  List<ItemModel> _filtered(List<ItemModel> all) {
-    final q = _searchController.text.trim().toLowerCase();
-    if (q.isEmpty) return all;
-    return all.where((e) {
-      return e.name.toLowerCase().contains(q) ||
-          e.sku.toLowerCase().contains(q);
-    }).toList();
   }
 
   Future<void> _fetchItems({bool reset = false}) async {
@@ -69,6 +69,7 @@ class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
         page: nextPage,
         pageSize: ItemsApiClient.defaultPageSize,
         isComposite: true,
+        search: _searchController.text.trim(),
       );
       if (!mounted) return;
       setState(() {
@@ -232,7 +233,6 @@ class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered(_items);
     final hasQuery = _searchController.text.trim().isNotEmpty;
 
     return Scaffold(
@@ -248,7 +248,7 @@ class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
                 border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
               ),
               child: Text(
-                'SEARCH RESULTS (${filtered.length})',
+                'SEARCH RESULTS (${_items.length})',
                 style: AppFonts.labelLarge(color: const Color(0xFF8A8A8A))
                     .copyWith(
                   letterSpacing: 0.7,
@@ -301,10 +301,10 @@ class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
                     onRefresh: () => _fetchItems(reset: true),
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
-                      itemCount: filtered.length + 1,
+                      itemCount: _items.length + 1,
                       itemBuilder: (context, index) {
-                        if (index == filtered.length) {
-                          if (_searchController.text.trim().isEmpty &&
+                        if (index == _items.length) {
+                          if (!hasQuery &&
                               !_isLoadingMore &&
                               _page < _totalPages) {
                             _fetchItems(reset: false);
@@ -319,7 +319,7 @@ class _CompositeItemPageState extends ConsumerState<CompositeItemPage> {
                           }
                           return const SizedBox(height: 12);
                         }
-                        return _itemRow(filtered[index]);
+                        return _itemRow(_items[index]);
                       },
                     ),
                   ),

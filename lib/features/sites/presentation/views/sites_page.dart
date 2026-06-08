@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/sites/data/site_models.dart';
@@ -20,6 +22,7 @@ class SitesPage extends ConsumerStatefulWidget {
 
 class _SitesPageState extends ConsumerState<SitesPage> {
   final _searchController = TextEditingController();
+  final _searchDebounce = DebouncedSearch();
   final List<SiteModel> _sites = <SiteModel>[];
   bool _isLoading = false;
   bool _isLoadingMore = false;
@@ -30,27 +33,21 @@ class _SitesPageState extends ConsumerState<SitesPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_onSearchChanged);
     _fetchSites(reset: true);
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    _searchDebounce.schedule(() => _fetchSites(reset: true));
   }
 
   @override
   void dispose() {
+    _searchDebounce.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
-  }
-
-  List<SiteModel> _filtered(List<SiteModel> all) {
-    final q = _searchController.text.trim().toLowerCase();
-    if (q.isEmpty) return all;
-    return all
-        .where(
-          (s) =>
-              s.siteName.toLowerCase().contains(q) ||
-              s.clientName.toLowerCase().contains(q) ||
-              s.city.toLowerCase().contains(q),
-        )
-        .toList();
   }
 
   Future<void> _fetchSites({bool reset = false}) async {
@@ -66,7 +63,11 @@ class _SitesPageState extends ConsumerState<SitesPage> {
     try {
       final api = ref.read(sitesApiClientProvider);
       final nextPage = reset ? 1 : (_page + 1);
-      final result = await api.fetchSitesPage(page: nextPage);
+      final result = await api.fetchSitesPage(
+        page: nextPage,
+        pageSize: kDefaultApiPageSize,
+        search: _searchController.text.trim(),
+      );
       if (!mounted) return;
       setState(() {
         if (reset) {
@@ -222,7 +223,7 @@ class _SitesPageState extends ConsumerState<SitesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered(_sites);
+    final hasQuery = _searchController.text.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F6F7),
@@ -266,10 +267,10 @@ class _SitesPageState extends ConsumerState<SitesPage> {
                     onRefresh: () => _fetchSites(reset: true),
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
-                      itemCount: filtered.length + 1,
+                      itemCount: _sites.length + 1,
                       itemBuilder: (context, index) {
-                        if (index == filtered.length) {
-                          if (_searchController.text.trim().isEmpty &&
+                        if (index == _sites.length) {
+                          if (!hasQuery &&
                               !_isLoadingMore &&
                               _page < _totalPages) {
                             _fetchSites(reset: false);
@@ -286,7 +287,7 @@ class _SitesPageState extends ConsumerState<SitesPage> {
                           }
                           return const SizedBox(height: 10);
                         }
-                        return _siteRow(filtered[index]);
+                        return _siteRow(_sites[index]);
                       },
                     ),
                   ),

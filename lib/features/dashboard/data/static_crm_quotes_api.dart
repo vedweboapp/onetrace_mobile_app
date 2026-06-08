@@ -34,9 +34,21 @@ class StaticCrmQuotesApi implements CrmQuotesApi {
   ];
 
   @override
-  Future<QuoteListPageResult> fetchQuotesPage(int page) async {
+  Future<QuoteListPageResult> fetchQuotesPage(
+    int page, {
+    int pageSize = 20,
+    String? search,
+  }) async {
+    final summaries = search == null || search.trim().isEmpty
+        ? _summaries
+        : _summaries.where((q) {
+            final term = search.trim().toLowerCase();
+            return q.quoteName.toLowerCase().contains(term) ||
+                q.quoteNumber.toLowerCase().contains(term) ||
+                (q.clientName ?? '').toLowerCase().contains(term);
+          }).toList();
     return QuoteListPageResult(
-      summaries: _summaries,
+      summaries: summaries,
       page: page,
       totalPages: 1,
       hasMoreRecords: false,

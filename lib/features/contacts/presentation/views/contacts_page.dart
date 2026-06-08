@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/contacts/data/contact_models.dart';
@@ -20,6 +21,7 @@ class ContactsPage extends ConsumerStatefulWidget {
 
 class _ContactsPageState extends ConsumerState<ContactsPage> {
   final _searchController = TextEditingController();
+  final _searchDebounce = DebouncedSearch();
   final List<ContactModel> _contacts = <ContactModel>[];
   bool _isLoading = false;
   bool _isLoadingMore = false;
@@ -30,28 +32,21 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_onSearchChanged);
     _fetchContacts(reset: true);
+  }
+
+  void _onSearchChanged() {
+    setState(() {});
+    _searchDebounce.schedule(() => _fetchContacts(reset: true));
   }
 
   @override
   void dispose() {
+    _searchDebounce.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
-  }
-
-  List<ContactModel> _filtered(List<ContactModel> all) {
-    final q = _searchController.text.trim().toLowerCase();
-    if (q.isEmpty) return all;
-    return all
-        .where(
-          (c) =>
-              c.contactName.toLowerCase().contains(q) ||
-              c.clientName.toLowerCase().contains(q) ||
-              c.email.toLowerCase().contains(q) ||
-              c.phone.toLowerCase().contains(q),
-        )
-        .toList();
   }
 
   Future<void> _fetchContacts({bool reset = false}) async {
@@ -67,7 +62,11 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
     try {
       final api = ref.read(contactsApiClientProvider);
       final nextPage = reset ? 1 : (_page + 1);
-      final result = await api.fetchContactsPage(page: nextPage);
+      final result = await api.fetchContactsPage(
+        page: nextPage,
+        pageSize: ContactsApiClient.defaultPageSize,
+        search: _searchController.text.trim(),
+      );
       if (!mounted) return;
       setState(() {
         if (reset) {
@@ -226,7 +225,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered(_contacts);
+    final hasQuery = _searchController.text.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F6F7),
@@ -270,10 +269,10 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                     onRefresh: () => _fetchContacts(reset: true),
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
-                      itemCount: filtered.length + 1,
+                      itemCount: _contacts.length + 1,
                       itemBuilder: (context, index) {
-                        if (index == filtered.length) {
-                          if (_searchController.text.trim().isEmpty &&
+                        if (index == _contacts.length) {
+                          if (!hasQuery &&
                               !_isLoadingMore &&
                               _page < _totalPages) {
                             _fetchContacts(reset: false);
@@ -290,7 +289,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                           }
                           return const SizedBox(height: 10);
                         }
-                        return _contactRow(filtered[index]);
+                        return _contactRow(_contacts[index]);
                       },
                     ),
                   ),

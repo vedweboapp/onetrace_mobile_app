@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:country_code_picker/country_code_picker.dart';
+import 'package:red5/core/utils/phone_number_utils.dart';
+import 'package:red5/core/widgets/app_phone_text_field.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
@@ -34,6 +37,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
   final _contactName = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
+  CountryCode _phoneCountry = PhoneNumberUtils.defaultCountry;
   final _address1 = TextEditingController();
   final _address2 = TextEditingController();
   final _city = TextEditingController();
@@ -216,13 +220,11 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
     return null;
   }
 
-  String? _phoneValidator(String? value) {
-    final raw = (value ?? '').trim();
-    if (raw.isEmpty) return 'Phone is required';
-    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.length < 7) return 'Enter a valid phone';
-    return null;
-  }
+  String? _phoneValidator(String? value) => PhoneNumberUtils.validateNational(
+        national: value,
+        emptyMessage: 'Phone is required',
+        invalidMessage: 'Enter a valid phone',
+      );
 
   String? _postalCodeValidator(String? value) {
     final raw = (value ?? '').trim();
@@ -266,7 +268,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
               contactName: _contactName.text.trim(),
               clientId: clientId,
               email: _email.text.trim(),
-              phone: _phone.text.trim(),
+              phone: PhoneNumberUtils.formatFull(_phoneCountry, _phone.text),
               addressLine1: _address1.text.trim(),
               addressLine2: _address2.text.trim(),
               country: _country.trim(),
@@ -279,7 +281,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
               contactName: _contactName.text.trim(),
               clientId: clientId,
               email: _email.text.trim(),
-              phone: _phone.text.trim(),
+              phone: PhoneNumberUtils.formatFull(_phoneCountry, _phone.text),
               addressLine1: _address1.text.trim(),
               addressLine2: _address2.text.trim(),
               country: _country.trim(),
@@ -480,11 +482,11 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
                     const SizedBox(height: 14),
                     _label('Phone', required: true),
                     const SizedBox(height: 8),
-                    AppTextField(
+                    AppPhoneTextField(
                       controller: _phone,
-                      hintText: '+1 (555) 000-0000',
-                      keyboardType: TextInputType.phone,
+                      hintText: 'Phone number',
                       validator: _phoneValidator,
+                      onCountryChanged: (c) => _phoneCountry = c,
                     ),
                     _sectionLabel('Address'),
                     _label('Address Line 1'),

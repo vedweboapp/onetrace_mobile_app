@@ -30,10 +30,18 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
   }
 
   @override
-  Future<QuoteListPageResult> fetchQuotesPage(int page) async {
+  Future<QuoteListPageResult> fetchQuotesPage(
+    int page, {
+    int pageSize = 20,
+    String? search,
+  }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.projects,
-      queryParameters: {'page': page},
+      queryParameters: {
+        'page': page,
+        'page_size': pageSize,
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      },
     );
     final root = response.data ?? const <String, dynamic>{};
     final summaries = _extractSummaries(root);

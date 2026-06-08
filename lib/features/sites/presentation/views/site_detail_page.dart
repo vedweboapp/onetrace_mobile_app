@@ -151,34 +151,19 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
     );
   }
 
-  Widget _buildContent(SiteModel s) {
+  Widget _buildOverviewTab(SiteModel s) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        Text(
-          s.siteName.isEmpty ? 'Site Name' : s.siteName,
-          style: AppFonts.headlineSmall(
-            color: AppColors.inkStrong,
-          ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          s.clientName.isEmpty ? 'Client Name' : s.clientName,
-          style: AppFonts.bodyMedium(
-            color: AppColors.muted,
-          ).copyWith(fontSize: 15),
-        ),
-        const SizedBox(height: 18),
-        const Divider(height: 1, color: Color(0xFFE2E2E4)),
         _sectionHeader('Basic Info'),
         _labelValue('Site Name', s.siteName),
         const SizedBox(height: 14),
         _labelValue('Client Name', s.clientName),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
         const Divider(height: 1, color: Color(0xFFE2E2E4)),
         _sectionHeader('Address'),
         _streetAddress(s),
-        const SizedBox(height: 14),
+        const SizedBox(height: 18),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -187,7 +172,7 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
             Expanded(child: _labelValue('State / Province', s.state)),
           ],
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 18),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -200,80 +185,189 @@ class _SiteDetailPageState extends ConsumerState<SiteDetailPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.white,
-      appBar: AppBar(
+  List<Map<String, String>> _mockProjectsFor(SiteModel s) {
+    final baseClient = s.clientName.trim().isEmpty
+        ? 'Client Name'
+        : s.clientName.trim();
+    return [
+      {
+        'title': '${s.siteName} - Northview Commercial Complex',
+        'client': baseClient,
+      },
+      {'title': 'Skyline Residential Tower', 'client': baseClient},
+      {'title': '${s.siteName} - Phase 2', 'client': baseClient},
+    ];
+  }
+
+  Widget _buildProjectTab(SiteModel s) {
+    final projects = _mockProjectsFor(s);
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      itemBuilder: (context, index) {
+        final project = projects[index];
+        return Container(
+          padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Color(0xFFE2E2E4), width: 1),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                project['title'] ?? '',
+                style: AppFonts.bodyLarge(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                project['client'] ?? '',
+                style: AppFonts.bodySmall(
+                  color: AppColors.muted,
+                ).copyWith(fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        );
+      },
+      separatorBuilder: (_, __) => const SizedBox(height: 0),
+      itemCount: projects.length,
+    );
+  }
+
+  Widget _buildLoaded(SiteModel s) {
+    final siteTitle = s.siteName.trim().isEmpty
+        ? 'Site Name'
+        : s.siteName.trim();
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
         backgroundColor: AppColors.white,
-        surfaceTintColor: AppColors.white,
-        scrolledUnderElevation: 0,
-        elevation: 0,
-        leading: IconButton(
-          onPressed: () => context.pop(),
-          icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
-        ),
-        title: Text(
-          'Sites Detail Page',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: AppFonts.titleMedium(
-            color: AppColors.inkStrong,
-          ).copyWith(fontWeight: FontWeight.w700, fontSize: 16),
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Material(
-              color: const Color(0xFFF1F1F2),
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _isLoading || _site == null ? null : _openEdit,
-                child: Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Image.asset(
-                    "assets/images/edit_icon.png",
-                    color: AppColors.inkStrong,
-                    height: 15,
-                    width: 15,
+        appBar: AppBar(
+          backgroundColor: AppColors.white,
+          surfaceTintColor: AppColors.white,
+          scrolledUnderElevation: 0,
+          elevation: 0,
+          leading: IconButton(
+            onPressed: () => context.pop(),
+            icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
+          ),
+          title: Text(
+            siteTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppFonts.titleMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w700, fontSize: 16),
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Material(
+                color: const Color(0xFFF1F1F2),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _isLoading || _site == null ? null : _openEdit,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Image.asset(
+                      'assets/images/edit_icon.png',
+                      color: AppColors.inkStrong,
+                      height: 15,
+                      width: 15,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(1),
-          child: Divider(height: 1, color: Color(0xFFE2E2E4)),
-        ),
-      ),
-      body: _isLoading
-          ? Center(
-              child: const AppSkeletonScreenBody(
-                scrollable: false,
-                toastBlockCount: 4,
-              ),
-            )
-          : _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: AppFonts.bodyMedium(color: AppColors.muted),
-                    ),
-                    const SizedBox(height: 10),
-                    FilledButton(onPressed: _load, child: const Text('Retry')),
+          ],
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(49),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Divider(height: 1, color: Color(0xFFE2E2E4)),
+                TabBar(
+                  labelColor: AppColors.inkStrong,
+                  unselectedLabelColor: AppColors.muted,
+                  indicatorColor: AppColors.inkStrong,
+                  indicatorWeight: 2,
+                  labelStyle: AppFonts.labelMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w800),
+                  unselectedLabelStyle: AppFonts.labelMedium(
+                    color: AppColors.muted,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                  tabs: const [
+                    Tab(text: 'Overview'),
+                    Tab(text: 'Project'),
                   ],
                 ),
-              ),
-            )
-          : _buildContent(_site!),
+              ],
+            ),
+          ),
+        ),
+        body: TabBarView(children: [_buildOverviewTab(s), _buildProjectTab(s)]),
+      ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: AppColors.white,
+        body: Center(
+          child: AppSkeletonScreenBody(scrollable: false, toastBlockCount: 4),
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: AppColors.white,
+        appBar: AppBar(
+          backgroundColor: AppColors.white,
+          surfaceTintColor: AppColors.white,
+          scrolledUnderElevation: 0,
+          elevation: 0,
+          leading: IconButton(
+            onPressed: () => context.pop(),
+            icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
+          ),
+          title: const Text('Site Details'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _error!,
+                  textAlign: TextAlign.center,
+                  style: AppFonts.bodyMedium(color: AppColors.muted),
+                ),
+                const SizedBox(height: 10),
+                FilledButton(onPressed: _load, child: const Text('Retry')),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final site = _site;
+    if (site == null) {
+      return const Scaffold(
+        backgroundColor: AppColors.white,
+        body: Center(child: Text('No site details found.')),
+      );
+    }
+
+    return _buildLoaded(site);
   }
 }

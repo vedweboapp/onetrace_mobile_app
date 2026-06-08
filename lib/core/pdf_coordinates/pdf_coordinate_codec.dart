@@ -101,8 +101,11 @@ class PdfCoordinateCodec {
     };
   }
 
-  static double _normalizeApiScalar(double value) =>
+  /// Converts API `x_coordinate` / `y_coordinate` (0–1 or 0–100) to 0–1 fraction.
+  static double normalizeApiScalar(double value) =>
       (value > 1 ? value / 100.0 : value).clamp(0.0, 1.0);
+
+  static double _normalizeApiScalar(double value) => normalizeApiScalar(value);
 
   static double? _toDouble(dynamic value) {
     if (value is num) return value.toDouble();

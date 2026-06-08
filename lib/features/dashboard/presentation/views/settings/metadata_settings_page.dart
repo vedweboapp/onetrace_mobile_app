@@ -5,7 +5,12 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
-import 'package:red5/features/dashboard/presentation/views/settings/module_metadata_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/job_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_widgets.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/project_type_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_feature_flags.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/tags_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
@@ -43,7 +48,7 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: AppColors.white,
+      backgroundColor: const Color(0xFFF5F6F8),
       drawerEnableOpenDragGesture: true,
       drawer: _SettingsDrawer(
         selected: _SettingsDrawerSelection.metadata,
@@ -63,12 +68,12 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
           icon: const Icon(Icons.menu_rounded, color: AppColors.inkStrong),
         ),
         title: Text(
-          'Module and Field',
+          'Meta Data',
           style: AppFonts.titleMedium(
             color: AppColors.inkStrong,
-          ).copyWith(fontWeight: FontWeight.w700),
+          ).copyWith(fontWeight: FontWeight.w700, fontSize: 17),
         ),
-        // centerTitle: true,
+        centerTitle: true,
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
           child: Divider(height: 1, color: Color(0xFFE5E7EB)),
@@ -77,145 +82,44 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
       body: SafeArea(
         top: false,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
           children: [
             Text(
-              'MODULE NAME',
+              'SYSTEM METADATA',
               style: AppFonts.labelMedium(
                 color: const Color(0xFF9CA3AF),
               ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 1.0),
             ),
             const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/projects.png",
-              title: 'Projects',
-              onTap: () => context.push(ProjectsMetadataPage.path),
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/qoutations.png",
-              title: 'Quotations',
-              onTap: () => context.push(QuotationsMetadataPage.path),
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/clients.png",
-              title: 'Client',
-              onTap: () {},
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/sites.png",
-              title: 'Sites',
-              onTap: () {},
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/contacts.png",
-              title: 'Contacts',
-              onTap: () {},
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon:"assets/images/groups.png",
-              title: 'Groups',
-              onTap: () {},
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/products.png",
-              title: 'Items',
-              onTap: () {},
-            ),
-            const SizedBox(height: 12),
-            _MetadataNavTile(
-              icon: "assets/images/products.png",
-              title: 'Composite Items',
-              onTap: () {},
+            SystemMetadataCard(
+              rows: [
+                SystemMetadataRow(
+                  icon: Icons.push_pin_rounded,
+                  title: 'Pin Status',
+                  moduleLabel: 'Project',
+                  onTap: () => context.push(PinStatusSettingsPage.path),
+                ),
+                SystemMetadataRow(
+                  icon: Icons.checklist_rounded,
+                  title: 'Job Status',
+                  moduleLabel: 'Job',
+                  onTap: () => context.push(JobStatusSettingsPage.path),
+                ),
+                SystemMetadataRow(
+                  icon: Icons.work_outline_rounded,
+                  title: 'Project Type',
+                  moduleLabel: 'Project',
+                  onTap: () => context.push(ProjectTypeSettingsPage.path),
+                ),
+                SystemMetadataRow(
+                  icon: Icons.work_outline_rounded,
+                  title: 'Tags',
+                  moduleLabel: 'Quotation',
+                  onTap: () => context.push(TagsSettingsPage.path),
+                ),
+              ],
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetadataNavTile extends StatelessWidget {
-  const _MetadataNavTile({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-  });
-
-  final String icon;
-  final String title;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.white,
-      elevation: 2,
-      borderRadius: BorderRadius.circular(24),
-      shadowColor: AppColors.shadowCard,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-            boxShadow: const [
-              BoxShadow(
-                color: AppColors.shadowCard,
-                blurRadius: 18,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: const Color(0xFFF3F4F6),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(7.0),
-                  child: Image.asset(icon, height: 15, width:15,color: const Color(0xFF4B5563)),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: AppFonts.bodyLarge(
-                        color: AppColors.inkStrong,
-                      ).copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'OCT 12, 2023  14:20 PM',
-                      style: AppFonts.labelSmall(color: const Color(0xFF9CA3AF))
-                          .copyWith(
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
-            ],
-          ),
         ),
       ),
     );
@@ -316,13 +220,16 @@ class _SettingsDrawer extends StatelessWidget {
                     selected: selected == _SettingsDrawerSelection.privacy,
                     onTap: onPrivacy,
                   ),
-                  _sectionLabelCaps('CUSTOMISATION'),
-                  _sidebarNavTile(
-                    title: 'Module and Field',
-                    iconAsset: 'assets/images/database (1).png',
-                    selected: selected == _SettingsDrawerSelection.metadata,
-                    onTap: onMetadata,
-                  ),
+                  if (SettingsFeatureFlags.showMetaData) ...[
+                    _sectionLabelCaps('CUSTOMISATION'),
+                    _sidebarNavTile(
+                      title: 'Meta Data',
+                      iconAsset: 'assets/images/database (1).png',
+                      selected: selected == _SettingsDrawerSelection.metadata,
+                      enabled: SettingsFeatureFlags.metadataEnabled,
+                      onTap: onMetadata,
+                    ),
+                  ],
                   _sectionLabelCaps('INTEGRATION'),
                   _sidebarNavTile(
                     title: 'Integration',
@@ -358,15 +265,22 @@ class _SettingsDrawer extends StatelessWidget {
     required String iconAsset,
     required bool selected,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
+    final inactiveColor =
+        enabled ? const Color(0xFF525860) : const Color(0xFF9CA3AF);
+    final iconColor = enabled ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
-        color: selected ? const Color(0xFFF2F2F4) : Colors.transparent,
+        color: selected && enabled
+            ? const Color(0xFFF2F2F4)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
+          onTap: enabled ? onTap : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             child: Row(
@@ -375,7 +289,7 @@ class _SettingsDrawer extends StatelessWidget {
                   iconAsset,
                   width: 22,
                   height: 22,
-                  color: const Color(0xFF4B5563),
+                  color: iconColor,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -383,11 +297,11 @@ class _SettingsDrawer extends StatelessWidget {
                     title,
                     style:
                         AppFonts.bodyMedium(
-                          color: selected
+                          color: selected && enabled
                               ? AppColors.inkStrong
-                              : const Color(0xFF525860),
+                              : inactiveColor,
                         ).copyWith(
-                          fontWeight: selected
+                          fontWeight: selected && enabled
                               ? FontWeight.w600
                               : FontWeight.w500,
                           fontSize: 15,

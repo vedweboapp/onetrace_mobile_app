@@ -5,7 +5,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/tags_settings_page.dart';
 
-/// Intermediate "Module and Field" page that lists the metadata categories
+/// Intermediate "Meta data" page that lists the metadata categories
 /// for a single module (e.g. Projects -> Pin Status, Quotations -> Tags).
 class _ModuleMetadataView extends StatelessWidget {
   const _ModuleMetadataView({required this.entries});
@@ -24,7 +24,7 @@ class _ModuleMetadataView extends StatelessWidget {
           icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
         ),
         title: Text(
-          'Module and Field',
+          'Meta data',
           style: AppFonts.titleMedium(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w700),

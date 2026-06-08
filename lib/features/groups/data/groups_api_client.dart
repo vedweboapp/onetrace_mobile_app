@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/groups/data/group_models.dart';
 
@@ -37,24 +38,28 @@ final class GroupsApiClient {
 
   final Dio _dio;
 
-  Future<GroupsPageResult> fetchGroupsPage({int page = 1}) async {
+  Future<GroupsPageResult> fetchGroupsPage({
+    int page = 1,
+    int pageSize = kDefaultApiPageSize,
+    String? search,
+  }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.groups,
-      queryParameters: <String, dynamic>{'page': page},
+      queryParameters: buildListQuery(
+        page: page,
+        pageSize: pageSize,
+        search: search,
+      ),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final rows = _readRows(root);
+    final rows = readApiRows(root);
     final groups = rows.map(GroupModel.fromJson).toList();
-    final pagination = _readMap(root['pagination']);
-    final currentPage = _readInt(pagination, const ['current_page']) ?? page;
-    final totalPages = _readInt(pagination, const ['total_pages']) ?? 1;
-    final totalRecords =
-        _readInt(pagination, const ['total_records']) ?? groups.length;
+    final meta = readApiPageMeta(root, page: page);
     return GroupsPageResult(
       items: groups,
-      currentPage: currentPage < 1 ? 1 : currentPage,
-      totalPages: totalPages < 1 ? 1 : totalPages,
-      totalRecords: totalRecords < 0 ? 0 : totalRecords,
+      currentPage: meta.currentPage,
+      totalPages: meta.totalPages,
+      totalRecords: meta.totalRecords,
     );
   }
 
@@ -63,9 +68,7 @@ final class GroupsApiClient {
       AppApiUrls.groupById(id),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return GroupModel.fromJson(payload);
+    return GroupModel.fromJson(readApiEntityBody(root));
   }
 
   Future<GroupModel> createGroup({
@@ -77,9 +80,7 @@ final class GroupsApiClient {
       data: _groupPayload(name: name, items: items),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return GroupModel.fromJson(payload);
+    return GroupModel.fromJson(readApiEntityBody(root));
   }
 
   /// Partial update via `PATCH /group/{id}/`. Mirrors [createGroup] fields.
@@ -93,9 +94,7 @@ final class GroupsApiClient {
       data: _groupPayload(name: name, items: items),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return GroupModel.fromJson(payload);
+    return GroupModel.fromJson(readApiEntityBody(root));
   }
 
   /// Fetches the list of available composite items used to populate
@@ -108,14 +107,14 @@ final class GroupsApiClient {
     while (true) {
       final response = await _dio.get<Map<String, dynamic>>(
         AppApiUrls.items,
-        queryParameters: <String, dynamic>{
-          'page': page,
-          'page_size': 20,
-          'is_composite': true,
-        },
+        queryParameters: buildListQuery(
+          page: page,
+          pageSize: kDefaultApiPageSize,
+          extra: const <String, dynamic>{'is_composite': true},
+        ),
       );
       final root = response.data ?? const <String, dynamic>{};
-      final rows = _readRows(root);
+      final rows = readApiRows(root);
       if (rows.isEmpty) break;
       for (final row in rows) {
         final ref = CompositeItemRef.fromJson(row);
@@ -123,11 +122,9 @@ final class GroupsApiClient {
           results.putIfAbsent(ref.id, () => ref);
         }
       }
-      final pagination = _readMap(root['pagination']);
-      final currentPage = _readInt(pagination, const ['current_page']) ?? page;
-      final totalPages = _readInt(pagination, const ['total_pages']) ?? 1;
-      if (currentPage >= totalPages) break;
-      page = currentPage + 1;
+      final meta = readApiPageMeta(root, page: page);
+      if (meta.currentPage >= meta.totalPages) break;
+      page = meta.currentPage + 1;
       // Safety bound against runaway pagination.
       if (page > 50) break;
     }
@@ -143,35 +140,6 @@ final class GroupsApiClient {
       'group_name': name,
       'composite_items': items.map((e) => e.toJson()).toList(),
     };
-  }
-
-  static List<Map<String, dynamic>> _readRows(Map<String, dynamic> root) {
-    final raw = root['data'];
-    if (raw is List) {
-      return raw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-    return const <Map<String, dynamic>>[];
-  }
-
-  static Map<String, dynamic> _readMap(dynamic raw) {
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return const <String, dynamic>{};
-  }
-
-  static int? _readInt(Map<String, dynamic> map, List<String> keys) {
-    for (final key in keys) {
-      final value = map[key];
-      if (value is int) return value;
-      if (value is num) return value.toInt();
-      if (value is String) {
-        final parsed = int.tryParse(value.trim());
-        if (parsed != null) return parsed;
-      }
-    }
-    return null;
   }
 }
 

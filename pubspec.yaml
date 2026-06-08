@@ -55,6 +55,9 @@ dependencies:
   flutter_keyboard_visibility_macos: ^1.0.0
   flutter_keyboard_visibility_windows: ^1.0.0
   open_file: ^3.5.11
+  country_code_picker: ^3.4.1
+  mobile_scanner: ^7.2.0
+  google_maps_flutter: ^2.17.0
 
 dev_dependencies:
   flutter_test:

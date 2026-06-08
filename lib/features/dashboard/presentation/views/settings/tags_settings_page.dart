@@ -10,7 +10,7 @@ import 'package:red5/features/dashboard/presentation/views/settings/metadata_bra
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
-/// Module and Field → Tags for quotations (`GET/POST /api/v1/tag/`, `PUT/DELETE …/{id}/`).
+/// Meta data → Tags for quotations (`GET/POST /api/v1/tag/`, `PUT/DELETE …/{id}/`).
 class TagsSettingsPage extends ConsumerStatefulWidget {
   const TagsSettingsPage({super.key});
 
@@ -93,10 +93,7 @@ class _TagsSettingsPageState extends ConsumerState<TagsSettingsPage> {
     } catch (e) {
       if (!mounted) return;
       _toast(
-        ApiResponseMessage.fromAnyError(
-          e,
-          genericFallback: 'Delete failed',
-        ),
+        ApiResponseMessage.fromAnyError(e, genericFallback: 'Delete failed'),
       );
     }
   }
@@ -121,8 +118,14 @@ class _TagsSettingsPageState extends ConsumerState<TagsSettingsPage> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Color(0xFFB91C1C)),
-              title: const Text('Delete', style: TextStyle(color: Color(0xFFB91C1C))),
+              leading: const Icon(
+                Icons.delete_outline,
+                color: Color(0xFFB91C1C),
+              ),
+              title: const Text(
+                'Delete',
+                style: TextStyle(color: Color(0xFFB91C1C)),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
                 _confirmDelete(item);
@@ -225,10 +228,7 @@ class _TagsSettingsPageState extends ConsumerState<TagsSettingsPage> {
               else if (_items != null)
                 Expanded(
                   child: SingleChildScrollView(
-                    child: _TagCard(
-                      items: _items!,
-                      onMore: _openActions,
-                    ),
+                    child: _TagCard(items: _items!, onMore: _openActions),
                   ),
                 ),
               const SizedBox(height: 16),
@@ -259,8 +259,7 @@ void _showTagFormSheet({
     AppColors.plotPinViolet,
   ];
   var selectedIndex = 0;
-  var customColor =
-      parseHexColor(editing?.colourHex ?? '') ?? colors[0];
+  var customColor = parseHexColor(editing?.colourHex ?? '') ?? colors[0];
   var isCustomSelected = false;
   if (editing != null) {
     final matchIdx = colors.indexWhere((c) => colorsEqual(c, customColor));
@@ -414,10 +413,10 @@ void _showTagFormSheet({
                               onTap: saving
                                   ? null
                                   : () => setSheetState(() {
-                                        selectedIndex = i;
-                                        customColor = colors[i];
-                                        isCustomSelected = false;
-                                      }),
+                                      selectedIndex = i;
+                                      customColor = colors[i];
+                                      isCustomSelected = false;
+                                    }),
                               borderRadius: BorderRadius.circular(999),
                               child: Container(
                                 width: 30,
@@ -426,12 +425,14 @@ void _showTagFormSheet({
                                   shape: BoxShape.circle,
                                   color: colors[i],
                                   border: Border.all(
-                                    color: i == selectedIndex && !isCustomSelected
+                                    color:
+                                        i == selectedIndex && !isCustomSelected
                                         ? Colors.white
                                         : Colors.transparent,
                                     width: 2,
                                   ),
-                                  boxShadow: i == selectedIndex && !isCustomSelected
+                                  boxShadow:
+                                      i == selectedIndex && !isCustomSelected
                                       ? const [
                                           BoxShadow(
                                             color: Color(0x33000000),
@@ -456,10 +457,11 @@ void _showTagFormSheet({
                           onTap: saving
                               ? null
                               : () async {
-                                  final picked = await showBrandColorBottomSheet(
-                                    ctx,
-                                    initialColor: customColor,
-                                  );
+                                  final picked =
+                                      await showBrandColorBottomSheet(
+                                        ctx,
+                                        initialColor: customColor,
+                                      );
                                   if (picked == null) return;
                                   setSheetState(() {
                                     customColor = picked;
@@ -572,10 +574,7 @@ void _showTagFormSheet({
 }
 
 class _TagCard extends StatelessWidget {
-  const _TagCard({
-    required this.items,
-    required this.onMore,
-  });
+  const _TagCard({required this.items, required this.onMore});
 
   final List<TagItem> items;
   final void Function(TagItem) onMore;

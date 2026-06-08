@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 
@@ -23,32 +24,37 @@ final class ClientsApiClient {
 
   final Dio _dio;
 
-  Future<ClientsPageResult> fetchClientsPage({int page = 1}) async {
+  static const int defaultPageSize = kDefaultApiPageSize;
+
+  Future<ClientsPageResult> fetchClientsPage({
+    int page = 1,
+    int pageSize = defaultPageSize,
+    String? search,
+  }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.clients,
-      queryParameters: <String, dynamic>{'page': page},
+      queryParameters: buildListQuery(
+        page: page,
+        pageSize: pageSize,
+        search: search,
+      ),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final rows = _readRows(root);
+    final rows = readApiRows(root);
     final clients = rows.map(ClientModel.fromJson).toList();
-    final pagination = _readMap(root['pagination']);
-    final currentPage = _readInt(pagination, const ['current_page']) ?? page;
-    final totalPages = _readInt(pagination, const ['total_pages']) ?? 1;
-    final totalRecords = _readInt(pagination, const ['total_records']) ?? clients.length;
+    final meta = readApiPageMeta(root, page: page);
     return ClientsPageResult(
       items: clients,
-      currentPage: currentPage < 1 ? 1 : currentPage,
-      totalPages: totalPages < 1 ? 1 : totalPages,
-      totalRecords: totalRecords < 0 ? 0 : totalRecords,
+      currentPage: meta.currentPage,
+      totalPages: meta.totalPages,
+      totalRecords: meta.totalRecords,
     );
   }
 
   Future<ClientModel> fetchClientDetail(String id) async {
     final response = await _dio.get<Map<String, dynamic>>(AppApiUrls.clientsById(id));
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ClientModel.fromJson(payload);
+    return ClientModel.fromJson(readApiEntityBody(root));
   }
 
   Future<ClientModel> createClient({
@@ -79,9 +85,7 @@ final class ClientsApiClient {
       },
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ClientModel.fromJson(payload);
+    return ClientModel.fromJson(readApiEntityBody(root));
   }
 
   /// `PUT /api/v1/clients/{id}/` — same field set as [createClient].
@@ -116,38 +120,7 @@ final class ClientsApiClient {
       },
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return ClientModel.fromJson(payload);
-  }
-
-  static List<Map<String, dynamic>> _readRows(Map<String, dynamic> root) {
-    final raw = root['data'];
-    if (raw is List) {
-      return raw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-    return const <Map<String, dynamic>>[];
-  }
-
-  static Map<String, dynamic> _readMap(dynamic raw) {
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return const <String, dynamic>{};
-  }
-
-  static int? _readInt(Map<String, dynamic> map, List<String> keys) {
-    for (final key in keys) {
-      final value = map[key];
-      if (value is int) return value;
-      if (value is num) return value.toInt();
-      if (value is String) {
-        final parsed = int.tryParse(value.trim());
-        if (parsed != null) return parsed;
-      }
-    }
-    return null;
+    return ClientModel.fromJson(readApiEntityBody(root));
   }
 }
 

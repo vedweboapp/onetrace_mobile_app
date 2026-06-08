@@ -4,19 +4,82 @@ import 'dart:convert';
 abstract final class AuthSession {
   AuthSession._();
 
+  static const _accessKeys = ['access', 'access_token', 'token', 'jwt'];
+  static const _refreshKeys = ['refresh', 'refresh_token'];
+
+  /// Normalizes Dio JSON (`Map<dynamic, dynamic>`) for token helpers.
+  static Map<String, dynamic>? coerceAuthPayload(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) {
+      return data.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return null;
+  }
+
   static String? readAccessToken(Map<String, dynamic>? payload) {
     if (payload == null) return null;
-    return _readFirstString(payload, const [
-      'access',
-      'access_token',
-      'token',
-      'jwt',
-    ]);
+    for (final map in _payloadCandidates(payload)) {
+      final direct = _readFirstString(map, _accessKeys);
+      if (direct != null) return direct;
+      final tokens = map['tokens'];
+      if (tokens is Map) {
+        final tokensMap = Map<String, dynamic>.from(
+          tokens.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        final nested = _readFirstString(tokensMap, _accessKeys);
+        if (nested != null) return nested;
+      }
+    }
+    return null;
   }
 
   static String? readRefreshToken(Map<String, dynamic>? payload) {
     if (payload == null) return null;
-    return _readFirstString(payload, const ['refresh', 'refresh_token']);
+    for (final map in _payloadCandidates(payload)) {
+      final direct = _readFirstString(map, _refreshKeys);
+      if (direct != null) return direct;
+      final tokens = map['tokens'];
+      if (tokens is Map) {
+        final tokensMap = Map<String, dynamic>.from(
+          tokens.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        final nested = _readFirstString(tokensMap, _refreshKeys);
+        if (nested != null) return nested;
+      }
+    }
+    return null;
+  }
+
+  static List<Map<String, dynamic>> _payloadCandidates(
+    Map<String, dynamic> payload,
+  ) {
+    final out = <Map<String, dynamic>>[];
+    final seen = <int>{};
+
+    void addMap(Map<String, dynamic> map) {
+      final id = identityHashCode(map);
+      if (seen.add(id)) out.add(map);
+    }
+
+    void walk(dynamic node) {
+      if (node is! Map) return;
+      final map = Map<String, dynamic>.from(
+        node.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      addMap(map);
+      for (final key in const [
+        'data',
+        'result',
+        'response',
+        'user',
+        'tokens',
+      ]) {
+        walk(map[key]);
+      }
+    }
+
+    walk(payload);
+    return out;
   }
 
   /// Organization id from login / verify-otp JSON (`organization`, `organization_id`, …).
@@ -98,7 +161,68 @@ abstract final class AuthSession {
     return null;
   }
 
-  static bool isJwtValid(String? token, {Duration skew = const Duration(seconds: 20)}) {
+  /// Role slug from common login payload keys (`role`, `user.role`, `groups`, etc.).
+  static String? readRoleSlug(Map<String, dynamic>? payload) {
+    if (payload == null) return null;
+
+    String? fromValue(dynamic value) {
+      if (value == null) return null;
+      if (value is String) {
+        final text = value.trim().toLowerCase();
+        return text.isEmpty ? null : text;
+      }
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(
+          value.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        return fromValue(map['slug']) ??
+            fromValue(map['name']) ??
+            fromValue(map['role']) ??
+            fromValue(map['title']);
+      }
+      if (value is List) {
+        for (final item in value) {
+          final role = fromValue(item);
+          if (role != null) return role;
+        }
+      }
+      return null;
+    }
+
+    String? fromMap(Map<String, dynamic> map) {
+      for (final key in const [
+        'role',
+        'user_role',
+        'role_name',
+        'role_slug',
+        'group',
+        'groups',
+      ]) {
+        final role = fromValue(map[key]);
+        if (role != null) return role;
+      }
+      final user = map['user'];
+      if (user is Map) {
+        return fromMap(
+          Map<String, dynamic>.from(
+            user.map((k, v) => MapEntry(k.toString(), v)),
+          ),
+        );
+      }
+      return null;
+    }
+
+    for (final map in _payloadCandidates(payload)) {
+      final role = fromMap(map);
+      if (role != null) return role;
+    }
+    return null;
+  }
+
+  static bool isJwtValid(
+    String? token, {
+    Duration skew = const Duration(seconds: 20),
+  }) {
     final trimmed = token?.trim();
     if (trimmed == null || trimmed.isEmpty) return false;
     final parts = trimmed.split('.');

@@ -7,21 +7,34 @@ import 'package:hexcolor/hexcolor.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_under_development_view.dart';
 import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/features/dashboard/data/crm_quotes_api_provider.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/core/auth/auth_redirect_notifier.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/auth_api_client.dart';
 import 'package:red5/core/preferences/nav_menu_style_preference.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
+import 'package:red5/features/dashboard/presentation/views/qr_codes_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_invoice_page.dart';
+import 'package:red5/features/dashboard/presentation/views/invoices_list_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_purchase_order_page.dart';
+import 'package:red5/features/dashboard/presentation/views/purchase_orders_list_page.dart';
+import 'package:red5/features/dashboard/presentation/views/bills_list_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_bill_page.dart';
+import 'package:red5/features/vendors/presentation/views/vendors_list_page.dart';
+import 'package:red5/features/dashboard/presentation/views/reports_list_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quotations_list_page.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
+import 'package:red5/features/dashboard/presentation/invoice_list_refresh.dart';
 import 'package:red5/features/quotations/presentation/quotation_list_refresh.dart';
 import 'package:red5/features/quotations/presentation/views/add_quotation_page.dart';
 import 'package:red5/features/clients/presentation/views/clients_page.dart';
@@ -31,6 +44,7 @@ import 'package:red5/features/composite_items/presentation/view/composite_item_p
 import 'package:red5/features/items/presentation/views/items_page.dart';
 import 'package:red5/features/sites/presentation/views/sites_page.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/employee_role/data/role_session.dart';
 
 String? _absoluteProfileImageUrl(String imageFromApi) {
   final raw = imageFromApi.trim();
@@ -41,9 +55,9 @@ String? _absoluteProfileImageUrl(String imageFromApi) {
       (parsed.scheme == 'http' || parsed.scheme == 'https')) {
     return raw;
   }
-  return Uri.parse(AppApiUrls.baseUrl)
-      .resolve(raw.startsWith('/') ? raw : '/$raw')
-      .toString();
+  return Uri.parse(
+    AppApiUrls.baseUrl,
+  ).resolve(raw.startsWith('/') ? raw : '/$raw').toString();
 }
 
 class DashboardPage extends ConsumerStatefulWidget {
@@ -62,12 +76,14 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   static const _backgroundColor = Color(0xFFF6F6F7);
   static const _inactiveNav = Color(0xFF8A8A8A);
   final _searchController = TextEditingController();
+  final _searchDebounce = DebouncedSearch();
   List<QuoteSummary> _projects = const [];
   bool _isLoadingProjects = false;
   String? _projectsError;
   int _selectedIndex = 0;
   bool _productsExpanded = true;
-  final GlobalKey<ScaffoldState> _dashboardScaffoldKey = GlobalKey<ScaffoldState>();
+  final GlobalKey<ScaffoldState> _dashboardScaffoldKey =
+      GlobalKey<ScaffoldState>();
   NavMenuStyle _navMenuStyle = NavMenuStyle.drawer;
   PageRoute<dynamic>? _subscribedRoute;
   String? _profileAvatarUrl;
@@ -75,7 +91,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_onSearchChanged);
     _fetchProjects();
     unawaited(_loadProfileAvatar());
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadNavMenuStyle());
@@ -110,7 +126,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
             alignment: Alignment.bottomCenter,
             child: Material(
               color: AppColors.white,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(18),
+              ),
               clipBehavior: Clip.antiAlias,
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: maxH),
@@ -131,9 +149,13 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
                         children: [
                           Text(
                             'Menu',
-                            style: AppFonts.titleLarge(
-                              color: AppColors.inkStrong,
-                            ).copyWith(fontWeight: FontWeight.w800, fontSize: 18),
+                            style:
+                                AppFonts.titleLarge(
+                                  color: AppColors.inkStrong,
+                                ).copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 18,
+                                ),
                           ),
                           const Spacer(),
                           IconButton(
@@ -145,7 +167,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
                         ],
                       ),
                     ),
-                    const Divider(height: 1, thickness: 1, color: Color(0xFFE3E3E4)),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Color(0xFFE3E3E4),
+                    ),
                     Expanded(
                       child: ListView(
                         padding: const EdgeInsets.symmetric(
@@ -178,9 +204,19 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     }
   }
 
+  void _onSearchChanged() {
+    setState(() {});
+    if (_selectedIndex != 3) return;
+    _searchDebounce.schedule(
+      () => _fetchProjects(silent: _projects.isNotEmpty),
+    );
+  }
+
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
+    _searchDebounce.dispose();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -197,7 +233,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     await storage.remove(LocalStorageKeys.authAccessToken);
     await storage.remove(LocalStorageKeys.authRefreshToken);
     await storage.remove(LocalStorageKeys.authUserId);
+    await RoleSession.clearRole(storage);
     if (!mounted) return;
+    sl<AuthRedirectNotifier>().notifyAuthChanged();
     GoRouter.of(context).go('/');
   }
 
@@ -220,7 +258,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     }
     try {
       final api = ref.read(crmQuotesApiProvider);
-      final first = await api.fetchQuotesPage(1);
+      final first = await api.fetchQuotesPage(
+        1,
+        search: _searchController.text.trim(),
+      );
       if (!mounted) return;
       setState(() {
         _projects = first.summaries;
@@ -246,8 +287,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       if (!mounted) return;
       final raw = profile?.userImage.trim() ?? '';
       setState(() {
-        _profileAvatarUrl =
-            raw.isEmpty ? null : _absoluteProfileImageUrl(raw);
+        _profileAvatarUrl = raw.isEmpty ? null : _absoluteProfileImageUrl(raw);
       });
     } catch (_) {
       if (!mounted) return;
@@ -256,8 +296,25 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   }
 
   void _openCreateQuoteProject() async {
+    if (_selectedIndex == 12) {
+      context.push<bool?>(AddBillPage.path);
+      return;
+    }
+    if (_selectedIndex == 11) {
+      context.push<bool?>(AddPurchaseOrderPage.path);
+      return;
+    }
+    if (_selectedIndex == 10) {
+      context.push<String?>(AddInvoicePage.path).then((createdId) {
+        if (!mounted || createdId == null || createdId.trim().isEmpty) return;
+        ref.read(invoiceListRefreshTickProvider.notifier).state++;
+      });
+      return;
+    }
     if (_selectedIndex == 8) {
-      final created = await context.push<QuotationListItem>(AddQuotationPage.path);
+      final created = await context.push<QuotationListItem>(
+        AddQuotationPage.path,
+      );
       if (!mounted) return;
       if (created != null) {
         ref.read(quotationListRefreshTickProvider.notifier).state++;
@@ -271,15 +328,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     context.push(SettingsPage.path);
   }
 
-  List<QuoteSummary> get _filteredProjects {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _projects;
-    return _projects.where((project) {
-      return project.quoteName.toLowerCase().contains(query) ||
-          project.quoteNumber.toLowerCase().contains(query);
-    }).toList();
-  }
-
   Widget _buildTopBarTitle() {
     final title = switch (_selectedIndex) {
       0 => 'Home',
@@ -291,6 +339,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       6 => 'Items',
       7 => 'Composite items',
       8 => 'Quotation',
+      9 => 'Jobs',
+      10 => 'Invoices',
+      11 => 'Purchase Order',
+      12 => 'Bill Order',
+      13 => 'Vendor',
+      14 => 'Reports',
       _ => 'Home',
     };
     return Text(
@@ -471,7 +525,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   }
 
   Widget _buildProjectsBody() {
-    final filtered = _filteredProjects;
     final hasQuery = _searchController.text.trim().isNotEmpty;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -528,7 +581,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
                   border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
                 ),
                 child: Text(
-                  'SEARCH RESULTS (${filtered.length})',
+                  'SEARCH RESULTS (${_projects.length})',
                   style: AppFonts.labelLarge(color: _inactiveNav).copyWith(
                     letterSpacing: 0.7,
                     fontWeight: FontWeight.w700,
@@ -543,9 +596,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
                 child: ListView.builder(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: EdgeInsets.zero,
-                  itemCount: filtered.length,
+                  itemCount: _projects.length,
                   itemBuilder: (context, index) {
-                    final project = filtered[index];
+                    final project = _projects[index];
                     return _buildProjectRow(
                       project,
                       highlight: hasQuery && index == 0,
@@ -609,7 +662,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   void _selectDrawerIndex(int index) {
     setState(() => _selectedIndex = index);
     Navigator.of(context).pop();
-    if (index == 3) {
+    if (index == 3 || index == 9) {
       _fetchProjects(silent: _projects.isNotEmpty);
     }
   }
@@ -630,22 +683,77 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         onTap: () => _selectDrawerIndex(1),
       ),
       _drawerItem(
-        icon: 'assets/images/sites.png',
-        label: 'Sites',
-        selected: _selectedIndex == 2,
-        onTap: () => _selectDrawerIndex(2),
-      ),
-      _drawerItem(
         icon: 'assets/images/contacts.png',
         label: 'Contacts',
         selected: _selectedIndex == 4,
         onTap: () => _selectDrawerIndex(4),
       ),
       _drawerItem(
+        icon: 'assets/images/sites.png',
+        label: 'Sites',
+        selected: _selectedIndex == 2,
+        onTap: () => _selectDrawerIndex(2),
+      ),
+      _drawerItem(
+        icon: 'assets/images/qoutations.png',
+        label: 'Quotations',
+        selected: _selectedIndex == 8,
+        onTap: () {
+          Navigator.of(context).pop();
+          setState(() => _selectedIndex = 8);
+        },
+      ),
+      _drawerIconItem(
+        iconData: Icons.receipt_long_rounded,
+        label: 'Invoices',
+        selected: _selectedIndex == 10,
+        onTap: () => _selectDrawerIndex(10),
+      ),
+      _drawerIconItem(
+        iconData: Icons.shopping_cart_outlined,
+        label: 'Purchase Order',
+        selected: _selectedIndex == 11,
+        onTap: () => _selectDrawerIndex(11),
+      ),
+      _drawerSectionTitle('Bill'),
+      _drawerIconItem(
+        iconData: Icons.receipt_long_outlined,
+        label: 'Bill Order',
+        selected: _selectedIndex == 12,
+        onTap: () => _selectDrawerIndex(12),
+      ),
+      _drawerSectionTitle('Vendor'),
+      _drawerIconItem(
+        iconData: Icons.storefront_outlined,
+        label: 'Vendor',
+        selected: _selectedIndex == 13,
+        onTap: () => _selectDrawerIndex(13),
+      ),
+      _drawerItem(
+        icon: 'assets/images/jobs.png',
+        label: 'Jobs',
+        selected: _selectedIndex == 9,
+        onTap: () => _selectDrawerIndex(9),
+      ),
+      _drawerIconItem(
+        iconData: Icons.qr_code_2_rounded,
+        label: 'QR codes',
+        onTap: () {
+          Navigator.of(context).pop();
+          context.push(QrCodesPage.path);
+        },
+      ),
+      _drawerItem(
         icon: 'assets/images/projects.png',
         label: 'Projects',
         selected: _selectedIndex == 3,
         onTap: () => _selectDrawerIndex(3),
+      ),
+      _drawerIconItem(
+        iconData: Icons.assessment_outlined,
+        label: 'Reports',
+        selected: _selectedIndex == 14,
+        onTap: () => _selectDrawerIndex(14),
       ),
       _drawerItem(
         icon: 'assets/images/groups.png',
@@ -659,38 +767,21 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         expanded: _productsExpanded,
         onTap: () => setState(() => _productsExpanded = !_productsExpanded),
         children: [
-          _drawerSubItem(
-            'Items',
-            () {
-              Navigator.of(context).pop();
-              setState(() {
-                _selectedIndex = 6;
-                _productsExpanded = true;
-              });
-            },
-            _selectedIndex == 6,
-          ),
-          _drawerSubItem(
-            'Composite Items',
-            () {
-              Navigator.of(context).pop();
-              setState(() {
-                _selectedIndex = 7;
-                _productsExpanded = true;
-              });
-            },
-            _selectedIndex == 7,
-          ),
+          _drawerSubItem('Items', () {
+            Navigator.of(context).pop();
+            setState(() {
+              _selectedIndex = 6;
+              _productsExpanded = true;
+            });
+          }, _selectedIndex == 6),
+          _drawerSubItem('Composite Items', () {
+            Navigator.of(context).pop();
+            setState(() {
+              _selectedIndex = 7;
+              _productsExpanded = true;
+            });
+          }, _selectedIndex == 7),
         ],
-      ),
-      _drawerItem(
-        icon: 'assets/images/qoutations.png',
-        label: 'Quotations',
-        selected: _selectedIndex == 8,
-        onTap: () {
-          Navigator.of(context).pop();
-          setState(() => _selectedIndex = 8);
-        },
       ),
     ];
   }
@@ -741,6 +832,20 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _drawerSectionTitle(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 14, 12, 6),
+      child: Text(
+        label,
+        style: AppFonts.labelSmall(color: const Color(0xFF9CA3AF)).copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+          letterSpacing: 0.6,
         ),
       ),
     );
@@ -866,6 +971,44 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     );
   }
 
+  Widget _drawerIconItem({
+    required IconData iconData,
+    required String label,
+    bool selected = false,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Material(
+        color: selected ? const Color(0xFFEFEFF1) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            child: Row(
+              children: [
+                Icon(
+                  iconData,
+                  size: 22,
+                  color: selected ? AppColors.inkStrong : HexColor("#4B5563"),
+                ),
+                const SizedBox(width: 14),
+                Text(
+                  label,
+                  style: AppFonts.titleMedium(
+                    color: selected ? AppColors.inkStrong : HexColor("#4B5563"),
+                  ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   int get _bottomSelectedIndex {
     if (_navMenuStyle == NavMenuStyle.bottomSheet) {
       return switch (_selectedIndex) {
@@ -886,9 +1029,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   /// No pill when current screen is not one of the primary bottom tabs.
   bool get _suppressBottomNavIndicator {
     if (_navMenuStyle == NavMenuStyle.drawer) {
-      return _selectedIndex != 0 &&
-          _selectedIndex != 1 &&
-          _selectedIndex != 3;
+      return _selectedIndex != 0 && _selectedIndex != 1 && _selectedIndex != 3;
     }
     return _bottomSelectedIndex == 3 &&
         _selectedIndex != 0 &&
@@ -915,8 +1056,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
 
   @override
   Widget build(BuildContext context) {
-    final quotationTab = _selectedIndex == 8;
-    final shellBg = quotationTab ? AppColors.white : _backgroundColor;
+    final whiteShellTab =
+        _selectedIndex == 8 ||
+        _selectedIndex == 10 ||
+        _selectedIndex == 11 ||
+        _selectedIndex == 12;
+    final shellBg = whiteShellTab ? AppColors.white : _backgroundColor;
 
     return Scaffold(
       key: _dashboardScaffoldKey,
@@ -954,6 +1099,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
           const ItemsPage(),
           const CompositeItemPage(),
           const QuotationsListPage(),
+          _buildProjectsBody(),
+          const InvoicesListPage(),
+          const PurchaseOrdersListPage(),
+          const BillsListPage(),
+          const VendorsListPage(),
+          const ReportsListPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -1041,10 +1192,24 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: (_selectedIndex == 3 || _selectedIndex == 8)
+      floatingActionButton:
+          (_selectedIndex == 3 ||
+              _selectedIndex == 8 ||
+              _selectedIndex == 9 ||
+              _selectedIndex == 10 ||
+              _selectedIndex == 11 ||
+              _selectedIndex == 12)
           ? FloatingActionButton(
               heroTag: _selectedIndex == 8
                   ? 'dashboard_quotation_create_fab'
+                  : _selectedIndex == 9
+                  ? 'dashboard_jobs_create_fab'
+                  : _selectedIndex == 10
+                  ? 'dashboard_invoices_create_fab'
+                  : _selectedIndex == 11
+                  ? 'dashboard_purchase_orders_create_fab'
+                  : _selectedIndex == 12
+                  ? 'dashboard_bills_create_fab'
                   : 'dashboard_create_quote',
               onPressed: _openCreateQuoteProject,
               backgroundColor: const Color(0xFF121212),

@@ -2,17 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/employee_role/employee_home/employee_home_page.dart';
+import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
+import 'package:red5/employee_role/presentation/widgets/technician_settings_drawer.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/change_password_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/settings_feature_flags.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 
 /// Privacy settings: change password entry + active sessions overview.
 class PrivacySettingsPage extends StatefulWidget {
-  const PrivacySettingsPage({super.key});
+  const PrivacySettingsPage({
+    super.key,
+    this.useTechnicianSettingsNav = false,
+  });
+
+  /// When true (technician routes), drawer shows only Profile + Privacy and exit returns to [TechnicianHomePage].
+  final bool useTechnicianSettingsNav;
 
   static const path = '/settings/privacy';
   static const name = 'settings-privacy';
@@ -32,11 +42,27 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
     });
   }
 
+  void _closeDrawerPopToProfile() {
+    _scaffoldKey.currentState?.closeDrawer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (context.canPop()) {
+        context.pop();
+      } else {
+        context.pushReplacement(EmployeeTechnicianSettingsRoutes.personalProfile);
+      }
+    });
+  }
+
   void _logoutToDashboard() {
     _scaffoldKey.currentState?.closeDrawer();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.go(DashboardPage.path);
+      if (widget.useTechnicianSettingsNav) {
+        context.go(TechnicianHomePage.path);
+      } else {
+        context.go(DashboardPage.path);
+      }
     });
   }
 
@@ -46,15 +72,24 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
       key: _scaffoldKey,
       backgroundColor: AppColors.white,
       drawerEnableOpenDragGesture: true,
-      drawer: _PrivacyDrawer(
-        onExit: _logoutToDashboard,
-        onPersonalProfile: () => _closeDrawerPush(PersonalProfilePage.path),
-        onUsers: () => _closeDrawerPush(UsersSettingsPage.path),
-        onCompany: () => _closeDrawerPush(CompanySettingsPage.path),
-        onPrivacy: () => _scaffoldKey.currentState?.closeDrawer(),
-        onMetadata: () => _closeDrawerPush(MetadataSettingsPage.path),
-        onIntegration: () => _closeDrawerPush(IntegrationSettingsPage.path),
-      ),
+      drawer: widget.useTechnicianSettingsNav
+          ? TechnicianSettingsDrawer(
+              selected: TechnicianSettingsSection.privacy,
+              onExit: _logoutToDashboard,
+              onPersonalProfile: _closeDrawerPopToProfile,
+              onPrivacy: () => _scaffoldKey.currentState?.closeDrawer(),
+            )
+          : _PrivacyDrawer(
+              onExit: _logoutToDashboard,
+              onPersonalProfile: () =>
+                  _closeDrawerPush(PersonalProfilePage.path),
+              onUsers: () => _closeDrawerPush(UsersSettingsPage.path),
+              onCompany: () => _closeDrawerPush(CompanySettingsPage.path),
+              onPrivacy: () => _scaffoldKey.currentState?.closeDrawer(),
+              onMetadata: () => _closeDrawerPush(MetadataSettingsPage.path),
+              onIntegration: () =>
+                  _closeDrawerPush(IntegrationSettingsPage.path),
+            ),
       appBar: AppBar(
         backgroundColor: AppColors.white,
         surfaceTintColor: AppColors.white,
@@ -359,13 +394,16 @@ class _PrivacyDrawer extends StatelessWidget {
                     selected: true,
                     onTap: onPrivacy,
                   ),
-                  _sectionLabelCaps('CUSTOMISATION'),
-                  _sidebarNavTile(
-                    title: 'Module and Field',
-                    iconAsset: 'assets/images/database (1).png',
-                    selected: false,
-                    onTap: onMetadata,
-                  ),
+                  if (SettingsFeatureFlags.showMetaData) ...[
+                    _sectionLabelCaps('CUSTOMISATION'),
+                    _sidebarNavTile(
+                      title: 'Meta Data',
+                      iconAsset: 'assets/images/database (1).png',
+                      selected: false,
+                      enabled: SettingsFeatureFlags.metadataEnabled,
+                      onTap: onMetadata,
+                    ),
+                  ],
                   _sectionLabelCaps('INTEGRATION'),
                   _sidebarNavTile(
                     title: 'Integration',
@@ -401,15 +439,22 @@ class _PrivacyDrawer extends StatelessWidget {
     required String iconAsset,
     required bool selected,
     required VoidCallback onTap,
+    bool enabled = true,
   }) {
+    final inactiveColor =
+        enabled ? const Color(0xFF525860) : const Color(0xFF9CA3AF);
+    final iconColor = enabled ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
-        color: selected ? const Color(0xFFF2F2F4) : Colors.transparent,
+        color: selected && enabled
+            ? const Color(0xFFF2F2F4)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
+          onTap: enabled ? onTap : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             child: Row(
@@ -418,7 +463,7 @@ class _PrivacyDrawer extends StatelessWidget {
                   iconAsset,
                   width: 22,
                   height: 22,
-                  color: const Color(0xFF4B5563),
+                  color: iconColor,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -426,11 +471,11 @@ class _PrivacyDrawer extends StatelessWidget {
                     title,
                     style:
                         AppFonts.bodyMedium(
-                          color: selected
+                          color: selected && enabled
                               ? AppColors.inkStrong
-                              : const Color(0xFF525860),
+                              : inactiveColor,
                         ).copyWith(
-                          fontWeight: selected
+                          fontWeight: selected && enabled
                               ? FontWeight.w600
                               : FontWeight.w500,
                           fontSize: 15,

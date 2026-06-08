@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
 
@@ -24,29 +25,30 @@ final class QuotationsApiClient {
 
   final Dio _dio;
 
-  static const int defaultPageSize = 20;
+  static const int defaultPageSize = kDefaultApiPageSize;
 
   Future<QuotationsPageResult> fetchQuotationsPage({
     int page = 1,
     int pageSize = defaultPageSize,
+    String? search,
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.quotations,
-      queryParameters: <String, dynamic>{'page': page, 'page_size': pageSize},
+      queryParameters: buildListQuery(
+        page: page,
+        pageSize: pageSize,
+        search: search,
+      ),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final rows = _readRows(root);
+    final rows = readApiRows(root);
     final items = rows.map(QuotationListItem.fromJson).toList();
-    final pagination = _readMap(root['pagination']);
-    final currentPage = _readInt(pagination, const ['current_page']) ?? page;
-    final totalPages = _readInt(pagination, const ['total_pages']) ?? 1;
-    final totalRecords =
-        _readInt(pagination, const ['total_records']) ?? items.length;
+    final meta = readApiPageMeta(root, page: page);
     return QuotationsPageResult(
       items: items,
-      currentPage: currentPage < 1 ? 1 : currentPage,
-      totalPages: totalPages < 1 ? 1 : totalPages,
-      totalRecords: totalRecords < 0 ? 0 : totalRecords,
+      currentPage: meta.currentPage,
+      totalPages: meta.totalPages,
+      totalRecords: meta.totalRecords,
     );
   }
 
@@ -55,9 +57,7 @@ final class QuotationsApiClient {
       AppApiUrls.quotationById(id),
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return QuotationDetailModel.fromJson(payload);
+    return QuotationDetailModel.fromJson(readApiEntityBody(root));
   }
 
   /// `POST /api/v1/quotations/` — server may accept a subset of fields.
@@ -67,9 +67,7 @@ final class QuotationsApiClient {
       data: body,
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return QuotationListItem.fromJson(payload);
+    return QuotationListItem.fromJson(readApiEntityBody(root));
   }
 
   Future<QuotationListItem> updateQuotation({
@@ -81,9 +79,7 @@ final class QuotationsApiClient {
       data: body,
     );
     final root = response.data ?? const <String, dynamic>{};
-    final data = _readMap(root['data']);
-    final payload = data.isNotEmpty ? data : root;
-    return QuotationListItem.fromJson(payload);
+    return QuotationListItem.fromJson(readApiEntityBody(root));
   }
 
   Future<void> patchQuotation({
@@ -98,35 +94,6 @@ final class QuotationsApiClient {
 
   Future<void> deleteQuotation(String id) async {
     await _dio.delete<void>(AppApiUrls.quotationById(id));
-  }
-
-  static List<Map<String, dynamic>> _readRows(Map<String, dynamic> root) {
-    final raw = root['data'];
-    if (raw is List) {
-      return raw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-    return const <Map<String, dynamic>>[];
-  }
-
-  static Map<String, dynamic> _readMap(dynamic raw) {
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return const <String, dynamic>{};
-  }
-
-  static int? _readInt(Map<String, dynamic> map, List<String> keys) {
-    for (final key in keys) {
-      final value = map[key];
-      if (value is int) return value;
-      if (value is num) return value.toInt();
-      if (value is String) {
-        final parsed = int.tryParse(value.trim());
-        if (parsed != null) return parsed;
-      }
-    }
-    return null;
   }
 }
 

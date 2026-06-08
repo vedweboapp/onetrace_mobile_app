@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/constants/app_image_string.dart';
 import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/network/api_response_message.dart';
@@ -20,6 +22,8 @@ import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/reset_password_page.dart';
+import 'package:red5/employee_role/data/app_role.dart';
+import 'package:red5/employee_role/data/role_session.dart';
 
 /// How [OtpVerifyPage] was opened — drives titles, primary/secondary actions, and footer.
 enum OtpVerifyFlow {
@@ -264,20 +268,39 @@ class _OtpVerifyPageState extends ConsumerState<OtpVerifyPage> {
         context.pushReplacement(uri.toString());
         return;
       }
-      // Sign-in OTP flow: persist tokens (when present) and go to dashboard.
-      final storage = ref.read(localStorageProvider);
-      final accessToken = AuthSession.readAccessToken(response.data);
-      final refreshToken = AuthSession.readRefreshToken(response.data);
-      if (accessToken != null) {
-        await storage.setString(LocalStorageKeys.authAccessToken, accessToken);
+      // Sign-in OTP flow: persist tokens (when present) and go to home.
+      final payload = AuthSession.coerceAuthPayload(response.data);
+      if (payload == null) {
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text(
+              'Verification succeeded but the session was invalid.',
+            ),
+          ),
+        );
+        return;
       }
+      final storage = ref.read(localStorageProvider);
+      final accessToken = AuthSession.readAccessToken(payload);
+      final refreshToken = AuthSession.readRefreshToken(payload);
+      if (accessToken == null || !AuthSession.isJwtValid(accessToken)) {
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text(
+              'Verification succeeded but no access token was returned.',
+            ),
+          ),
+        );
+        return;
+      }
+      await storage.setString(LocalStorageKeys.authAccessToken, accessToken);
       if (refreshToken != null) {
         await storage.setString(
           LocalStorageKeys.authRefreshToken,
           refreshToken,
         );
       }
-      final userId = AuthSession.readUserId(response.data);
+      final userId = AuthSession.readUserId(payload);
       if (userId != null && userId.isNotEmpty) {
         await storage.setString(LocalStorageKeys.authUserId, userId);
       } else {
@@ -285,10 +308,19 @@ class _OtpVerifyPageState extends ConsumerState<OtpVerifyPage> {
       }
       await OrganizationIdStorage.persist(
         storage,
-        AuthSession.readOrganizationId(response.data),
+        AuthSession.readOrganizationId(payload),
       );
+      final role = AppRole.fromSlug(AuthSession.readRoleSlug(payload));
+      if (role != null) {
+        await RoleSession.persistRole(storage, role);
+      } else {
+        await RoleSession.clearRole(storage);
+      }
       if (!mounted) return;
-      context.go(DashboardPage.path);
+      sl<AuthRedirectNotifier>().notifyAuthChanged();
+      context.go(
+        role == null ? DashboardPage.homePath : RoleSession.homePathFor(role),
+      );
     } on DioException catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(

@@ -5,18 +5,26 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:red5/core/constants/app_image_string.dart';
+import 'package:red5/core/network/api_int_parsing.dart';
+import 'package:red5/core/navigation/safe_overlay_pop.dart';
+import 'package:red5/core/utils/text_controller_lifecycle.dart';
 import 'package:red5/core/pdf_coordinates/pdf_coordinates.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/dashboard/presentation/views/drawing_canvas_feature_flags.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
+import 'package:red5/features/dashboard/presentation/widgets/pin_status_delete_dialog.dart';
+import 'package:red5/features/dashboard/presentation/widgets/pin_status_form_sheet.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 /// Route payload for [DrawingCanvasPage]. Use [toExtra] with GoRouter and
@@ -137,6 +145,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   final TextEditingController _productController = TextEditingController();
   List<GroupItemOption> _groupOptions = const <GroupItemOption>[];
   List<CompositeItemOption> _productOptions = const <CompositeItemOption>[];
+  final Map<int, String> _abbreviationByCompositeItemId = <int, String>{};
   int? _selectedGroupId;
   int? _selectedCompositeItemId;
 
@@ -175,6 +184,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (ctrl == null || meta == null) return null;
     return PdfCoordinateEngine(controller: ctrl, metadata: meta);
   }
+
   String? _activeFilePath;
   final List<String> _uploadedPdfPaths = <String>[];
   final Map<String, List<_PlotRegion>> _regionsByPdfPath = {};
@@ -198,6 +208,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   int _activePointers = 0;
   final GlobalKey _viewportCanvasKey = GlobalKey();
   _PinHit? _pinPointerDownHit;
+  int? _selectedPinRegionIndex;
+  int? _selectedPinIndex;
   Timer? _pinLongPressTimer;
   bool _pinLongPressArmed = false;
   bool _pinDraggingAfterLongPress = false;
@@ -215,11 +227,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   bool _contentReprojectionQueued = false;
   Rect? _queuedContentRectFrom;
   Rect? _queuedContentRectTo;
-
-  static const List<String> _pinStatusDialogActiveOptions = <String>[
-    'Active',
-    'Inactive',
-  ];
 
   bool get _hasFile =>
       (_activeFilePath ?? '').trim().isNotEmpty &&
@@ -258,8 +265,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _usePdfViewport && _selectedTool == _CanvasTool.pin;
 
   /// Block PDF pinch/pan whenever not in hand/pan mode.
-  bool get _blockPdfGestures =>
-      _usePdfViewport && !_pdfViewerHandlesGestures;
+  bool get _blockPdfGestures => _usePdfViewport && !_pdfViewerHandlesGestures;
 
   /// Draw-tool overlay captures all pointers (select / line / place pin).
   bool get _overlayDrawListenerActive =>
@@ -273,6 +279,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final projectName = (widget.projectName ?? '').trim();
     if (projectName.isNotEmpty) {
       _blockController.text = projectName;
+    } else {
+      final fallbackTitle = widget.title.trim();
+      if (fallbackTitle.isNotEmpty) {
+        _blockController.text = fallbackTitle;
+      }
     }
     final level = (widget.levelName ?? '').trim();
     if (level.isNotEmpty) {
@@ -311,13 +322,58 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       }
     }
     if (!mounted) return;
-    await _loadSavedLevelMarkup();
-    if (!mounted) return;
-    if (_isPdfFile && _pdfController != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        await _loadSavedLevelMarkup();
+        if (!mounted) return;
+        _realignMarkupFromApiSources();
+        if (_isPdfFile && _pdfController != null) {
+          setState(() {});
+        }
       });
-    }
+    });
+  }
+
+  /// Re-applies plot/pin positions after the letterboxed content rect is known.
+  void _realignMarkupFromApiSources() {
+    if (!_hasFile || _regions.isEmpty) return;
+    setState(() {
+      _regions.setAll(
+        0,
+        _regions
+            .map((region) {
+              var next = region;
+              final raw = region.apiCoordinatesRaw;
+              if (raw != null && !_usePdfViewport) {
+                final pts = _pointsFromCoordinates(raw);
+                if (pts.length >= 2) {
+                  final shapeLines = pts.length >= 3
+                      ? _linesFromCoordinatePoints(pts)
+                      : const <_CanvasLine>[];
+                  final rect = _rectFromCoordinatePoints(pts) ?? region.rect;
+                  next = region.copyWith(rect: rect, lines: shapeLines);
+                  next = _plotRegionWithSyncedRect(next) ?? next;
+                }
+              }
+              final pins = next.pins
+                  .map((pin) {
+                    if (pin.contentNormX == null || pin.contentNormY == null) {
+                      return pin;
+                    }
+                    return pin.copyWith(
+                      offset: _denormalizeScenePoint(
+                        pin.contentNormX!,
+                        pin.contentNormY!,
+                      ),
+                    );
+                  })
+                  .toList(growable: false);
+              return next.copyWith(pins: pins);
+            })
+            .toList(growable: false),
+      );
+    });
   }
 
   void _initPdfControllerForActivePath() {
@@ -326,7 +382,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (!path.toLowerCase().endsWith('.pdf')) return;
     _detachPdfController();
     final controller = PdfControllerPinch(document: PdfDocument.openFile(path));
-    controller.addListener(_onPdfLayoutChanged);
     _pdfController = controller;
     unawaited(_loadPdfMetadata(path));
   }
@@ -342,24 +397,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   void _detachPdfController() {
-    _pdfController?.removeListener(_onPdfLayoutChanged);
     _pdfController?.dispose();
     _pdfController = null;
     _pdfMetadataCache = null;
-  }
-
-  bool _pdfLayoutSyncScheduled = false;
-
-  void _onPdfLayoutChanged() {
-    if (!mounted || !_isPdfFile || _pdfLayoutSyncScheduled) return;
-    _pdfLayoutSyncScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _pdfLayoutSyncScheduled = false;
-      if (mounted) {
-        // Re-project plot polygons onto the PDF after zoom/pan/layout.
-        setState(() {});
-      }
-    });
   }
 
   /// Pin anchor in canvas space (viewport-local for PDF, scene for images).
@@ -370,6 +410,30 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       return engine.annotationToViewport(point) ?? pin.offset;
     }
     return pin.offset;
+  }
+
+  Size? _viewportCanvasSize() {
+    final box =
+        _viewportCanvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    return box.size;
+  }
+
+  /// Pins extend above [anchor]; hide when the glyph would leave the PDF viewport.
+  bool _shouldPaintPinAt(
+    Offset anchor, {
+    required double pinSize,
+    required double pointerH,
+    double abbreviationBand = 0,
+  }) {
+    final viewport = _viewportCanvasSize();
+    if (viewport == null) return true;
+    final top = anchor.dy - pinSize - pointerH - abbreviationBand;
+    if (top < 0 || anchor.dy > viewport.height + 2) return false;
+    if (anchor.dx < -pinSize || anchor.dx > viewport.width + pinSize) {
+      return false;
+    }
+    return true;
   }
 
   Future<void> _ensureDrawingSourceReady() async {
@@ -480,9 +544,32 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           (r) => r.copyWith(
             pins: List<_CanvasPin>.from(r.pins),
             lines: List<_CanvasLine>.from(r.safeLines),
+            pendingDeletedPinIds: Set<int>.from(r.pendingDeletedPinIds),
           ),
         )
         .toList();
+  }
+
+  void _clearPendingDeletedPinIds() {
+    for (var i = 0; i < _regions.length; i++) {
+      if (_regions[i].pendingDeletedPinIds.isEmpty) continue;
+      _regions[i] = _regions[i].copyWith(pendingDeletedPinIds: const <int>{});
+    }
+  }
+
+  void _logLevelPlotsSyncResult(Map<String, dynamic>? responseBody) {
+    if (!kDebugMode || responseBody == null) return;
+    final plots = QuoteProjectApiClient.plotsFromLevelResponse(responseBody);
+    for (final plot in plots) {
+      final plotId = readApiIntFromMap(plot, const ['id', 'plot_id']);
+      final pinsRaw = plot['pins'];
+      final pinCount = pinsRaw is List ? pinsRaw.length : 0;
+      final deleted = QuoteProjectApiClient.deletedPinIdsFromPlotPayload(plot);
+      debugPrint(
+        '[DrawingCanvas] plot id=$plotId pins=$pinCount '
+        'deleted_pin_ids=$deleted',
+      );
+    }
   }
 
   void _cancelPinLongPressTimer() {
@@ -495,13 +582,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   void _scheduleDisposeTextControllersAfterRoute(
     Iterable<TextEditingController> controllers,
   ) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        for (final c in controllers) {
-          c.dispose();
-        }
-      });
-    });
+    scheduleDisposeTextControllers(controllers);
   }
 
   void _schedulePinLongPressArm(_PinHit hit) {
@@ -606,19 +687,19 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               minScale: 0.5,
               maxScale: 8,
               builders: PdfViewPinchBuilders<DefaultBuilderOptions>(
-              options: const DefaultBuilderOptions(),
-              documentLoaderBuilder: (_) =>
-                  const Center(child: CircularProgressIndicator()),
-              pageLoaderBuilder: (_) => const Center(
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              errorBuilder: (_, error) => Center(
-                child: Text(
-                  'Could not open PDF',
-                  style: AppFonts.bodyMedium(color: AppColors.muted),
+                options: const DefaultBuilderOptions(),
+                documentLoaderBuilder: (_) =>
+                    const Center(child: CircularProgressIndicator()),
+                pageLoaderBuilder: (_) => const Center(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                errorBuilder: (_, error) => Center(
+                  child: Text(
+                    'Could not open PDF',
+                    style: AppFonts.bodyMedium(color: AppColors.muted),
+                  ),
                 ),
               ),
-            ),
             ),
           ),
         ),
@@ -679,7 +760,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final nextController = PdfControllerPinch(
       document: PdfDocument.openFile(trimmed),
     );
-    nextController.addListener(_onPdfLayoutChanged);
     final restored = _regionsByPdfPath[trimmed];
     final restoredLines = _linesByPdfPath[trimmed];
     setState(() {
@@ -839,40 +919,64 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                       ),
                     )
                     .toList(growable: false);
-                final mappedPins = region.pins.map((pin) {
-                  if (_usePdfViewport && pin.pdfPoint != null) {
-                    final scene = _pinAnchorScene(pin);
-                    return pin.copyWith(offset: scene);
-                  }
-                  return pin.copyWith(
-                    offset: _mapPointAcrossContentRects(
-                      pin.offset,
-                      qFrom,
-                      qTo,
-                    ),
-                  );
-                }).toList(growable: false);
-                final mappedRect = region.safeLines.isNotEmpty
-                    ? _boundingRectFromPoints(
-                        mappedLines.map((line) => line.start).toList(),
-                      )
-                    : Rect.fromPoints(
-                        _mapPointAcrossContentRects(
-                          region.rect.topLeft,
-                          qFrom,
-                          qTo,
-                        ),
-                        _mapPointAcrossContentRects(
-                          region.rect.bottomRight,
+                final mappedPins = region.pins
+                    .map((pin) {
+                      if (_usePdfViewport && pin.pdfPoint != null) {
+                        final scene = _pinAnchorScene(pin);
+                        return pin.copyWith(offset: scene);
+                      }
+                      if (pin.contentNormX != null &&
+                          pin.contentNormY != null) {
+                        return pin.copyWith(
+                          offset: _denormalizeScenePoint(
+                            pin.contentNormX!,
+                            pin.contentNormY!,
+                          ),
+                        );
+                      }
+                      return pin.copyWith(
+                        offset: _mapPointAcrossContentRects(
+                          pin.offset,
                           qFrom,
                           qTo,
                         ),
                       );
-                return region.copyWith(
-                  rect: mappedRect,
-                  lines: mappedLines,
-                  pins: mappedPins,
-                );
+                    })
+                    .toList(growable: false);
+                _PlotRegion remapped = region;
+                if (region.apiCoordinatesRaw != null && !_usePdfViewport) {
+                  final pts = _pointsFromCoordinates(region.apiCoordinatesRaw);
+                  if (pts.length >= 2) {
+                    final shapeLines = pts.length >= 3
+                        ? _linesFromCoordinatePoints(pts)
+                        : const <_CanvasLine>[];
+                    final rect = _rectFromCoordinatePoints(pts) ?? region.rect;
+                    remapped = region.copyWith(rect: rect, lines: shapeLines);
+                    remapped = _plotRegionWithSyncedRect(remapped) ?? remapped;
+                  }
+                } else {
+                  final mappedRect = region.safeLines.isNotEmpty
+                      ? _boundingRectFromPoints(
+                          mappedLines.map((line) => line.start).toList(),
+                        )
+                      : Rect.fromPoints(
+                          _mapPointAcrossContentRects(
+                            region.rect.topLeft,
+                            qFrom,
+                            qTo,
+                          ),
+                          _mapPointAcrossContentRects(
+                            region.rect.bottomRight,
+                            qFrom,
+                            qTo,
+                          ),
+                        );
+                  remapped = region.copyWith(
+                    rect: mappedRect,
+                    lines: mappedLines,
+                  );
+                }
+                return remapped.copyWith(pins: mappedPins);
               })
               .toList(growable: false),
         );
@@ -940,18 +1044,27 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
   }
 
-  /// Whether the API/website expects a rotated (landscape) coordinate frame
-  /// for the currently active PDF page.
+  /// Whether the API/website expects a rotated (landscape) coordinate frame.
   ///
-  /// The website always renders drawings in landscape orientation. When the
-  /// PDF page itself is portrait-natural (`width < height`) the mobile mark-up
-  /// (made on a portrait viewport) must be rotated 90° before being sent to
-  /// the backend so the website draws plots/pins at the exact same physical
-  /// location. PDFs that are already landscape-natural need no rotation.
+  /// Only applies to **PDF** levels. Raster screenshots/images use plain 0–100%
+  /// of the image (same as the website canvas) — no portrait↔landscape swap.
   bool get _shouldApplyLandscapeRotation {
+    if (!_isPdfFile) return false;
     final ratio = _activeContentAspectRatio;
     if (ratio == null || !ratio.isFinite || ratio <= 0) return false;
     return ratio < 1.0;
+  }
+
+  /// API x/y (0–1 or 0–100) → portrait-normalized fractions in the content rect.
+  Offset _apiPortraitNormFromRaw(double x, double y) {
+    final nx = PdfCoordinateCodec.normalizeApiScalar(x);
+    final ny = PdfCoordinateCodec.normalizeApiScalar(y);
+    return _landscapeApiToPortraitNorm(Offset(nx, ny));
+  }
+
+  Offset _scenePointFromApiCoordinates(double x, double y) {
+    final norm = _apiPortraitNormFromRaw(x, y);
+    return _denormalizeScenePoint(norm.dx, norm.dy);
   }
 
   /// Rotation direction used when bridging mobile (portrait) mark-up to the
@@ -1036,16 +1149,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             );
       }
     }
-    final legacy = PdfCoordinateCodec.pageCoordinateFromApi(
-      xRaw: x,
-      yRaw: y,
-      page: page,
-    );
-    if (legacy != null) {
-      return _denormalizeScenePoint(legacy.xPercent, legacy.yPercent);
-    }
-    if (x.abs() > 1 || y.abs() > 1) return Offset(x, y);
-    return _denormalizeScenePoint(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+    return _scenePointFromApiCoordinates(x, y);
   }
 
   void _applyPinScenePosition(_PinHit hit, Offset scene) {
@@ -1059,10 +1163,13 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (hit.pinIndex < 0 || hit.pinIndex >= region.pins.length) return;
     final engine = _pdfEngine;
     final pdfPoint = engine?.viewportToAnnotation(clamped);
+    final contentNorm = _normalizeScenePoint(clamped);
     setState(() {
       final pins = List<_CanvasPin>.from(region.pins);
       pins[hit.pinIndex] = pins[hit.pinIndex].copyWith(
         offset: clamped,
+        contentNormX: contentNorm.dx,
+        contentNormY: contentNorm.dy,
         pdfPoint: pdfPoint ?? pins[hit.pinIndex].pdfPoint,
       );
       _regions[hit.regionIndex] = region.copyWith(pins: pins);
@@ -1093,6 +1200,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     context.showTopSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Avoids Navigator `!_debugLocked` when closing dialogs from button handlers.
+  void _popDialogSafely<T>(BuildContext dialogContext, [T? result]) {
+    popOverlaySafely<T>(dialogContext, result);
+  }
+
   Future<void> _onDeleteSelection() async {
     if (!_hasAnyCanvasMarkup) {
       _showTopToast('No selection to remove');
@@ -1113,13 +1225,13 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             ).copyWith(fontWeight: FontWeight.w700),
           ),
           content: Text(
-            'This removes all selected areas, pins, and lines from this level. '
-            'Tap Submit to save the cleared drawing to the server.',
+            'This removes all selected areas, pins, and lines from this level '
+            'and updates the server.',
             style: AppFonts.bodyMedium(color: AppColors.muted),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
+              onPressed: () => _popDialogSafely<bool>(ctx, false),
               child: const Text('Cancel'),
             ),
             FilledButton(
@@ -1127,7 +1239,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 backgroundColor: const Color(0xFFF14141),
                 foregroundColor: AppColors.white,
               ),
-              onPressed: () => Navigator.of(ctx).pop(true),
+              onPressed: () => _popDialogSafely<bool>(ctx, true),
               child: const Text('Remove All'),
             ),
           ],
@@ -1137,7 +1249,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
 
     if (!mounted || shouldDelete != true) return;
     _clearAllCanvasMarkup();
-    _showTopToast('All selections removed — tap Submit to update the server');
+    await _submitLevelPlots(clearAllOnServer: true, popOnSuccess: false);
   }
 
   Rect _normalizedRect(Offset a, Offset b) {
@@ -1227,12 +1339,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       return lines.map((l) => l.start).toList(growable: false);
     }
     final r = _regionSceneRect(region);
-    return [
-      r.topLeft,
-      r.topRight,
-      r.bottomRight,
-      r.bottomLeft,
-    ];
+    return [r.topLeft, r.topRight, r.bottomRight, r.bottomLeft];
   }
 
   Path _regionPath(_PlotRegion region) {
@@ -1331,7 +1438,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     region.pdfVertices = <PdfAnnotationPoint>[tl, tr, br, bl];
   }
 
-  void _assignPdfVerticesForPoints(_PlotRegion region, List<Offset> scenePoints) {
+  void _assignPdfVerticesForPoints(
+    _PlotRegion region,
+    List<Offset> scenePoints,
+  ) {
     final engine = _pdfEngine;
     if (engine == null || !_usePdfViewport) return;
     final verts = <PdfAnnotationPoint>[];
@@ -1346,6 +1456,76 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return _regionPath(region).contains(point);
   }
 
+  bool _plotRegionIsNamed(_PlotRegion region) =>
+      (region.name ?? '').trim().isNotEmpty;
+
+  static const String _plotOverlapMessage =
+      'This box overlaps with an existing plot';
+
+  bool _plotOverlapsAnyExistingNamedPlot(
+    _PlotRegion candidate, {
+    int? ignoreIndex,
+  }) {
+    final candidatePath = _regionPath(candidate);
+    final candidateBounds = candidatePath.getBounds();
+    if (candidateBounds.width <= 0 || candidateBounds.height <= 0) {
+      return false;
+    }
+    final candidateCenter = _regionSceneRect(candidate).center;
+
+    for (var i = 0; i < _regions.length; i++) {
+      if (i == ignoreIndex) continue;
+      final existing = _regions[i];
+      if (!_plotRegionIsNamed(existing)) continue;
+
+      final existingPath = _regionPath(existing);
+      final existingBounds = existingPath.getBounds();
+      if (!candidateBounds.overlaps(existingBounds)) continue;
+
+      if (_plotShapesOverlap(
+        candidatePath: candidatePath,
+        candidate: candidate,
+        existingPath: existingPath,
+        existing: existing,
+        candidateCenter: candidateCenter,
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _plotShapesOverlap({
+    required Path candidatePath,
+    required _PlotRegion candidate,
+    required Path existingPath,
+    required _PlotRegion existing,
+    required Offset candidateCenter,
+  }) {
+    if (existingPath.contains(candidateCenter)) return true;
+    if (candidatePath.contains(_regionSceneRect(existing).center)) return true;
+
+    for (final p in _regionScenePolygonPoints(candidate)) {
+      if (existingPath.contains(p)) return true;
+    }
+    for (final p in _regionScenePolygonPoints(existing)) {
+      if (candidatePath.contains(p)) return true;
+    }
+
+    final intersection = candidatePath.getBounds().intersect(
+      existingPath.getBounds(),
+    );
+    return intersection.width > 4 && intersection.height > 4;
+  }
+
+  bool _pointInsideAnyNamedPlot(Offset point) {
+    for (var i = _regions.length - 1; i >= 0; i--) {
+      if (!_plotRegionIsNamed(_regions[i])) continue;
+      if (_regionContainsPoint(_regions[i], point)) return true;
+    }
+    return false;
+  }
+
   Future<String?> _showPlotNameBottomSheet() async {
     return showModalBottomSheet<String>(
       context: context,
@@ -1356,6 +1536,47 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       ),
       builder: (sheetContext) => const _PlotNameBottomSheetBody(),
     );
+  }
+
+  void _adjustActiveRegionIndexAfterRemoval(int removedIndex) {
+    final active = _activeRegionIndex;
+    if (active == null) return;
+    if (active == removedIndex) {
+      _activeRegionIndex = _regions.isEmpty
+          ? null
+          : math.min(removedIndex, _regions.length - 1);
+    } else if (active > removedIndex) {
+      _activeRegionIndex = active - 1;
+    }
+  }
+
+  /// Shows [prepared] on canvas, prompts for a name; cancel removes the preview plot.
+  Future<void> _commitNewPlotRegion(_PlotRegion prepared) async {
+    late final int pendingIndex;
+    setState(() {
+      _regions.add(prepared);
+      pendingIndex = _regions.length - 1;
+      _activeRegionIndex = pendingIndex;
+    });
+    final name = await _showPlotNameBottomSheet();
+    if (!mounted) return;
+    if (name == null || name.trim().isEmpty) {
+      setState(() {
+        if (pendingIndex >= 0 && pendingIndex < _regions.length) {
+          _regions.removeAt(pendingIndex);
+          _adjustActiveRegionIndexAfterRemoval(pendingIndex);
+        }
+      });
+      return;
+    }
+    setState(() {
+      if (pendingIndex >= 0 && pendingIndex < _regions.length) {
+        _regions[pendingIndex] = _regions[pendingIndex].copyWith(
+          name: name.trim(),
+        );
+        _activeRegionIndex = pendingIndex;
+      }
+    });
   }
 
   Future<void> _finalizeAreaSelection() async {
@@ -1375,36 +1596,19 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       name: null,
       pins: <_CanvasPin>[],
       lines: const <_CanvasLine>[],
+      locked: true,
     );
     _assignPdfAnchorsForRect(region, rect);
-    final toAdd = _plotRegionWithSyncedRect(region) ?? region;
+    final prepared = _plotRegionWithSyncedRect(region) ?? region;
     setState(() {
-      _regions.add(toAdd);
-      _activeRegionIndex = _regions.length - 1;
       _draftStart = null;
       _draftCurrent = null;
     });
-    final name = await _showPlotNameBottomSheet();
-    if (!mounted) return;
-    if (name == null || name.trim().isEmpty) return;
-    setState(() {
-      final idx = _activeRegionIndex;
-      if (idx != null && idx >= 0 && idx < _regions.length) {
-        _regions[idx] = _regions[idx].copyWith(name: name.trim());
-      }
-    });
-  }
-
-  Future<void> _finalizeRegionNameForCurrentSelection() async {
-    final name = await _showPlotNameBottomSheet();
-    if (!mounted) return;
-    if (name == null || name.trim().isEmpty) return;
-    setState(() {
-      final idx = _activeRegionIndex;
-      if (idx != null && idx >= 0 && idx < _regions.length) {
-        _regions[idx] = _regions[idx].copyWith(name: name.trim());
-      }
-    });
+    if (_plotOverlapsAnyExistingNamedPlot(prepared)) {
+      _showTopToast(_plotOverlapMessage);
+      return;
+    }
+    await _commitNewPlotRegion(prepared);
   }
 
   void _onCanvasTapUp(TapUpDetails details) {
@@ -1421,13 +1625,14 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
 
     final isPinTool = _selectedTool == _CanvasTool.location;
     if (!isPinTool) return;
-    if (_regions.isEmpty) {
+    if (!_regions.any(_plotRegionIsNamed)) {
       _showTopToast('Select an area first');
       return;
     }
     final p = scenePoint;
     int? targetIndex;
     for (var i = _regions.length - 1; i >= 0; i--) {
+      if (!_plotRegionIsNamed(_regions[i])) continue;
       if (_regionContainsPoint(_regions[i], p)) {
         targetIndex = i;
         break;
@@ -1441,6 +1646,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final selectedCompositeItemId = _selectedCompositeItemId;
     final group = _groupController.text.trim();
     final product = _productController.text.trim();
+    final abbreviation = (() {
+      final fromSelected = _abbreviationForCompositeItem(selectedCompositeItemId);
+      if (fromSelected.isNotEmpty) return fromSelected;
+      return _abbreviationFromLabel(product);
+    })();
     if (selectedGroupId == null ||
         selectedCompositeItemId == null ||
         group.isEmpty ||
@@ -1456,12 +1666,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       final anchor = pdfPoint != null
           ? (engine!.annotationToViewport(pdfPoint) ?? p)
           : p;
+      final contentNorm = _normalizeScenePoint(anchor);
       final nextPins = List<_CanvasPin>.from(region.pins)
         ..add(
           _CanvasPin(
             offset: anchor,
+            contentNormX: contentNorm.dx,
+            contentNormY: contentNorm.dy,
             pdfPoint: pdfPoint,
             productName: product,
+            abbreviation: abbreviation,
             status: 'In Progress',
             statusId: _statusIdByName('In Progress'),
             groupId: selectedGroupId,
@@ -1482,6 +1696,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   /// Highest-index region at [scenePoint] (painted on top when plots overlap).
   int? _topRegionIndexContaining(Offset scenePoint) {
     for (var i = _regions.length - 1; i >= 0; i--) {
+      if (!_plotRegionIsNamed(_regions[i])) continue;
       if (_regionContainsPoint(_regions[i], scenePoint)) return i;
     }
     return null;
@@ -1517,11 +1732,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final pins = _regions[regionIndex].pins;
     if (pinIndex < 0 || pinIndex >= pins.length) return;
     final currentPin = pins[pinIndex];
+    setState(() {
+      _selectedPinRegionIndex = regionIndex;
+      _selectedPinIndex = pinIndex;
+    });
 
     final result = await showModalBottomSheet<_PinSheetResult>(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.white,
+      isDismissible: true,
+      enableDrag: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -1531,30 +1752,93 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         pinStatuses: _pinStatuses,
         onCreatePinStatus: _createPinStatus,
         onEditPinStatus: _editPinStatus,
+        onDeletePinStatus: _deletePinStatus,
       ),
     );
+    unfocusPrimary();
     if (!mounted || result == null) return;
     if (result.removePin) {
+      final removedPin = currentPin;
       setState(() {
-        final nextPins = List<_CanvasPin>.from(_regions[regionIndex].pins)
-          ..removeAt(pinIndex);
-        _regions[regionIndex] = _regions[regionIndex].copyWith(pins: nextPins);
+        final livePins = List<_CanvasPin>.from(_regions[regionIndex].pins);
+        final liveIndex = _resolveLivePinIndex(
+          pins: livePins,
+          fallbackIndex: pinIndex,
+          snapshotPin: currentPin,
+        );
+        if (liveIndex < 0 || liveIndex >= livePins.length) {
+          _showTopToast('Pin no longer available.');
+          return;
+        }
+        final nextPins = List<_CanvasPin>.from(livePins)..removeAt(liveIndex);
+        final pending = Set<int>.from(
+          _regions[regionIndex].pendingDeletedPinIds,
+        );
+        final deletedId = removedPin.serverPinId;
+        if (deletedId != null) pending.add(deletedId);
+        _regions[regionIndex] = _regions[regionIndex].copyWith(
+          pins: nextPins,
+          pendingDeletedPinIds: pending,
+        );
+        _selectedPinRegionIndex = null;
+        _selectedPinIndex = null;
       });
+      await _submitLevelPlots(popOnSuccess: false);
       return;
     }
     final updated = result.updatedPin;
     if (updated == null) return;
     setState(() {
       final nextPins = List<_CanvasPin>.from(_regions[regionIndex].pins);
-      nextPins[pinIndex] = updated;
+      final liveIndex = _resolveLivePinIndex(
+        pins: nextPins,
+        fallbackIndex: pinIndex,
+        snapshotPin: currentPin,
+      );
+      if (liveIndex < 0 || liveIndex >= nextPins.length) return;
+      nextPins[liveIndex] = updated;
       _regions[regionIndex] = _regions[regionIndex].copyWith(pins: nextPins);
+      _selectedPinRegionIndex = regionIndex;
+      _selectedPinIndex = liveIndex;
     });
+  }
+
+  int _resolveLivePinIndex({
+    required List<_CanvasPin> pins,
+    required int fallbackIndex,
+    required _CanvasPin snapshotPin,
+  }) {
+    if (pins.isEmpty) return -1;
+    final serverPinId = snapshotPin.serverPinId;
+    if (serverPinId != null) {
+      for (var i = 0; i < pins.length; i++) {
+        if (pins[i].serverPinId == serverPinId) return i;
+      }
+    }
+    if (fallbackIndex >= 0 && fallbackIndex < pins.length) {
+      final byIndex = pins[fallbackIndex];
+      if (identical(byIndex, snapshotPin)) return fallbackIndex;
+      final sameCore =
+          byIndex.compositeItemId == snapshotPin.compositeItemId &&
+          byIndex.groupId == snapshotPin.groupId &&
+          (byIndex.offset - snapshotPin.offset).distance <= 0.5;
+      if (sameCore) return fallbackIndex;
+    }
+    for (var i = 0; i < pins.length; i++) {
+      final candidate = pins[i];
+      final sameCore =
+          candidate.compositeItemId == snapshotPin.compositeItemId &&
+          candidate.groupId == snapshotPin.groupId &&
+          (candidate.offset - snapshotPin.offset).distance <= 0.5;
+      if (sameCore) return i;
+    }
+    return fallbackIndex;
   }
 
   Future<void> _loadPinStatuses() async {
     try {
       final api = ref.read(quoteProjectApiClientProvider);
-      final statuses = await api.fetchPinStatuses();
+      final statuses = await api.fetchPinStatuses(isActive: true);
       if (!mounted) return;
       setState(() => _pinStatuses = statuses);
     } catch (_) {
@@ -1580,8 +1864,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           _selectedCompositeItemId = null;
           _productController.clear();
           _productOptions = const <CompositeItemOption>[];
+        } else if (_selectedGroupId != null &&
+            _groupController.text.trim().isEmpty) {
+          for (final g in _groupOptions) {
+            if (g.id == _selectedGroupId) {
+              _groupController.text = g.name;
+              break;
+            }
+          }
         }
       });
+      unawaited(_restoreGroupProductSelectionFromLoadedPins());
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoadingGroups = false);
@@ -1610,6 +1903,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       if (!mounted) return;
       setState(() {
         _productOptions = products;
+        _cacheCompositeItemAbbreviations(products);
         _isLoadingCompositeItems = false;
         final selectedStillValid = products.any(
           (item) => item.id == _selectedCompositeItemId,
@@ -1636,223 +1930,157 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
   }
 
-  Future<PinStatusItem?> _createPinStatus() async {
-    final statusController = TextEditingController();
-    final bgController = TextEditingController(text: '#E5E7EB');
-    final textController = TextEditingController(text: '#374151');
-    String activeValue = _pinStatusDialogActiveOptions.first;
-    final payload = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Create Pin Status'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppTextField(
-                controller: statusController,
-                hintText: 'Status name',
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: bgController,
-                hintText: 'Background color (#E5E7EB)',
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: textController,
-                hintText: 'Text color (#374151)',
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: activeValue,
-                items: _pinStatusDialogActiveOptions
-                    .map(
-                      (value) => DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value == null) return;
-                  setDialogState(() => activeValue = value);
-                },
-                decoration: const InputDecoration(
-                  filled: true,
-                  fillColor: Color(0xFFF3F3F4),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                    borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(<String, String>{
-                'status_name': statusController.text.trim(),
-                'bg_colour': bgController.text.trim(),
-                'text_colour': textController.text.trim(),
-                'is_active': activeValue == 'Active' ? 'true' : 'false',
-              }),
-              child: const Text('Create'),
-            ),
-          ],
-        ),
-      ),
-    );
-    _scheduleDisposeTextControllersAfterRoute(<TextEditingController>[
-      statusController,
-      bgController,
-      textController,
-    ]);
-    if (!mounted || payload == null) return null;
-    final statusName = (payload['status_name'] ?? '').trim();
-    final bg = (payload['bg_colour'] ?? '').trim();
-    final text = (payload['text_colour'] ?? '').trim();
-    final isActiveCreate =
-        (payload['is_active'] ?? 'true').toLowerCase() != 'false';
-    if (statusName.isEmpty || bg.isEmpty || text.isEmpty) return null;
-    try {
-      final api = ref.read(quoteProjectApiClientProvider);
-      final created = await api.createPinStatus(
-        statusName: statusName,
-        bgColour: bg,
-        textColour: text,
-        isActive: isActiveCreate,
-      );
-      if (!mounted) return null;
-      await _loadPinStatuses();
-      return created;
-    } catch (e) {
-      if (!mounted) return null;
-      _showTopToast(
-        ApiResponseMessage.fromAnyError(
-          e,
-          genericFallback: 'Could not create pin status',
-        ),
-      );
-      return null;
+  void _cacheCompositeItemAbbreviations(List<CompositeItemOption> products) {
+    for (final product in products) {
+      final abbr = product.abbreviation.trim();
+      if (abbr.isNotEmpty) {
+        _abbreviationByCompositeItemId[product.id] = abbr;
+      }
     }
   }
 
-  Future<PinStatusItem?> _editPinStatus(PinStatusItem source) async {
-    final statusController = TextEditingController(text: source.statusName);
-    final bgController = TextEditingController(text: source.bgColour);
-    final textController = TextEditingController(text: source.textColour);
-    String activeValue = source.isActive ? 'Active' : 'Inactive';
-    final payload = await showDialog<Map<String, String>>(
+  String _abbreviationForCompositeItem(int? compositeItemId) {
+    if (compositeItemId == null) return '';
+    for (final product in _productOptions) {
+      if (product.id == compositeItemId) {
+        return product.abbreviation.trim();
+      }
+    }
+    return _abbreviationByCompositeItemId[compositeItemId]?.trim() ?? '';
+  }
+
+  String _abbreviationFromLabel(String label) {
+    return label
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .take(3)
+        .map((w) => w[0].toUpperCase())
+        .join();
+  }
+
+  String _pinDisplayAbbreviation(_CanvasPin pin) {
+    final stored = pin.abbreviation.trim();
+    if (stored.isNotEmpty) return stored;
+    final byItem = _abbreviationForCompositeItem(pin.compositeItemId);
+    if (byItem.isNotEmpty) return byItem;
+    return _abbreviationFromLabel(pin.productName);
+  }
+
+  Future<void> _hydratePinAbbreviationsForLoadedPlots() async {
+    final groupIds = <int>{};
+    for (final region in _regions) {
+      for (final pin in region.pins) {
+        if (pin.abbreviation.trim().isNotEmpty) continue;
+        final gid = pin.groupId;
+        if (gid != null) groupIds.add(gid);
+      }
+    }
+    if (groupIds.isEmpty) return;
+    final api = ref.read(quoteProjectApiClientProvider);
+    for (final groupId in groupIds) {
+      try {
+        final products = await api.fetchCompositeItems(groupId: groupId);
+        _cacheCompositeItemAbbreviations(products);
+      } catch (_) {
+        // Abbreviations are cosmetic; ignore lookup failures.
+      }
+    }
+    if (!mounted) return;
+    var changed = false;
+    final nextRegions = <_PlotRegion>[];
+    for (final region in _regions) {
+      var regionChanged = false;
+      final nextPins = <_CanvasPin>[];
+      for (final pin in region.pins) {
+        if (pin.abbreviation.trim().isNotEmpty) {
+          nextPins.add(pin);
+          continue;
+        }
+        final abbr = _abbreviationForCompositeItem(pin.compositeItemId);
+        if (abbr.isEmpty) {
+          nextPins.add(pin);
+          continue;
+        }
+        regionChanged = true;
+        changed = true;
+        nextPins.add(pin.copyWith(abbreviation: abbr));
+      }
+      nextRegions.add(regionChanged ? region.copyWith(pins: nextPins) : region);
+    }
+    if (!changed || !mounted) return;
+    setState(() {
+      _regions
+        ..clear()
+        ..addAll(nextRegions);
+      final k = (_activeFilePath ?? '').trim();
+      if (k.isNotEmpty) {
+        _regionsByPdfPath[k] = _snapshotRegions(_regions);
+      }
+    });
+  }
+
+  Future<PinStatusItem?> _createPinStatus() async {
+    PinStatusItem? created;
+    await showPinStatusFormSheet(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Edit Pin Status'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppTextField(
-                controller: statusController,
-                hintText: 'Status name',
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: bgController,
-                hintText: 'Background color (#E5E7EB)',
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: textController,
-                hintText: 'Text color (#374151)',
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: activeValue,
-                items: _pinStatusDialogActiveOptions
-                    .map(
-                      (value) => DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value == null) return;
-                  setDialogState(() => activeValue = value);
-                },
-                decoration: const InputDecoration(
-                  filled: true,
-                  fillColor: Color(0xFFF3F3F4),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                    borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(<String, String>{
-                'status_name': statusController.text.trim(),
-                'bg_colour': bgController.text.trim(),
-                'text_colour': textController.text.trim(),
-                'is_active': activeValue == 'Active' ? 'true' : 'false',
-              }),
-              child: const Text('Update'),
-            ),
-          ],
-        ),
-      ),
+      ref: ref,
+      onSaved: (saved) async {
+        created = saved;
+        await _loadPinStatuses();
+      },
+      onMessage: _showTopToast,
     );
-    _scheduleDisposeTextControllersAfterRoute(<TextEditingController>[
-      statusController,
-      bgController,
-      textController,
-    ]);
-    if (!mounted || payload == null) return null;
-    final statusName = (payload['status_name'] ?? '').trim();
-    final bg = (payload['bg_colour'] ?? '').trim();
-    final text = (payload['text_colour'] ?? '').trim();
-    final isActive = (payload['is_active'] ?? 'true').toLowerCase() == 'true';
-    if (statusName.isEmpty || bg.isEmpty || text.isEmpty) return null;
+    return created;
+  }
+
+  Future<PinStatusItem?> _editPinStatus(PinStatusItem source) async {
+    PinStatusItem editing = source;
     try {
-      final api = ref.read(quoteProjectApiClientProvider);
-      final updated = await api.updatePinStatus(
-        statusId: source.id,
-        statusName: statusName,
-        bgColour: bg,
-        textColour: text,
-        isActive: isActive,
-      );
-      if (!mounted) return null;
+      editing = await ref
+          .read(quoteProjectApiClientProvider)
+          .fetchPinStatusById(source.id);
+    } catch (_) {
+      // Use cached row if read fails.
+    }
+    PinStatusItem? updated;
+    await showPinStatusFormSheet(
+      context: context,
+      ref: ref,
+      editing: editing,
+      onSaved: (saved) async {
+        updated = saved;
+        await _loadPinStatuses();
+      },
+      onMessage: _showTopToast,
+    );
+    return updated;
+  }
+
+  Future<bool> _deletePinStatus(PinStatusItem item) async {
+    final request = await showPinStatusDeleteDialog(
+      context: context,
+      item: item,
+      allStatuses: _pinStatuses,
+    );
+    if (request == null || !mounted) return false;
+    try {
+      await ref
+          .read(quoteProjectApiClientProvider)
+          .deletePinStatus(item.id, moveToStatusId: request.moveToStatusId);
+      if (!mounted) return false;
       await _loadPinStatuses();
-      return updated;
+      _showTopToast('Status deleted');
+      return true;
     } catch (e) {
-      if (!mounted) return null;
+      if (!mounted) return false;
       _showTopToast(
         ApiResponseMessage.fromAnyError(
           e,
-          genericFallback: 'Could not update pin status',
+          genericFallback: 'Could not delete pin status',
         ),
       );
-      return null;
+      return false;
     }
   }
 
@@ -1884,9 +2112,30 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 page: plotPage,
               )
             : null;
-        final coordinatePoints = pdfVerts != null
+        var coordinatePoints = pdfVerts != null
             ? _viewportPointsFromPdfVertices(pdfVerts)
             : _pointsFromCoordinates(plot['coordinates']);
+        final rawPins = plot['pins'];
+        // Some backends omit plot coordinates on read but still return pins.
+        // When that happens, rebuild an approximate rectangle from the pins so
+        // the blue selection area appears again around the saved pins.
+        if (pdfVerts == null &&
+            (coordinatePoints.length < 2) &&
+            rawPins is List &&
+            rawPins.isNotEmpty) {
+          final pinPoints = <Offset>[];
+          for (final pinRaw in rawPins) {
+            if (pinRaw is! Map) continue;
+            final p = Map<String, dynamic>.from(pinRaw);
+            final x = _toDouble(p['x_coordinate']);
+            final y = _toDouble(p['y_coordinate']);
+            if (x == null || y == null) continue;
+            pinPoints.add(_scenePointFromApiCoordinates(x, y));
+          }
+          if (pinPoints.length >= 2) {
+            coordinatePoints = pinPoints;
+          }
+        }
         if (pdfVerts == null && coordinatePoints.length < 2) continue;
         final rect = coordinatePoints.length >= 2
             ? _rectFromCoordinatePoints(coordinatePoints)
@@ -1895,12 +2144,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         final shapeLines = coordinatePoints.length >= 3
             ? _linesFromCoordinatePoints(coordinatePoints)
             : const <_CanvasLine>[];
-        final plotIdRaw = plot['id'];
-        final serverPlotId = plotIdRaw is int
-            ? plotIdRaw
-            : int.tryParse('${plotIdRaw ?? ''}');
+        final serverPlotId = readApiIntFromMap(
+          Map<String, dynamic>.from(plot),
+          const ['id', 'plot_id'],
+        );
         final pins = <_CanvasPin>[];
-        final rawPins = plot['pins'];
         if (rawPins is List) {
           for (final pinRaw in rawPins) {
             if (pinRaw is! Map) continue;
@@ -1911,16 +2159,15 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             final statusId = p['status'] is int
                 ? p['status'] as int
                 : int.tryParse('${p['status'] ?? ''}');
-            final pinIdRaw = p['id'];
-            final serverPinId = pinIdRaw is int
-                ? pinIdRaw
-                : int.tryParse('${pinIdRaw ?? ''}');
-            final pageRaw = plot['page'];
+            final serverPinId = readApiIntFromMap(p, const ['id', 'pin_id']);
+            final pageRaw = p['page'] ?? plot['page'];
             final page = pageRaw is int
                 ? pageRaw
                 : (pageRaw is num ? pageRaw.toInt() : 1);
+            final portraitNorm = _apiPortraitNormFromRaw(x, y);
             final engine = _pdfEngine;
-            final pdfPoint = engine?.annotationFromApiPercent(
+            final pdfPoint =
+                engine?.annotationFromApiPercent(
                   xRaw: x,
                   yRaw: y,
                   page: page,
@@ -1931,19 +2178,57 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   page: page,
                   cache: _pdfMetadataCache,
                 );
+            final compositeItemId = readApiIntFromMap(p, const [
+              'item',
+              'composite_item',
+              'composite_item_id',
+            ]) ??
+                _readNestedId(p['item']) ??
+                _readNestedId(p['composite_item']);
+            var abbreviation = '';
+            for (final key in const [
+              'abbreviation',
+              'short_code',
+              'code',
+            ]) {
+              final raw = p[key];
+              if (raw == null) continue;
+              final text = raw.toString().trim();
+              if (text.isNotEmpty) {
+                abbreviation = text;
+                break;
+              }
+            }
+            abbreviation =
+                abbreviation.isNotEmpty
+                ? abbreviation
+                : (_readNestedAbbreviation(
+                      p['item'],
+                    ) ??
+                    _readNestedAbbreviation(p['composite_item']) ??
+                    '');
+            final productName =
+                p['item_name']?.toString().trim().isNotEmpty == true
+                ? p['item_name'].toString().trim()
+                : (p['product_name']?.toString().trim().isNotEmpty == true
+                      ? p['product_name'].toString().trim()
+                      : '');
             pins.add(
               _CanvasPin(
                 offset: _canvasPinOffsetFromApi(x, y, page: page),
+                contentNormX: portraitNorm.dx,
+                contentNormY: portraitNorm.dy,
                 pdfPoint: pdfPoint,
-                productName: '',
+                productName: productName,
+                abbreviation: abbreviation,
                 status: _statusNameById(statusId),
                 statusId: statusId,
-                groupId: p['group'] is int
-                    ? p['group'] as int
-                    : int.tryParse('${p['group'] ?? ''}'),
-                compositeItemId: p['composite_item'] is int
-                    ? p['composite_item'] as int
-                    : int.tryParse('${p['composite_item'] ?? ''}'),
+                groupId:
+                    (p['group'] is int
+                        ? p['group'] as int
+                        : int.tryParse('${p['group'] ?? ''}')) ??
+                    _readNestedId(p['group']),
+                compositeItemId: compositeItemId,
                 quantity:
                     (p['quantity'] is int
                         ? p['quantity'] as int
@@ -1966,6 +2251,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           pins: pins,
           lines: shapeLines,
           serverPlotId: serverPlotId,
+          locked: shapeLines.length < 3,
+          apiCoordinatesRaw: plot['coordinates'],
         );
         if (pdfVerts != null) {
           _attachPdfPlotGeometry(region, pdfVerts);
@@ -1985,9 +2272,67 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         }
       });
       if (mounted) setState(() {});
+      unawaited(_hydratePinAbbreviationsForLoadedPlots());
+      unawaited(_restoreGroupProductSelectionFromLoadedPins());
     } catch (_) {
       // keep UI editable even if preload fails
     }
+  }
+
+  Future<void> _restoreGroupProductSelectionFromLoadedPins() async {
+    _CanvasPin? latest;
+    for (var r = _regions.length - 1; r >= 0 && latest == null; r--) {
+      final pins = _regions[r].pins;
+      for (var p = pins.length - 1; p >= 0; p--) {
+        final pin = pins[p];
+        if (pin.groupId != null || pin.compositeItemId != null) {
+          latest = pin;
+          break;
+        }
+      }
+    }
+    final pin = latest;
+    if (pin == null) return;
+
+    final restoredBlock = pin.blockName.trim();
+    if (_blockController.text.trim().isEmpty && restoredBlock.isNotEmpty) {
+      _blockController.text = restoredBlock;
+    }
+
+    final groupId = pin.groupId;
+    if (groupId != null) {
+      if (_selectedGroupId != groupId) {
+        setState(() => _selectedGroupId = groupId);
+      }
+      for (final g in _groupOptions) {
+        if (g.id == groupId) {
+          _groupController.text = g.name;
+          break;
+        }
+      }
+      await _loadCompositeItemsForGroup(groupId);
+      if (!mounted) return;
+    }
+
+    final itemId = pin.compositeItemId;
+    if (itemId == null) return;
+    CompositeItemOption? selected;
+    for (final item in _productOptions) {
+      if (item.id == itemId) {
+        selected = item;
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _selectedCompositeItemId = itemId;
+      if (selected != null) {
+        _productController.text = selected.name;
+      } else if (_productController.text.trim().isEmpty &&
+          pin.productName.trim().isNotEmpty) {
+        _productController.text = pin.productName.trim();
+      }
+    });
   }
 
   double? _toDouble(dynamic value) {
@@ -2031,10 +2376,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   List<Offset> _viewportPointsFromPdfVertices(List<PdfAnnotationPoint> verts) {
     final engine = _pdfEngine;
     if (engine == null) return const <Offset>[];
-    return verts.map(engine.pdfToScreen).whereType<Offset>().toList(growable: false);
+    return verts
+        .map(engine.pdfToScreen)
+        .whereType<Offset>()
+        .toList(growable: false);
   }
 
-  void _attachPdfPlotGeometry(_PlotRegion region, List<PdfAnnotationPoint> verts) {
+  void _attachPdfPlotGeometry(
+    _PlotRegion region,
+    List<PdfAnnotationPoint> verts,
+  ) {
     region.pdfVertices = verts;
     if (verts.length >= 2) {
       region.pdfAnchorA = verts.first;
@@ -2045,14 +2396,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   List<List<double>> _plotCoordinatesPayloadForApi(_PlotRegion region) {
     final verts = region.pdfVertices;
     if (verts != null && verts.isNotEmpty) {
-      return verts.map((p) {
-        final w = p.pageWidth > 0 ? p.pageWidth : 1.0;
-        final h = p.pageHeight > 0 ? p.pageHeight : 1.0;
-        return <double>[
-          _plotCoordinateApiPercent(p.pdfX / w),
-          _plotCoordinateApiPercent(p.pdfY / h),
-        ];
-      }).toList(growable: false);
+      return verts
+          .map((p) {
+            final w = p.pageWidth > 0 ? p.pageWidth : 1.0;
+            final h = p.pageHeight > 0 ? p.pageHeight : 1.0;
+            return <double>[
+              _plotCoordinateApiPercent(p.pdfX / w),
+              _plotCoordinateApiPercent(p.pdfY / h),
+            ];
+          })
+          .toList(growable: false);
     }
     final coordinatePoints = region.safeLines.isNotEmpty
         ? region.safeLines.map((line) => line.start).toList(growable: false)
@@ -2066,7 +2419,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         .map((p) {
           final portraitNorm = _normalizeScenePoint(p);
           final landscapeNorm = _portraitNormToLandscapeApi(portraitNorm);
-          return <double>[landscapeNorm.dx, landscapeNorm.dy];
+          return <double>[
+            _plotCoordinateApiPercent(landscapeNorm.dx),
+            _plotCoordinateApiPercent(landscapeNorm.dy),
+          ];
         })
         .toList(growable: false);
   }
@@ -2095,12 +2451,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         y = _toDouble(map['y'] ?? map['y_coordinate'] ?? map['top']);
       }
       if (x == null || y == null) continue;
-      if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
-        final portraitNorm = _landscapeApiToPortraitNorm(Offset(x, y));
-        points.add(_denormalizeScenePoint(portraitNorm.dx, portraitNorm.dy));
-      } else {
-        points.add(Offset(x, y));
-      }
+      points.add(_scenePointFromApiCoordinates(x, y));
     }
     return points;
   }
@@ -2159,7 +2510,98 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return 1;
   }
 
-  Future<void> _submitLevelPlots() async {
+  List<Map<String, dynamic>> _buildLevelPlotsPayload() {
+    final plotsPayload = <Map<String, dynamic>>[];
+    for (var i = 0; i < _regions.length; i++) {
+      final region = _regions[i];
+      if (!_plotRegionIsNamed(region)) continue;
+      final pins = <Map<String, dynamic>>[];
+      for (var p = 0; p < region.pins.length; p++) {
+        final pin = region.pins[p];
+        final engine = _pdfEngine;
+        final pdfPoint =
+            pin.pdfPoint ??
+            (engine != null ? engine.viewportToAnnotation(pin.offset) : null);
+        final apiCoords = pdfPoint != null
+            ? PdfCoordinateCodec.annotationToApi(pdfPoint)
+            : <String, dynamic>{
+                'x_coordinate': (_normalizeScenePoint(pin.offset).dx * 100)
+                    .round(),
+                'y_coordinate': (_normalizeScenePoint(pin.offset).dy * 100)
+                    .round(),
+              };
+        pins.add(<String, dynamic>{
+          if (pin.serverPinId != null) 'id': pin.serverPinId,
+          if (pdfPoint != null) 'page': pdfPoint.page,
+          ...apiCoords,
+          'status': pin.statusId ?? _statusIdByName(pin.status),
+          'group': pin.groupId,
+          if (pin.compositeItemId != null) 'item': pin.compositeItemId,
+          if (pin.compositeItemId != null)
+            'composite_item': pin.compositeItemId,
+          'quantity': pin.quantity < 1 ? 1 : pin.quantity,
+          if (pin.variation.trim().isNotEmpty)
+            'variation': pin.variation.toLowerCase() == 'yes',
+        });
+      }
+      final normalizedCoordinates = _plotCoordinatesPayloadForApi(region);
+      final deletedPinIds = region.pendingDeletedPinIds.toList()..sort();
+      final plotEntry = <String, dynamic>{
+        if (region.serverPlotId != null) 'id': region.serverPlotId,
+        'name': region.name!.trim(),
+        'page': 1,
+        'coordinates': normalizedCoordinates,
+        'pins': pins,
+      };
+      if (deletedPinIds.isNotEmpty) {
+        plotEntry['deleted_pin_ids'] = deletedPinIds;
+      }
+      plotsPayload.add(plotEntry);
+    }
+    return plotsPayload;
+  }
+
+  int _plotPageFromApiRaw(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return 1;
+  }
+
+  /// Server expects existing plot ids with null/empty geometry — not top-level `plots: null`.
+  Future<List<Map<String, dynamic>>> _fetchServerClearPlotsPayload({
+    required String projectId,
+    required String levelId,
+  }) async {
+    final api = ref.read(quoteProjectApiClientProvider);
+    final levels = await api.fetchProjectLevels(projectId: projectId);
+    ProjectLevelItem? level;
+    for (final item in levels) {
+      if (item.id.trim() == levelId) {
+        level = item;
+        break;
+      }
+    }
+    final rawPlots = level?.plots ?? const <Map<String, dynamic>>[];
+    if (rawPlots.isEmpty) return const <Map<String, dynamic>>[];
+
+    return [
+      for (final plot in rawPlots)
+        <String, dynamic>{
+          if (plot['id'] != null) 'id': plot['id'],
+          'name': (plot['name'] ?? 'Plot').toString().trim().isEmpty
+              ? 'Plot'
+              : (plot['name'] ?? 'Plot').toString().trim(),
+          'page': _plotPageFromApiRaw(plot['page']),
+          'coordinates': null,
+          'pins': null,
+        },
+    ];
+  }
+
+  Future<void> _submitLevelPlots({
+    bool clearAllOnServer = false,
+    bool popOnSuccess = true,
+  }) async {
     if (_isSubmitting) return;
     final projectId = (_projectId ?? '').trim();
     final levelId = (_levelId ?? '').trim();
@@ -2169,69 +2611,35 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     setState(() => _isSubmitting = true);
     try {
-      final plotsPayload = <Map<String, dynamic>>[];
-      for (var i = 0; i < _regions.length; i++) {
-        final region = _regions[i];
-        final pins = <Map<String, dynamic>>[];
-        for (var p = 0; p < region.pins.length; p++) {
-          final pin = region.pins[p];
-          final engine = _pdfEngine;
-          final pdfPoint =
-              pin.pdfPoint ??
-              (engine != null
-                  ? engine.viewportToAnnotation(pin.offset)
-                  : null);
-          final apiCoords = pdfPoint != null
-              ? PdfCoordinateCodec.annotationToApi(pdfPoint)
-              : <String, dynamic>{
-                  'x_coordinate':
-                      (_normalizeScenePoint(pin.offset).dx * 100).round(),
-                  'y_coordinate':
-                      (_normalizeScenePoint(pin.offset).dy * 100).round(),
-                };
-          pins.add(<String, dynamic>{
-            if (pin.serverPinId != null) 'id': pin.serverPinId,
-            if (pdfPoint != null) 'page': pdfPoint.page,
-            ...apiCoords,
-            'status': pin.statusId ?? _statusIdByName(pin.status),
-            'group': pin.groupId,
-            'item': pin.compositeItemId,
-            'quantity': pin.quantity < 1 ? 1 : pin.quantity,
-            if (pin.variation.trim().isNotEmpty)
-              'variation': pin.variation.toLowerCase() == 'yes',
-          });
-        }
-        final normalizedCoordinates = _plotCoordinatesPayloadForApi(region);
-        plotsPayload.add(<String, dynamic>{
-          if (region.serverPlotId != null) 'id': region.serverPlotId,
-          'name': (region.name ?? '').trim().isEmpty
-              ? 'Plot ${i + 1}'
-              : region.name!.trim(),
-          'page': 1,
-          'coordinates': normalizedCoordinates,
-          'pins': pins,
-        });
-      }
-      final payload = <String, dynamic>{'plots': plotsPayload};
+      final built = _buildLevelPlotsPayload();
+      final bool clearedAll = clearAllOnServer || built.isEmpty;
+      final List<Map<String, dynamic>> plotsForApi = clearedAll
+          ? await _fetchServerClearPlotsPayload(
+              projectId: projectId,
+              levelId: levelId,
+            )
+          : built;
+      final payload = <String, dynamic>{'plots': plotsForApi};
       debugPrint(
         '[DrawingCanvas] updateLevelPlots payload:\n'
         '${const JsonEncoder.withIndent('  ').convert(payload)}',
       );
       final api = ref.read(quoteProjectApiClientProvider);
-      await api.updateLevelPlots(
+      final responseBody = await api.updateLevelPlots(
         projectId: projectId,
         levelId: levelId,
-        plots: plotsPayload,
+        plots: plotsForApi,
       );
       if (!mounted) return;
-      final clearedAll = plotsPayload.isEmpty;
-      if (context.canPop()) {
+      if (popOnSuccess && context.canPop()) {
         context.pop(true);
       } else {
         if (clearedAll) {
           _clearAllCanvasMarkup();
         } else {
+          _clearPendingDeletedPinIds();
           await _loadSavedLevelMarkup();
+          _logLevelPlotsSyncResult(responseBody);
         }
         if (!mounted) return;
         _showTopToast(
@@ -2253,16 +2661,12 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
   }
 
-  Widget _buildCanvasStack() {
-    final pinLayerInteractive =
-        !_overlayDrawListenerActive && _selectedTool == _CanvasTool.share;
+  Widget _buildCanvasOverlayLayer({required bool pinLayerInteractive}) {
     return Stack(
       fit: StackFit.expand,
-      clipBehavior: Clip.none,
+      clipBehavior: Clip.hardEdge,
       children: [
-        Positioned.fill(child: _buildDrawingPreview()),
         Positioned.fill(child: _buildRegionPaintLayer()),
-        // Always paint API and user pins; draw overlay sits on top when active.
         Positioned.fill(
           child: _buildPinHitTargetsLayer(interactive: pinLayerInteractive),
         ),
@@ -2299,41 +2703,121 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     );
   }
 
+  Widget _buildCanvasStack() {
+    final pinLayerInteractive =
+        !_overlayDrawListenerActive && _selectedTool == _CanvasTool.share;
+    final pdfCtrl = _pdfController;
+    final overlays = _usePdfViewport && pdfCtrl != null
+        ? ListenableBuilder(
+            listenable: pdfCtrl,
+            builder: (context, child) => _buildCanvasOverlayLayer(
+              pinLayerInteractive: pinLayerInteractive,
+            ),
+          )
+        : _buildCanvasOverlayLayer(pinLayerInteractive: pinLayerInteractive);
+    return Stack(
+      fit: StackFit.expand,
+      clipBehavior: Clip.hardEdge,
+      children: [
+        Positioned.fill(child: _buildDrawingPreview()),
+        Positioned.fill(child: overlays),
+      ],
+    );
+  }
+
   /// Pins stay visible on every tool; share tool enables tap-to-open sheet.
   Widget _buildPinHitTargetsLayer({required bool interactive}) {
+    final selectedRegion = _selectedPinRegionIndex;
+    final selectedPin = _selectedPinIndex;
     return Stack(
-      clipBehavior: Clip.none,
+      clipBehavior: Clip.hardEdge,
       fit: StackFit.expand,
       children: [
         for (var r = 0; r < _regions.length; r++)
           for (var i = 0; i < _regions[r].pins.length; i++)
+            if (!(selectedRegion == r && selectedPin == i))
             Builder(
               builder: (context) {
                 final pin = _regions[r].pins[i];
                 final anchor = _pinAnchorScene(pin);
                 final pinSize = _pinSizeForScreen(context);
                 final pointerH = _pinPointerHeightForScreen(context);
+                final abbr = _pinDisplayAbbreviation(pin);
+                final abbrBand = abbr.isNotEmpty ? 22.0 : 0.0;
+                if (!_shouldPaintPinAt(
+                  anchor,
+                  pinSize: pinSize,
+                  pointerH: pointerH,
+                  abbreviationBand: abbrBand,
+                )) {
+                  return const SizedBox.shrink();
+                }
                 final pinWidget = PinView(
                   number: i + 1,
+                  abbreviation: abbr,
                   size: pinSize,
                   pointerHeight: pointerH,
+                  selected: false,
                 );
                 return Positioned(
                   left: anchor.dx - pinSize / 2,
-                  top: anchor.dy - pinSize - pointerH,
+                  top: anchor.dy - pinSize - pointerH - abbrBand,
                   child: interactive
                       ? GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onTap: () => _openPinDetailSheet(
-                            regionIndex: r,
-                            pinIndex: i,
-                          ),
+                          onTap: () =>
+                              _openPinDetailSheet(regionIndex: r, pinIndex: i),
                           child: pinWidget,
                         )
                       : IgnorePointer(child: pinWidget),
                 );
               },
             ),
+        if (selectedRegion != null &&
+            selectedPin != null &&
+            selectedRegion >= 0 &&
+            selectedRegion < _regions.length &&
+            selectedPin >= 0 &&
+            selectedPin < _regions[selectedRegion].pins.length)
+          Builder(
+            builder: (context) {
+              final pin = _regions[selectedRegion].pins[selectedPin];
+              final anchor = _pinAnchorScene(pin);
+              final pinSize = _pinSizeForScreen(context);
+              final pointerH = _pinPointerHeightForScreen(context);
+              final abbr = _pinDisplayAbbreviation(pin);
+              final abbrBand = abbr.isNotEmpty ? 22.0 : 0.0;
+              if (!_shouldPaintPinAt(
+                anchor,
+                pinSize: pinSize,
+                pointerH: pointerH,
+                abbreviationBand: abbrBand,
+              )) {
+                return const SizedBox.shrink();
+              }
+              final pinWidget = PinView(
+                number: selectedPin + 1,
+                abbreviation: abbr,
+                size: pinSize,
+                pointerHeight: pointerH,
+                selected: true,
+              );
+              return Positioned(
+                left: anchor.dx - pinSize / 2,
+                top: anchor.dy - pinSize - pointerH - abbrBand,
+                child: interactive
+                    ? GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _openPinDetailSheet(
+                          regionIndex: selectedRegion,
+                          pinIndex: selectedPin,
+                        ),
+                        child: pinWidget,
+                      )
+                    : IgnorePointer(child: pinWidget),
+              );
+            },
+          ),
       ],
     );
   }
@@ -2457,13 +2941,12 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: AppFonts.bodySmall(
-                      color: _regionBorderColor(r),
-                    ).copyWith(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                      height: 1.2,
-                    ),
+                    style: AppFonts.bodySmall(color: _regionBorderColor(r))
+                        .copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          height: 1.2,
+                        ),
                   ),
                 ),
               ),
@@ -2500,6 +2983,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           if (_selectedTool == _CanvasTool.location) {
             _pinPointerDownHit = _findPinAtScenePoint(downScene);
             if (_pinPointerDownHit != null) {
+              _selectedPinRegionIndex = _pinPointerDownHit!.regionIndex;
+              _selectedPinIndex = _pinPointerDownHit!.pinIndex;
               _schedulePinLongPressArm(_pinPointerDownHit!);
             }
           } else {
@@ -2525,8 +3010,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           _updateSelectAreaFromScene(scene);
           return;
         }
-        if (_selectedTool == _CanvasTool.line &&
-            _lineDraftPoints.isNotEmpty) {
+        if (_selectedTool == _CanvasTool.line && _lineDraftPoints.isNotEmpty) {
           setState(() => _lineDraftCurrent = scene);
         }
       },
@@ -2534,8 +3018,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         _cancelPinLongPressTimer();
         final hadPinSession = _pinPointerDownHit != null;
         final skipTapSheet =
-            hadPinSession &&
-            (_pinLongPressArmed || _pinDraggingAfterLongPress);
+            hadPinSession && (_pinLongPressArmed || _pinDraggingAfterLongPress);
         if (hadPinSession && skipTapSheet) {
           _suppressPinTapSheetOnce = true;
         }
@@ -2583,19 +3066,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
 
   void _startSelectAreaFromScene(Offset p) {
     if (_selectedTool != _CanvasTool.selectArea) return;
-    final hitRegion = _topRegionIndexContaining(p);
-    if (hitRegion != null) {
-      setState(() {
-        _regionPressIndex = hitRegion;
-        _regionPressScene = p;
-        _activeRegionIndex = hitRegion;
-        _movingRegionIndex = null;
-        _regionMoveAnchorScene = null;
-        _draftStart = null;
-        _draftCurrent = null;
-      });
-      return;
-    }
     setState(() {
       _regionPressIndex = null;
       _regionPressScene = null;
@@ -2616,7 +3086,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (pressIdx != null &&
         pressScene != null &&
         _movingRegionIndex == null &&
-        (p - pressScene).distance >= _regionDragThreshold) {
+        (p - pressScene).distance >= _regionDragThreshold &&
+        pressIdx >= 0 &&
+        pressIdx < _regions.length &&
+        !_regions[pressIdx].locked) {
       setState(() {
         _movingRegionIndex = pressIdx;
         _regionMoveAnchorScene = pressScene;
@@ -2627,7 +3100,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (moveIdx != null &&
         anchor != null &&
         moveIdx >= 0 &&
-        moveIdx < _regions.length) {
+        moveIdx < _regions.length &&
+        !_regions[moveIdx].locked) {
       final newAnchor = p;
       final delta = newAnchor - anchor;
       if (delta == Offset.zero) return;
@@ -2681,14 +3155,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       });
       return;
     }
-    if (_regionPressIndex != null) {
-      setState(() {
-        _activeRegionIndex = _regionPressIndex;
-        _regionPressIndex = null;
-        _regionPressScene = null;
-      });
-      return;
-    }
     unawaited(_finalizeAreaSelection());
   }
 
@@ -2696,6 +3162,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (_selectedTool != _CanvasTool.line) return;
     final points = List<Offset>.from(_lineDraftPoints);
     if (points.isEmpty) {
+      if (_pointInsideAnyNamedPlot(scenePoint)) {
+        _showTopToast(_plotOverlapMessage);
+        return;
+      }
       setState(() {
         _lineDraftPoints.add(scenePoint);
         _lineDraftCurrent = scenePoint;
@@ -2718,14 +3188,16 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         lines: polygonLines,
       );
       _assignPdfVerticesForPoints(region, polygonPoints);
-      final toAdd = _plotRegionWithSyncedRect(region) ?? region;
+      final prepared = _plotRegionWithSyncedRect(region) ?? region;
       setState(() {
-        _regions.add(toAdd);
-        _activeRegionIndex = _regions.length - 1;
         _lineDraftPoints.clear();
         _lineDraftCurrent = null;
       });
-      unawaited(_finalizeRegionNameForCurrentSelection());
+      if (_plotOverlapsAnyExistingNamedPlot(prepared)) {
+        _showTopToast(_plotOverlapMessage);
+        return;
+      }
+      unawaited(_commitNewPlotRegion(prepared));
       return;
     }
 
@@ -2777,46 +3249,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       ..translate(-scenePoint.dx, -scenePoint.dy)
       ..multiply(ctrl.value);
     ctrl.goTo(destination: next, duration: const Duration(milliseconds: 160));
-  }
-
-  Future<void> _openEditLevelNameDialog() async {
-    final controller = TextEditingController(
-      text: _levelController.text.trim(),
-    );
-    final value = await showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text(
-            'Edit Level Name',
-            style: AppFonts.titleMedium(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w700),
-          ),
-          content: AppTextField(
-            controller: controller,
-            hintText: 'Enter level name',
-            autofocus: true,
-            fillColor: const Color(0xFFF3F3F4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-    _scheduleDisposeTextControllersAfterRoute(<TextEditingController>[
-      controller,
-    ]);
-    if (!mounted || value == null || value.trim().isEmpty) return;
-    setState(() => _levelController.text = value.trim());
   }
 
   double _pinSizeForScreen(BuildContext context) {
@@ -2894,13 +3326,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w700, fontSize: 18),
         ),
-        actions: [
-          IconButton(
-            onPressed: _openEditLevelNameDialog,
-            icon: const Icon(Icons.edit),
-          ),
-          const SizedBox(width: 6),
-        ],
       ),
       body: Column(
         children: [
@@ -2942,12 +3367,14 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   active: _selectedTool == _CanvasTool.location,
                   onTap: () => _onToolSelected(_CanvasTool.location),
                 ),
-                const SizedBox(width: 14),
-                _actionCircle(
-                  iconAsset: AppImageString.deleteIconPng,
-                  isDelete: true,
-                  onTap: _onDeleteSelection,
-                ),
+                if (DrawingCanvasFeatureFlags.showDeleteTool) ...[
+                  const SizedBox(width: 14),
+                  _actionCircle(
+                    iconAsset: AppImageString.deleteIconPng,
+                    isDelete: true,
+                    onTap: _onDeleteSelection,
+                  ),
+                ],
               ],
             ),
           ),
@@ -2974,77 +3401,80 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               ),
             ),
           Expanded(
-            child: Container(
-              width: double.infinity,
-              color: const Color(0xFFF3F3F4),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  _observeViewportGeometry(constraints.biggest);
-                  return Stack(
-                    children: [
-                      Positioned.fill(
-                        key: _viewportCanvasKey,
-                        child: _usePdfViewport
-                            ? _buildCanvasStack()
-                            : InteractiveViewer(
-                                transformationController: _viewerTransform,
-                                minScale: 0.5,
-                                maxScale: 8,
-                                panEnabled: _canPanCanvas,
-                                boundaryMargin: const EdgeInsets.all(80),
-                                child: _buildCanvasStack(),
-                              ),
-                      ),
-                      Positioned(
-                        right: 12,
-                        bottom: 74,
-                        child: Column(
-                          children: [
-                            InkWell(
-                              onTap: () => _zoomBy(1.2),
-                              borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: AppColors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: const Color(0xFFE2E2E4),
-                                  ),
+            child: ClipRect(
+              child: Container(
+                width: double.infinity,
+                color: const Color(0xFFF3F3F4),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    _observeViewportGeometry(constraints.biggest);
+                    return Stack(
+                      clipBehavior: Clip.hardEdge,
+                      children: [
+                        Positioned.fill(
+                          key: _viewportCanvasKey,
+                          child: _usePdfViewport
+                              ? _buildCanvasStack()
+                              : InteractiveViewer(
+                                  transformationController: _viewerTransform,
+                                  minScale: 0.5,
+                                  maxScale: 8,
+                                  panEnabled: _canPanCanvas,
+                                  boundaryMargin: const EdgeInsets.all(80),
+                                  child: _buildCanvasStack(),
                                 ),
-                                child: const Icon(
-                                  Icons.add,
-                                  color: AppColors.inkStrong,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            InkWell(
-                              onTap: () => _zoomBy(1 / 1.2),
-                              borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: AppColors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: const Color(0xFFE2E2E4),
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.remove,
-                                  color: AppColors.inkStrong,
-                                ),
-                              ),
-                            ),
-                          ],
                         ),
-                      ),
-                    ],
-                  );
-                },
+                        Positioned(
+                          right: 12,
+                          bottom: 74,
+                          child: Column(
+                            children: [
+                              InkWell(
+                                onTap: () => _zoomBy(1.2),
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: const Color(0xFFE2E2E4),
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.add,
+                                    color: AppColors.inkStrong,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              InkWell(
+                                onTap: () => _zoomBy(1 / 1.2),
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: const Color(0xFFE2E2E4),
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.remove,
+                                    color: AppColors.inkStrong,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
@@ -3124,7 +3554,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                         .map(
                           (p) => DropdownMenuItem<int>(
                             value: p.id,
-                            child: Text(p.name),
+                            child: Text(
+                              p.abbreviation.trim().isNotEmpty
+                                  ? '${p.abbreviation.trim()} · ${p.name}'
+                                  : p.name,
+                            ),
                           ),
                         )
                         .toList(),
@@ -3219,56 +3653,131 @@ class PinView extends StatelessWidget {
   const PinView({
     super.key,
     required this.number,
+    this.abbreviation,
     this.size = 32,
     this.pointerHeight = 9,
+    this.selected = false,
   });
 
   final int number;
+  final String? abbreviation;
   final double size;
   final double pointerHeight;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size + pointerHeight,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF111216),
-              border: Border.all(color: Colors.white, width: 3),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              '$number',
-              style: AppFonts.labelMedium(
-                color: AppColors.white,
-              ).copyWith(fontWeight: FontWeight.w700, fontSize: size * 0.35),
-            ),
+    final abbr = abbreviation?.trim() ?? '';
+    final topAbbr = abbr.isEmpty ? '' : abbr.toUpperCase();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: size,
+          height: size + pointerHeight,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFEFFAF4),
+                  border: Border.all(
+                    color: selected ? const Color(0xFF7C3AED) : const Color(0xFF0EA56A),
+                    width: selected ? 3.4 : 3,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (topAbbr.isNotEmpty)
+                      Padding(
+                        padding: EdgeInsets.only(top: size * 0.1),
+                        child: Text(
+                          topAbbr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppFonts.labelSmall(
+                            color: const Color(0xFF0A8F5D),
+                          ).copyWith(
+                            fontWeight: FontWeight.w800,
+                            fontSize: size * 0.18,
+                            height: 1.0,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ),
+                    Text(
+                      '$number',
+                      style: AppFonts.labelMedium(
+                        color: const Color(0xFF0A8F5D),
+                      ).copyWith(
+                        fontWeight: FontWeight.w800,
+                        fontSize: size * 0.42,
+                        height: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: size / 2 - pointerHeight * 0.75,
+                top: size - 1,
+                child: CustomPaint(
+                  size: Size(pointerHeight * 1.5, pointerHeight),
+                  painter: const _PinTrianglePainter(
+                    fillColor: Color(0xFF0EA56A),
+                  ),
+                ),
+              ),
+            ],
           ),
-          Positioned(
-            left: size / 2 - pointerHeight * 0.75,
-            top: size - 1,
-            child: CustomPaint(
-              size: Size(pointerHeight * 1.5, pointerHeight),
-              painter: _PinTrianglePainter(),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
+int? _readNestedId(dynamic value) {
+  if (value is Map) {
+    final map = Map<String, dynamic>.from(
+      value.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    final idRaw = map['id'] ?? map['item'] ?? map['composite_item_id'];
+    if (idRaw is int) return idRaw;
+    if (idRaw is num) return idRaw.toInt();
+    return int.tryParse('${idRaw ?? ''}');
+  }
+  return null;
+}
+
+String? _readNestedAbbreviation(dynamic value) {
+  if (value is! Map) return null;
+  final map = Map<String, dynamic>.from(
+    value.map((k, v) => MapEntry(k.toString(), v)),
+  );
+  for (final key in const ['abbreviation', 'short_code', 'code']) {
+    final raw = map[key];
+    if (raw == null) continue;
+    final text = raw.toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  return null;
+}
+
 class _PinTrianglePainter extends CustomPainter {
+  const _PinTrianglePainter({
+    this.fillColor = const Color(0xFF111216),
+  });
+
+  final Color fillColor;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = const Color(0xFF111216);
+    final paint = Paint()..color = fillColor;
     final path = Path()
       ..moveTo(size.width / 2, size.height)
       ..lineTo(0, 0)
@@ -3330,6 +3839,7 @@ class _RegionShapePainter extends CustomPainter {
   final Color borderColor;
   final double borderWidth;
   final List<double> dashPattern;
+
   /// Polygon corners; dashed lines run from centroid to each corner.
   final List<Offset>? crossCorners;
   final Color? crossColor;
@@ -3382,9 +3892,7 @@ class _RegionShapePainter extends CustomPainter {
 
     final corners = crossCorners;
     final crossPaint = crossColor;
-    if (corners != null &&
-        corners.length >= 2 &&
-        crossPaint != null) {
+    if (corners != null && corners.length >= 2 && crossPaint != null) {
       final crossStroke = Paint()
         ..color = crossPaint
         ..strokeWidth = 0.8
@@ -3392,13 +3900,7 @@ class _RegionShapePainter extends CustomPainter {
         ..strokeCap = StrokeCap.round;
       final center = _polygonCentroid(corners);
       for (final corner in corners) {
-        _paintDashedLine(
-          canvas,
-          center,
-          corner,
-          crossStroke,
-          crossDashPattern,
-        );
+        _paintDashedLine(canvas, center, corner, crossStroke, crossDashPattern);
       }
     }
   }
@@ -3466,13 +3968,25 @@ class _PlotRegion {
     this.pdfAnchorA,
     this.pdfAnchorB,
     this.pdfVertices,
-  });
+    this.locked = false,
+    Set<int>? pendingDeletedPinIds,
+    this.apiCoordinatesRaw,
+  }) : pendingDeletedPinIds = pendingDeletedPinIds ?? const <int>{};
 
   final Rect rect;
   final String? name;
   final List<_CanvasPin> pins;
   final List<_CanvasLine>? lines;
   final int? serverPlotId;
+
+  /// Server pin ids removed locally; sent on next plot PUT as `deleted_pin_ids`.
+  final Set<int> pendingDeletedPinIds;
+
+  /// Raw `coordinates` from GET — used to re-layout after viewport is ready.
+  final dynamic apiCoordinatesRaw;
+
+  /// Box plots from the select-area tool cannot be dragged.
+  final bool locked;
 
   /// PDF-space corners for box plots (survives zoom on PDF).
   PdfAnnotationPoint? pdfAnchorA;
@@ -3490,6 +4004,9 @@ class _PlotRegion {
     PdfAnnotationPoint? pdfAnchorA,
     PdfAnnotationPoint? pdfAnchorB,
     List<PdfAnnotationPoint>? pdfVertices,
+    bool? locked,
+    Set<int>? pendingDeletedPinIds,
+    dynamic apiCoordinatesRaw,
   }) {
     return _PlotRegion(
       rect: rect ?? this.rect,
@@ -3500,6 +4017,9 @@ class _PlotRegion {
       pdfAnchorA: pdfAnchorA ?? this.pdfAnchorA,
       pdfAnchorB: pdfAnchorB ?? this.pdfAnchorB,
       pdfVertices: pdfVertices ?? this.pdfVertices,
+      locked: locked ?? this.locked,
+      pendingDeletedPinIds: pendingDeletedPinIds ?? this.pendingDeletedPinIds,
+      apiCoordinatesRaw: apiCoordinatesRaw ?? this.apiCoordinatesRaw,
     );
   }
 }
@@ -3516,6 +4036,7 @@ class _CanvasPin {
     required this.offset,
     this.pdfPoint,
     required this.productName,
+    this.abbreviation = '',
     required this.status,
     this.statusId,
     this.groupId,
@@ -3528,14 +4049,21 @@ class _CanvasPin {
     required this.droppedAt,
     required this.description,
     this.serverPinId,
+    this.contentNormX,
+    this.contentNormY,
   });
 
   final Offset offset;
+
+  /// Portrait-normalized position (0–1) inside the letterboxed image — for reload.
+  final double? contentNormX;
+  final double? contentNormY;
 
   /// True PDF user-space position; source of truth on PDF (not screen pixels).
   final PdfAnnotationPoint? pdfPoint;
 
   final String productName;
+  final String abbreviation;
   final String status;
   final int? statusId;
   final int? groupId;
@@ -3553,6 +4081,7 @@ class _CanvasPin {
     Offset? offset,
     PdfAnnotationPoint? pdfPoint,
     String? productName,
+    String? abbreviation,
     String? status,
     int? statusId,
     int? groupId,
@@ -3565,11 +4094,16 @@ class _CanvasPin {
     DateTime? droppedAt,
     String? description,
     int? serverPinId,
+    double? contentNormX,
+    double? contentNormY,
   }) {
     return _CanvasPin(
       offset: offset ?? this.offset,
+      contentNormX: contentNormX ?? this.contentNormX,
+      contentNormY: contentNormY ?? this.contentNormY,
       pdfPoint: pdfPoint ?? this.pdfPoint,
       productName: productName ?? this.productName,
+      abbreviation: abbreviation ?? this.abbreviation,
       status: status ?? this.status,
       statusId: statusId ?? this.statusId,
       groupId: groupId ?? this.groupId,
@@ -3607,6 +4141,7 @@ class _PinDetailBottomSheet extends StatefulWidget {
     required this.pinStatuses,
     required this.onCreatePinStatus,
     required this.onEditPinStatus,
+    required this.onDeletePinStatus,
   });
 
   final int pinNumber;
@@ -3614,6 +4149,7 @@ class _PinDetailBottomSheet extends StatefulWidget {
   final List<PinStatusItem> pinStatuses;
   final Future<PinStatusItem?> Function() onCreatePinStatus;
   final Future<PinStatusItem?> Function(PinStatusItem) onEditPinStatus;
+  final Future<bool> Function(PinStatusItem) onDeletePinStatus;
 
   @override
   State<_PinDetailBottomSheet> createState() => _PinDetailBottomSheetState();
@@ -3641,10 +4177,24 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   static const List<String> _variationOptions = <String>['No', 'Yes'];
   late List<String> _statusOptions;
 
+  void _rebuildStatusOptions() {
+    _statusOptions = _pinStatusCatalog
+        .where((e) => e.isActive)
+        .map((e) => e.statusName.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+    if (_statusOptions.isEmpty) {
+      _statusOptions = List<String>.from(_fallbackStatuses);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _pinStatusCatalog = List<PinStatusItem>.from(widget.pinStatuses);
+    _pinStatusCatalog = widget.pinStatuses
+        .where((e) => e.isActive)
+        .toList(growable: true);
     _productController = TextEditingController(text: widget.pin.productName);
     _descriptionController = TextEditingController(
       text: widget.pin.description,
@@ -3653,14 +4203,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     _blockController = TextEditingController(text: widget.pin.blockName);
     _levelController = TextEditingController(text: widget.pin.levelName);
     _zoneController = TextEditingController(text: widget.pin.zoneName);
-    _statusOptions = _pinStatusCatalog
-        .map((e) => e.statusName.trim())
-        .where((e) => e.isNotEmpty)
-        .toSet()
-        .toList();
-    if (_statusOptions.isEmpty) {
-      _statusOptions = List<String>.from(_fallbackStatuses);
-    }
+    _rebuildStatusOptions();
     _status = _statusOptions.contains(widget.pin.status)
         ? widget.pin.status
         : _statusOptions.first;
@@ -3673,15 +4216,10 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   void didUpdateWidget(covariant _PinDetailBottomSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.pinStatuses != oldWidget.pinStatuses) {
-      _pinStatusCatalog = List<PinStatusItem>.from(widget.pinStatuses);
-      final names = _pinStatusCatalog
-          .map((e) => e.statusName.trim())
-          .where((e) => e.isNotEmpty)
-          .toSet()
-          .toList();
-      if (names.isNotEmpty) {
-        _statusOptions = names;
-      }
+      _pinStatusCatalog = widget.pinStatuses
+          .where((e) => e.isActive)
+          .toList(growable: true);
+      _rebuildStatusOptions();
       if (!_statusOptions.contains(_status)) {
         _status = _statusOptions.isNotEmpty
             ? _statusOptions.first
@@ -3692,12 +4230,14 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
 
   @override
   void dispose() {
-    _productController.dispose();
-    _descriptionController.dispose();
-    _qtyController.dispose();
-    _blockController.dispose();
-    _levelController.dispose();
-    _zoneController.dispose();
+    scheduleDisposeTextControllers([
+      _productController,
+      _descriptionController,
+      _qtyController,
+      _blockController,
+      _levelController,
+      _zoneController,
+    ]);
     super.dispose();
   }
 
@@ -3795,30 +4335,229 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     );
   }
 
+  /// Status label color on light UI (dropdown / field): prefer readable
+  /// `text_colour`, else the status `bg_colour` so the name itself is colored.
+  Color _statusLabelColor(PinStatusItem? item) {
+    final accent =
+        parseHexColor(item?.bgColour ?? '') ?? const Color(0xFF6B7280);
+    final textColour = parseHexColor(item?.textColour ?? '');
+    if (textColour != null && textColour.computeLuminance() < 0.55) {
+      return textColour;
+    }
+    return accent;
+  }
+
+  Color _statusTintBackground(PinStatusItem? item) {
+    final accent = _statusLabelColor(item);
+    return accent.withValues(alpha: 0.14);
+  }
+
   Widget _viewStatusPill() {
+    final item = _statusItemByNameLocal(_status);
+    final labelColor = _statusLabelColor(item);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFFECECED),
+        color: _statusTintBackground(item),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE0E0E2)),
+        border: Border.all(color: labelColor.withValues(alpha: 0.35)),
       ),
-      child: Row(
+      child: Text(
+        _status,
+        style: AppFonts.titleSmall(
+          color: labelColor,
+        ).copyWith(fontWeight: FontWeight.w800, fontSize: 16),
+      ),
+    );
+  }
+
+  void _closePinSheet<T>([T? result]) {
+    if (!mounted) return;
+    popOverlaySafely<T>(context, result);
+  }
+
+  Future<void> _handleCreateStatus() async {
+    unfocusPrimary();
+    final created = await widget.onCreatePinStatus();
+    if (!mounted || created == null) return;
+    setState(() {
+      _pinStatusCatalog.add(created);
+      _rebuildStatusOptions();
+      _status = created.statusName;
+    });
+  }
+
+  Future<void> _handleEditStatus() async {
+    unfocusPrimary();
+    final current = _statusItemByNameLocal(_status);
+    if (current == null) return;
+    final updated = await widget.onEditPinStatus(current);
+    if (!mounted || updated == null) return;
+    setState(() {
+      final idx = _pinStatusCatalog.indexWhere((e) => e.id == updated.id);
+      if (idx >= 0) {
+        _pinStatusCatalog[idx] = updated;
+      } else if (updated.isActive) {
+        _pinStatusCatalog.add(updated);
+      }
+      _rebuildStatusOptions();
+      _status = updated.statusName;
+    });
+  }
+
+  Future<void> _handleDeleteStatus() async {
+    unfocusPrimary();
+    final current = _statusItemByNameLocal(_status);
+    if (current == null) return;
+    final deleted = await widget.onDeletePinStatus(current);
+    if (!mounted || !deleted) return;
+    setState(() {
+      _pinStatusCatalog.removeWhere((e) => e.id == current.id);
+      _rebuildStatusOptions();
+      _status = _statusOptions.isNotEmpty
+          ? _statusOptions.first
+          : _fallbackStatuses.first;
+    });
+  }
+
+  /// Dropdown row: status name in its status color (not only a dot).
+  Widget _statusMenuRow(String name) {
+    final item = _statusItemByNameLocal(name);
+    final labelColor = _statusLabelColor(item);
+    return Text(
+      name,
+      style: AppFonts.bodyMedium(
+        color: labelColor,
+      ).copyWith(fontWeight: FontWeight.w700, fontSize: 15),
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  /// Closed field: colored status text on light tint.
+  Widget _statusSelectedChip(String name) {
+    final item = _statusItemByNameLocal(name);
+    final labelColor = _statusLabelColor(item);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        name,
+        style: AppFonts.bodyMedium(
+          color: labelColor,
+        ).copyWith(fontWeight: FontWeight.w800, fontSize: 15),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _statusDropdown() {
+    if (_statusOptions.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF3F3F4),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE3E3E5)),
+        ),
+        child: Text(
+          'No statuses — tap Add status',
+          style: AppFonts.bodySmall(color: AppColors.muted),
+        ),
+      );
+    }
+
+    final value = _statusOptions.contains(_status)
+        ? _status
+        : _statusOptions.first;
+
+    return DropdownButtonFormField<String>(
+      isExpanded: true,
+      value: value,
+      dropdownColor: AppColors.white,
+      iconEnabledColor: AppColors.inkStrong,
+      iconDisabledColor: AppColors.muted,
+      borderRadius: BorderRadius.circular(12),
+      style: AppFonts.bodyMedium(
+        color: _statusLabelColor(_statusItemByNameLocal(value)),
+      ).copyWith(fontWeight: FontWeight.w700),
+      items: _statusOptions
+          .map(
+            (name) => DropdownMenuItem<String>(
+              value: name,
+              child: _statusMenuRow(name),
+            ),
+          )
+          .toList(growable: false),
+      selectedItemBuilder: (context) => _statusOptions
+          .map((name) => _statusSelectedChip(name))
+          .toList(growable: false),
+      onChanged: (v) {
+        unfocusPrimary();
+        setState(() => _status = v ?? _status);
+      },
+      decoration: const InputDecoration(
+        isDense: true,
+        filled: true,
+        fillColor: Color(0xFFF3F3F4),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: AppColors.textFieldFocusBorder),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusManageRow() {
+    final canEdit = _statusItemByNameLocal(_status) != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
         children: [
-          Expanded(
-            child: Text(
-              _status,
-              style: AppFonts.titleSmall(
-                color: AppColors.inkStrong,
-              ).copyWith(fontWeight: FontWeight.w600),
+          TextButton.icon(
+            onPressed: _handleCreateStatus,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Add status'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.inkStrong,
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
             ),
           ),
-          const Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: Color(0xFF6B6B70),
-            size: 26,
-          ),
+          if (canEdit) ...[
+            TextButton.icon(
+              onPressed: _handleEditStatus,
+              icon: const Icon(Icons.edit_outlined, size: 17),
+              label: const Text('Edit'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.inkStrong,
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _handleDeleteStatus,
+              icon: const Icon(Icons.delete_outline_rounded, size: 17),
+              label: const Text('Delete'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFB91C1C),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -3936,7 +4675,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
             ),
           ),
           onPressed: () =>
-              Navigator.of(context).pop(const _PinSheetResult(removePin: true)),
+              _closePinSheet(const _PinSheetResult(removePin: true)),
           child: Text(
             'Remove This Pin',
             style: AppFonts.titleMedium(
@@ -3973,7 +4712,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
       Row(
         children: [
           IconButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => _closePinSheet(),
             icon: const Icon(Icons.close, size: 22),
             color: AppColors.inkStrong,
             splashRadius: 22,
@@ -4029,40 +4768,18 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
           const SizedBox(width: 12),
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 _sheetFieldLabel('Status'),
                 const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  value: _statusOptions.contains(_status)
-                      ? _status
-                      : _statusOptions.first,
-                  items: _statusOptions
-                      .map(
-                        (s) =>
-                            DropdownMenuItem<String>(value: s, child: Text(s)),
-                      )
-                      .toList(),
-                  onChanged: (v) => setState(() => _status = v ?? _status),
-                  decoration: const InputDecoration(
-                    filled: true,
-                    fillColor: Color(0xFFF3F3F4),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(12)),
-                      borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                    ),
-                  ),
-                ),
+                _statusDropdown(),
               ],
             ),
           ),
         ],
       ),
-
+      _statusManageRow(),
       const SizedBox(height: 8),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4167,7 +4884,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
           onPressed: () {
             final qty =
                 int.tryParse(_qtyController.text.trim()) ?? pin.quantity;
-            Navigator.of(context).pop(
+            _closePinSheet(
               _PinSheetResult(
                 updatedPin: pin.copyWith(
                   productName: _productController.text.trim(),
@@ -4223,26 +4940,31 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final pin = widget.pin;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.88,
-          minChildSize: 0.4,
-          maxChildSize: 0.95,
-          builder: (context, scrollController) {
-            return ListView(
-              controller: scrollController,
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-              children: _isEditing
-                  ? _buildEditModeChildren(pin)
-                  : _buildViewModeChildren(pin),
-            );
-          },
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) unfocusPrimary();
+      },
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.88,
+            minChildSize: 0.4,
+            maxChildSize: 0.95,
+            builder: (context, scrollController) {
+              return ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+                children: _isEditing
+                    ? _buildEditModeChildren(pin)
+                    : _buildViewModeChildren(pin),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -4271,7 +4993,7 @@ class _PlotNameBottomSheetBodyState extends State<_PlotNameBottomSheetBody> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    scheduleDisposeTextControllers([_controller]);
     super.dispose();
   }
 

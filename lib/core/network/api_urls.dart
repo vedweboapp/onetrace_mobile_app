@@ -107,11 +107,71 @@ abstract final class AppApiUrls {
   /// `GET` [project_read] · `PUT` [project_update] · `PATCH` [project_partial_update] · `DELETE` [project_delete]
   static String projectById(String id) => '$_v1/project/$id/';
 
+  /// `GET` list · `POST` create — server route is singular `invoice/`.
+  static const String invoices = '$_v1/invoice/';
+
+  /// `GET` detail by id.
+  static String invoiceById(String id) => '$_v1/invoice/$id/';
+
+  /// `GET` generated PDF — endpoint pending backend support.
+  static String invoicePdfById(String id) => '$_v1/invoice/$id/pdf/';
+
   /// `GET` [quotations_list] · `POST` [quotations_create]
   static const String quotations = '$_v1/quotations/';
 
   /// `GET` [quotations_read] · `PUT` [quotations_update] · `PATCH` [quotations_partial_update] · `DELETE` [quotations_delete]
   static String quotationById(String id) => '$_v1/quotations/$id/';
+
+  /// `GET` [jobs_list] · `POST` [jobs_create]
+  static const String jobs = '$_v1/jobs/';
+
+  /// `POST` [jobs_create_from_quotation]
+  static const String jobsCreateFromQuotation =
+      '$_v1/jobs/create-from-quotation/';
+
+  /// `GET` [jobs_read] · `PUT` [jobs_update] · `PATCH` [jobs_partial_update] · `DELETE` [jobs_delete]
+  static String jobById(String id) => '$_v1/jobs/$id/';
+
+  /// `GET` job status metadata (dropdowns).
+  static const String jobStatuses = '$_v1/job-status/';
+
+  // ─── Site ──────────────────────────────────────────────────────────────────
+
+  /// `GET` [site_list] · `POST` [site_create]
+  static const String sites = '$_v1/site/';
+
+  /// `GET` [site_read] · `PUT` [site_update] · `PATCH` [site_partial_update] · `DELETE` [site_delete]
+  static String siteById(String id) => '$_v1/site/$id/';
+
+  // ─── Forms ─────────────────────────────────────────────────────────────────
+
+  /// `GET` [forms_list] · `POST` [forms_create]
+  static const String forms = '$_v1/forms/';
+
+  /// `GET` [forms_read] · `PUT` [forms_update] · `PATCH` [forms_partial_update] · `DELETE` [forms_delete]
+  static String formById(String id) => '$_v1/forms/$id/';
+
+  /// `GET` [forms_metadata]
+  static String formMetadataById(String id) => '$_v1/forms/$id/metadata/';
+
+  /// `GET` [forms_rules_read] · `POST` [forms_rules_create] · `PUT` [forms_rules_update] · `DELETE` [forms_rules_delete]
+  static String formRules(String formId) => '$_v1/forms/$formId/rules/';
+
+  /// `GET` [forms_rules_read] · `PUT` [forms_rules_update] · `DELETE` [forms_rules_delete]
+  static String formRuleById(String formId, String ruleId) =>
+      '$_v1/forms/$formId/rules/$ruleId/';
+
+  /// `POST` add section to a form
+  static String formSections(String formId) => '$_v1/forms/$formId/section/';
+
+  /// `GET` [qr_codes_list] · `POST` [qr_codes_create]
+  static const String qrCodes = '$_v1/qr-codes/';
+
+  /// `POST` [qr_codes_generate]
+  static const String qrCodesGenerate = '$_v1/qr-codes/generate/';
+
+  /// `GET` [qr_codes_read] · `PUT` [qr_codes_update] · `PATCH` [qr_codes_partial_update] · `DELETE` [qr_codes_delete]
+  static String qrCodeById(int id) => '$_v1/qr-codes/$id/';
 
   /// `GET` [project_level_list] · `POST` [project_level_create]
   static String projectLevels(String projectId) =>

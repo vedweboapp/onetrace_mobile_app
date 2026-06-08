@@ -13,6 +13,9 @@ abstract final class LocalStorageKeys {
   /// Active organization id (login response + [OrganizationIdHeader]).
   static const authOrganizationId = 'auth_organization_id';
 
+  /// Static / backend role slug used for post-login role dashboards.
+  static const authRole = 'auth_role';
+
   /// JSON: `{ "documents": [...], "selectedIndex": int }` (legacy; migrated on read)
   static const quoteSession = 'quote_session_v1';
 
@@ -21,4 +24,10 @@ abstract final class LocalStorageKeys {
 
   /// `drawer` | `bottom_sheet` — how main overflow navigation opens (see [NavMenuStylePreference]).
   static const appNavMenuStyle = 'app_nav_menu_style_v1';
+
+  /// JSON: module slug -> bool (enabled/disabled)
+  static const adminModulesEnabled = 'admin_modules_enabled_v1';
+
+  /// JSON: module slug -> { fieldKey -> bool }
+  static const adminFieldsEnabled = 'admin_fields_enabled_v1';
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/app/routes/route_observers.dart';
+import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/widgets/app_navigator_key.dart';
@@ -11,7 +12,10 @@ import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/create_project_page.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_job_page.dart';
+import 'package:red5/features/dashboard/presentation/views/job_details_page.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/features/dashboard/presentation/views/qr_codes_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_composite_items_screen.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_details_page.dart';
@@ -21,14 +25,18 @@ import 'package:red5/features/dashboard/presentation/views/settings/metadata_set
 import 'package:red5/features/dashboard/presentation/views/settings/module_metadata_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/change_password_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/password_updated_page.dart';
+import 'package:red5/employee_role/presentation/employee_personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/job_status_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/project_type_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/tags_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/zoho_integration_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/module_field_options_page.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/presentation/views/add_client_page.dart';
 import 'package:red5/features/clients/presentation/views/client_detail_page.dart';
@@ -41,6 +49,19 @@ import 'package:red5/features/composite_items/presentation/view/add_composite_it
 import 'package:red5/features/composite_items/presentation/view/composite_item_details_page.dart';
 import 'package:red5/features/items/presentation/views/add_item_page.dart';
 import 'package:red5/features/items/presentation/views/item_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_invoice_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_purchase_order_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_bill_page.dart';
+import 'package:red5/features/dashboard/presentation/views/bill_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/bill_preview_page.dart';
+import 'package:red5/features/vendors/presentation/views/add_vendor_page.dart';
+import 'package:red5/features/vendors/presentation/views/vendor_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/report_summary_page.dart';
+import 'package:red5/features/dashboard/presentation/views/report_create_chart_page.dart';
+import 'package:red5/features/dashboard/presentation/views/purchase_order_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/purchase_order_preview_page.dart';
+import 'package:red5/features/dashboard/presentation/views/invoice_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/invoice_preview_page.dart';
 import 'package:red5/features/quotations/presentation/views/add_quotation_page.dart';
 import 'package:red5/features/quotations/presentation/views/quotation_detail_page.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
@@ -51,6 +72,23 @@ import 'package:red5/features/quote/presentation/views/quote_project_page.dart';
 import 'package:red5/features/sites/presentation/views/add_site_page.dart';
 import 'package:red5/features/sites/presentation/views/site_detail_page.dart';
 import 'package:red5/features/splash/presentation/views/splash_page.dart';
+import 'package:red5/employee_role/data/role_session.dart';
+import 'package:red5/employee_role/employee_home/employee_home_page.dart';
+import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_confirmation_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
+import 'package:red5/employee_role/reports/data/employee_reports_data.dart';
+import 'package:red5/employee_role/reports/presentation/employee_report_product_detail_page.dart';
+import 'package:red5/employee_role/sites/presentation/employee_site_detail_page.dart';
+import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
+import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
+import 'package:red5/employee_role/projects/presentation/employee_project_details_page.dart';
+import 'package:red5/employee_role/projects/presentation/project_map_page.dart';
 
 /// Resolves `groups` from route [extra]: JSON list or in-memory [QuoteCompositeItemGroup] list.
 List<QuoteCompositeItemGroup> _compositeGroupsFromExtra(
@@ -68,10 +106,12 @@ List<QuoteCompositeItemGroup> _compositeGroupsFromExtra(
 }
 
 final appRouterProvider = Provider<GoRouter>((ref) {
+  final authRefresh = sl<AuthRedirectNotifier>();
   // Splash first; static preview (dart-define) only switches quote API, not entry route.
   return GoRouter(
     navigatorKey: appRootNavigatorKey,
     initialLocation: SplashPage.path,
+    refreshListenable: authRefresh,
     observers: <NavigatorObserver>[appRouteObserver],
     redirect: (context, state) {
       final storage = sl<LocalStorage>();
@@ -83,16 +123,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final location = state.matchedLocation.trim();
       final isSplash = location == SplashPage.path;
       final isLoginFlow = location.startsWith('/login');
+      final roleHomePath = RoleSession.homePathForStoredRole(storage);
 
       // Always allow splash + login flow routes.
       if (isSplash || isLoginFlow) {
-        // If already logged in, keep user out of login flow screens.
-        if (isLoggedIn && isLoginFlow) return DashboardPage.path;
+        if (isLoggedIn && isLoginFlow) {
+          return roleHomePath ?? DashboardPage.homePath;
+        }
         return null;
       }
 
       // Block all other routes when not authenticated.
       if (!isLoggedIn) return LoginPage.path;
+
+      // Canonical post-login URL is /home (same shell as /dashboard).
+      if (isLoggedIn && location == DashboardPage.path) {
+        return roleHomePath ?? DashboardPage.homePath;
+      }
+      if (isLoggedIn &&
+          location == DashboardPage.homePath &&
+          roleHomePath != null) {
+        return roleHomePath;
+      }
       return null;
     },
     routes: [
@@ -142,6 +194,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: ModuleFieldOptionsPage.path,
+        name: ModuleFieldOptionsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const ModuleFieldOptionsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
         path: DashboardPage.path,
         name: DashboardPage.name,
         pageBuilder: (context, state) => _animatedPage(
@@ -159,6 +220,216 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           beginOffset: const Offset(0.08, 0),
         ),
       ),
+      GoRoute(
+        path: QrCodesPage.path,
+        name: QrCodesPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const QrCodesPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: TechnicianHomePage.path,
+        name: TechnicianHomePage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const TechnicianHomePage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeePersonalProfilePage.path,
+        name: EmployeePersonalProfilePage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeePersonalProfilePage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeTechnicianSettingsRoutes.privacy,
+        name: 'technician-privacy',
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const PrivacySettingsPage(useTechnicianSettingsNav: true),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeProjectMapPage.path,
+        name: EmployeeProjectMapPage.name,
+        pageBuilder: (context, state) {
+          var projectName = 'Riverside Tower';
+          var activeSites = 3;
+          final extra = state.extra;
+          if (extra is Map) {
+            final m = Map<String, dynamic>.from(extra);
+            final rawProjectName = m['projectName'];
+            if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
+              projectName = rawProjectName.trim();
+            }
+            final rawActiveSites = m['activeSites'];
+            if (rawActiveSites is int) {
+              activeSites = rawActiveSites;
+            } else if (rawActiveSites != null) {
+              activeSites =
+                  int.tryParse(rawActiveSites.toString().trim()) ?? activeSites;
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeProjectMapPage(
+              projectName: projectName,
+              activeSites: activeSites,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeProjectDetailsPage.path,
+        name: EmployeeProjectDetailsPage.name,
+        pageBuilder: (context, state) {
+          String? projectName;
+          final extra = state.extra;
+          if (extra is Map) {
+            final rawProjectName = Map<String, dynamic>.from(
+              extra,
+            )['projectName'];
+            if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
+              projectName = rawProjectName.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeProjectDetailsPage(projectName: projectName),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeJobDetailsPage.path,
+        name: EmployeeJobDetailsPage.name,
+        pageBuilder: (context, state) {
+          int? jobId;
+          final extra = state.extra;
+          if (extra is Map) {
+            final rawJobId = Map<String, dynamic>.from(extra)['jobId'];
+            if (rawJobId is int) {
+              jobId = rawJobId;
+            } else if (rawJobId != null) {
+              jobId = int.tryParse(rawJobId.toString().trim());
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeJobDetailsPage(jobId: jobId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeJobConfirmationPage.path,
+        name: EmployeeJobConfirmationPage.name,
+        pageBuilder: (context, state) {
+          String? jobTitle;
+          final extra = state.extra;
+          if (extra is Map) {
+            final rawJobTitle = Map<String, dynamic>.from(extra)['jobTitle'];
+            if (rawJobTitle is String && rawJobTitle.trim().isNotEmpty) {
+              jobTitle = rawJobTitle.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeJobConfirmationPage(jobTitle: jobTitle),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeJobsPage.path,
+        name: EmployeeJobsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeeJobsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeJobSheetPage.path,
+        name: EmployeeJobSheetPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeeJobSheetPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeJobSheetDetailPage.path,
+        name: EmployeeJobSheetDetailPage.name,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          final job = extra is EmployeeJobSummary
+              ? extra
+              : EmployeeJobSheetData.jobs.first;
+          return _animatedPage(
+            state: state,
+            child: EmployeeJobSheetDetailPage(job: job),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeReportsPage.path,
+        name: EmployeeReportsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeeReportsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeReportProductDetailPage.path,
+        name: EmployeeReportProductDetailPage.name,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          final product = extra is EmployeeReportProduct
+              ? extra
+              : EmployeeReportsData.products.first;
+          return _animatedPage(
+            state: state,
+            child: EmployeeReportProductDetailPage(product: product),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeSitesPage.path,
+        name: EmployeeSitesPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeeSitesPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeSiteDetailPage.path,
+        name: EmployeeSiteDetailPage.name,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          final site = extra is EmployeeReportSite
+              ? extra
+              : EmployeeReportsData.sites.first;
+          return _animatedPage(
+            state: state,
+            child: EmployeeSiteDetailPage(site: site),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+
       GoRoute(
         path: CreateProjectPage.path,
         name: CreateProjectPage.name,
@@ -328,6 +599,170 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: AddInvoicePage.path,
+        name: AddInvoicePage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddInvoicePage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: AddPurchaseOrderPage.path,
+        name: AddPurchaseOrderPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddPurchaseOrderPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: AddBillPage.path,
+        name: AddBillPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddBillPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${BillDetailPage.pathPrefix}/:billId/preview',
+        name: BillPreviewPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['billId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: BillPreviewPage(billId: id),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${BillDetailPage.pathPrefix}/:billId',
+        name: BillDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['billId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: BillDetailPage(billId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ReportSummaryPage.pathPrefix}/:reportId',
+        name: ReportSummaryPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['reportId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: ReportSummaryPage(reportId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+        routes: [
+          GoRoute(
+            path: 'create-chart',
+            name: ReportCreateChartPage.name,
+            pageBuilder: (context, state) {
+              final id = Uri.decodeComponent(
+                (state.pathParameters['reportId'] ?? '').trim(),
+              );
+              return _animatedPage(
+                state: state,
+                child: ReportCreateChartPage(reportId: id),
+                beginOffset: const Offset(0, 0.08),
+              );
+            },
+          ),
+        ],
+      ),
+      GoRoute(
+        path: AddVendorPage.path,
+        name: AddVendorPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddVendorPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${VendorDetailPage.pathPrefix}/:vendorId',
+        name: VendorDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['vendorId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: VendorDetailPage(vendorId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${PurchaseOrderDetailPage.pathPrefix}/:purchaseOrderId/preview',
+        name: PurchaseOrderPreviewPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['purchaseOrderId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: PurchaseOrderPreviewPage(purchaseOrderId: id),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${PurchaseOrderDetailPage.pathPrefix}/:purchaseOrderId',
+        name: PurchaseOrderDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['purchaseOrderId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: PurchaseOrderDetailPage(purchaseOrderId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${InvoiceDetailPage.pathPrefix}/:invoiceId/preview',
+        name: InvoicePreviewPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['invoiceId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: InvoicePreviewPage(invoiceId: id),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${InvoiceDetailPage.pathPrefix}/:invoiceId',
+        name: InvoiceDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['invoiceId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: InvoiceDetailPage(invoiceId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: '${QuotationDetailPage.pathPrefix}/:quotationId',
         name: QuotationDetailPage.name,
         pageBuilder: (context, state) {
@@ -459,8 +894,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) {
           final extra = state.extra;
           QuoteSummary? summary;
+          var initialTabIndex = 0;
+          String? jobsRefreshToken;
           if (extra is Map) {
-            summary = QuoteSummary.fromMap(Map<String, dynamic>.from(extra));
+            final map = Map<String, dynamic>.from(extra);
+            summary = QuoteSummary.fromMap(map);
+            final rawTab = map['initialTabIndex'];
+            if (rawTab is int) {
+              initialTabIndex = rawTab;
+            } else if (rawTab is String) {
+              initialTabIndex = int.tryParse(rawTab.trim()) ?? 0;
+            }
+            final rawRefresh = map['jobsRefreshToken'];
+            if (rawRefresh != null) {
+              final text = rawRefresh.toString().trim();
+              if (text.isNotEmpty) jobsRefreshToken = text;
+            }
           } else if (extra is QuoteSummary) {
             summary = extra;
           }
@@ -472,7 +921,119 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           );
           return _animatedPage(
             state: state,
-            child: ProjectDetailsPage(project: summary),
+            child: ProjectDetailsPage(
+              project: summary,
+              initialTabIndex: initialTabIndex,
+              jobsRefreshToken: jobsRefreshToken,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ProjectDetailsPage.pathPrefix}/:projectId/add-job',
+        name: AddJobPage.name,
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          var projectName = '';
+          var clientName = '';
+          final extra = state.extra;
+          if (extra is Map) {
+            final m = Map<String, dynamic>.from(extra);
+            projectName = (m['projectName'] as String?)?.trim() ?? '';
+            clientName = (m['clientName'] as String?)?.trim() ?? '';
+          }
+          return _animatedPage(
+            state: state,
+            child: AddJobPage(
+              projectId: projectId,
+              initialProjectName: projectName,
+              initialClientName: clientName,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ProjectDetailsPage.pathPrefix}/:projectId/jobs/:jobId',
+        name: JobDetailsPage.name,
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final routeJobId = state.pathParameters['jobId'] ?? '';
+          var jobId = Uri.decodeComponent(routeJobId);
+          var jobTitle = 'Job';
+          var projectName = 'Project';
+          var clientName = '--';
+          var workerName = 'Assigned Worker';
+          DateTime? startDate;
+          DateTime? scheduleDate;
+          var status = 'Active';
+          double? latitude;
+          double? longitude;
+          final extra = state.extra;
+          if (extra is Map) {
+            final m = Map<String, dynamic>.from(extra);
+            final rawJobId = m['jobId'];
+            final rawJobTitle = m['jobTitle'];
+            final rawProjectName = m['projectName'];
+            final rawClientName = m['clientName'];
+            final rawWorkerName = m['workerName'];
+            final rawStartDate = m['startDate'];
+            final rawScheduleDate = m['scheduleDate'];
+            final rawStatus = m['status'];
+            final rawLatitude = m['latitude'];
+            final rawLongitude = m['longitude'];
+            if (rawJobId is String && rawJobId.trim().isNotEmpty) {
+              jobId = rawJobId.trim();
+            }
+            if (rawJobTitle is String && rawJobTitle.trim().isNotEmpty) {
+              jobTitle = rawJobTitle.trim();
+            }
+            if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
+              projectName = rawProjectName.trim();
+            }
+            if (rawClientName is String && rawClientName.trim().isNotEmpty) {
+              clientName = rawClientName.trim();
+            }
+            if (rawWorkerName is String && rawWorkerName.trim().isNotEmpty) {
+              workerName = rawWorkerName.trim();
+            }
+            if (rawStartDate is String && rawStartDate.trim().isNotEmpty) {
+              startDate = DateTime.tryParse(rawStartDate.trim());
+            }
+            if (rawScheduleDate is String &&
+                rawScheduleDate.trim().isNotEmpty) {
+              scheduleDate = DateTime.tryParse(rawScheduleDate.trim());
+            }
+            if (rawStatus is String && rawStatus.trim().isNotEmpty) {
+              status = rawStatus.trim();
+            }
+            if (rawLatitude is num) {
+              latitude = rawLatitude.toDouble();
+            } else if (rawLatitude is String) {
+              latitude = double.tryParse(rawLatitude.trim());
+            }
+            if (rawLongitude is num) {
+              longitude = rawLongitude.toDouble();
+            } else if (rawLongitude is String) {
+              longitude = double.tryParse(rawLongitude.trim());
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: JobDetailsPage(
+              projectId: projectId,
+              jobId: jobId,
+              jobTitle: jobTitle,
+              projectName: projectName,
+              clientName: clientName,
+              workerName: workerName,
+              startDate: startDate,
+              scheduleDate: scheduleDate,
+              status: status,
+              latitude: latitude,
+              longitude: longitude,
+            ),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -600,10 +1161,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             if (desc is String && desc.trim().isNotEmpty) {
               initialProjectDescription = desc.trim();
             }
-            if (sd is String && sd.trim().isNotEmpty)
+            if (sd is String && sd.trim().isNotEmpty) {
               initialStartDate = sd.trim();
-            if (ed is String && ed.trim().isNotEmpty)
+            }
+            if (ed is String && ed.trim().isNotEmpty) {
               initialEndDate = ed.trim();
+            }
             if (u is String && u.trim().isNotEmpty) initialPdfUrl = u.trim();
             if (n is String && n.trim().isNotEmpty) initialPdfName = n.trim();
             if (pr is List) {
@@ -738,7 +1301,25 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: PinStatusSettingsPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: PinStatusSettingsPage(),
+          child: const PinStatusSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: JobStatusSettingsPage.path,
+        name: JobStatusSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const JobStatusSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: ProjectTypeSettingsPage.path,
+        name: ProjectTypeSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const ProjectTypeSettingsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),
@@ -747,7 +1328,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: TagsSettingsPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: TagsSettingsPage(),
+          child: const TagsSettingsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),
