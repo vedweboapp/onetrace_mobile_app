@@ -2,14 +2,37 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_user_avatar.dart';
 import 'package:red5/core/utils/debounced_search.dart';
+import 'package:red5/features/dashboard/data/report_chart_config.dart';
+import 'package:red5/features/dashboard/data/report_column_fields.dart';
+import 'package:red5/features/dashboard/data/report_field_values.dart';
 import 'package:red5/features/dashboard/data/report_models.dart';
+import 'package:red5/features/dashboard/data/report_configure_state.dart';
+import 'package:red5/features/dashboard/presentation/views/report_configure_page.dart';
 import 'package:red5/features/dashboard/presentation/views/report_create_chart_page.dart';
+import 'package:red5/features/dashboard/presentation/views/widgets/create_new_report_dialog.dart';
+import 'package:red5/features/dashboard/presentation/views/widgets/report_chart_preview.dart';
 import 'package:red5/features/dashboard/presentation/views/widgets/report_summary_widgets.dart';
+
+class ReportSummaryRouteExtra {
+  const ReportSummaryRouteExtra({
+    this.primaryModule,
+    this.columnKeys,
+  });
+
+  final ReportPrimaryModule? primaryModule;
+  final List<String>? columnKeys;
+}
 
 /// Report summary table view (UI preview until reports API is available).
 class ReportSummaryPage extends StatefulWidget {
-  const ReportSummaryPage({super.key, required this.reportId});
+  const ReportSummaryPage({
+    super.key,
+    required this.reportId,
+    this.primaryModule,
+    this.initialColumnKeys,
+  });
 
   static const pathPrefix = '/reports';
   static const name = 'report-summary';
@@ -18,6 +41,8 @@ class ReportSummaryPage extends StatefulWidget {
       '$pathPrefix/${Uri.encodeComponent(id.trim())}';
 
   final String reportId;
+  final ReportPrimaryModule? primaryModule;
+  final List<String>? initialColumnKeys;
 
   @override
   State<ReportSummaryPage> createState() => _ReportSummaryPageState();
@@ -34,19 +59,51 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
   static const _border = Color(0xFFE8E8EA);
 
   late final ReportListItem _report;
-  late final ReportTableData _table;
   late final List<ReportListCardItem> _allCards;
+  late List<String> _selectedColumnKeys;
   List<ReportTableRow> _filtered = const [];
   List<ReportListCardItem> _filteredCards = const [];
   ReportSummaryViewMode _viewMode = ReportSummaryViewMode.list;
+  ReportChartConfig? _savedChart;
+
+  List<ReportTableColumn> get _tableColumns =>
+      ReportColumnCatalog.tableColumnsFor(_selectedColumnKeys);
+
+  List<ReportFieldDefinition> get _selectedFields =>
+      ReportColumnCatalog.resolveSelected(_selectedColumnKeys);
+
+  List<ReportTableRow> get _tableRows =>
+      _allCards.map((card) => card.toTableRow(_selectedColumnKeys)).toList();
+
+  String get _pageTitle {
+    if (ReportMockData.isNewReport(widget.reportId) &&
+        widget.primaryModule != null) {
+      return '${widget.primaryModule!.label} Report';
+    }
+    return _report.title;
+  }
 
   @override
   void initState() {
     super.initState();
-    _report = ReportMockData.detailForId(widget.reportId);
-    _table = ReportMockData.tableFor(widget.reportId);
-    _allCards = ReportMockData.listCardsFor(widget.reportId);
-    _filtered = List.of(_table.rows);
+    _report = ReportMockData.isNewReport(widget.reportId)
+        ? ReportListItem(
+            id: ReportMockData.newReportId,
+            title: widget.primaryModule != null
+                ? '${widget.primaryModule!.label} Report'
+                : 'New Report',
+            description: 'Custom report preview',
+            category: ReportCategory.projects,
+            lastGenerated: DateTime.now(),
+          )
+        : ReportMockData.detailForId(widget.reportId);
+    _allCards = ReportMockData.isNewReport(widget.reportId)
+        ? ReportMockData.cardsForNewReport()
+        : ReportMockData.listCardsFor(widget.reportId);
+    _selectedColumnKeys = List.of(
+      widget.initialColumnKeys ?? ReportColumnCatalog.defaultSelectedKeys,
+    );
+    _filtered = List.of(_tableRows);
     _filteredCards = List.of(_allCards);
     _searchController.addListener(_onSearchChanged);
   }
@@ -60,13 +117,37 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
     final query = _searchController.text.trim();
     setState(() {
       if (query.isEmpty) {
-        _filtered = List.of(_table.rows);
+        _filtered = List.of(_tableRows);
         _filteredCards = List.of(_allCards);
         return;
       }
-      _filtered = _table.rows.where((row) => row.matchesQuery(query)).toList();
-      _filteredCards =
-          _allCards.where((card) => card.matchesQuery(query)).toList();
+      _filtered = _tableRows.where((row) => row.matchesQuery(query)).toList();
+      _filteredCards = _allCards
+          .where((card) => card.matchesQueryWithFields(query, _selectedColumnKeys))
+          .toList();
+    });
+  }
+
+  void _rebuildTableData() {
+    _filtered = List.of(_tableRows);
+    _applySearch();
+  }
+
+  Future<void> _onEditReport() async {
+    final result = await context.push<ReportConfigureState?>(
+      ReportConfigurePage.pathFor(widget.reportId),
+      extra: ReportConfigureRouteExtra(
+        primaryModule: widget.primaryModule ?? ReportPrimaryModule.leads,
+        initialState: ReportConfigureState(
+          visibleColumnKeys: _selectedColumnKeys,
+        ),
+        replaceOnGenerate: false,
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      _selectedColumnKeys = result.visibleColumnKeys;
+      _rebuildTableData();
     });
   }
 
@@ -84,13 +165,25 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
     );
   }
 
-  void _onCreateChart() {
-    context.push<bool?>(ReportCreateChartPage.pathFor(widget.reportId));
+  Future<void> _onChartAction() async {
+    final result = await context.push<ReportChartConfig?>(
+      ReportCreateChartPage.pathFor(widget.reportId),
+      extra: _savedChart,
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      _savedChart = result;
+      _viewMode = ReportSummaryViewMode.table;
+    });
   }
+
+  ReportChartSeries get _chartSeries =>
+      _savedChart?.seriesFor(_allCards) ??
+      const ReportChartSeries(labels: [], values: []);
 
   double get _tableMinWidth {
     var width = 0.0;
-    for (final column in _table.columns) {
+    for (final column in _tableColumns) {
       width += column.minWidth ?? 120;
     }
     return width;
@@ -135,32 +228,65 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
     );
   }
 
-  Widget _exportAndViewToggleRow() {
+  Widget _outlinedActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.inkStrong,
+          side: const BorderSide(color: Color(0xFFD1D5DB)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          backgroundColor: AppColors.white,
+        ),
+        icon: Icon(icon, size: 20),
+        label: Text(
+          label,
+          style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _actionRow() {
+    if (_savedChart != null) {
+      return Row(
+        children: [
+          Expanded(
+            child: _outlinedActionButton(
+              icon: Icons.filter_list_rounded,
+              label: 'Filters',
+              onPressed: () => _showPlaceholder('Filters'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _outlinedActionButton(
+              icon: Icons.file_download_outlined,
+              label: 'Export',
+              onPressed: () => _showPlaceholder('Export'),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Row(
       children: [
         Expanded(
-          child: SizedBox(
-            height: 48,
-            child: OutlinedButton.icon(
-              onPressed: () => _showPlaceholder('Export'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.inkStrong,
-                side: const BorderSide(color: Color(0xFFD1D5DB)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                backgroundColor: AppColors.white,
-              ),
-              icon: const Icon(Icons.file_download_outlined, size: 20),
-              label: Text(
-                'Export',
-                style: AppFonts.titleMedium(color: AppColors.inkStrong)
-                    .copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
-              ),
-            ),
+          child: _outlinedActionButton(
+            icon: Icons.file_download_outlined,
+            label: 'Export',
+            onPressed: () => _showPlaceholder('Export'),
           ),
         ),
         const SizedBox(width: 10),
@@ -169,6 +295,20 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
           onChanged: (mode) => setState(() => _viewMode = mode),
         ),
       ],
+    );
+  }
+
+  Widget _chartPreviewCard() {
+    final chart = _savedChart;
+    if (chart == null) return const SizedBox.shrink();
+
+    return ReportChartPreview(
+      series: _chartSeries,
+      chartType: chart.chartType,
+      onChartTypeChanged: (type) {
+        setState(() => _savedChart = chart.copyWith(chartType: type));
+      },
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
     );
   }
 
@@ -255,37 +395,12 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
   }
 
   Widget _avatarCell(ReportTableCell cell) {
-    final url = cell.avatarUrl?.trim();
-    final initial = cell.primary.trim().isNotEmpty
-        ? cell.primary.trim()[0].toUpperCase()
-        : '?';
-
-    if (url != null && url.isNotEmpty) {
-      return CircleAvatar(
-        radius: 16,
-        backgroundColor: const Color(0xFFE5E7EB),
-        backgroundImage: NetworkImage(url),
-        onBackgroundImageError: (_, _) {},
-        child: Text(
-          initial,
-          style: AppFonts.labelMedium(color: _muted).copyWith(
-            fontWeight: FontWeight.w700,
-            fontSize: 11,
-          ),
-        ),
-      );
-    }
-
-    return CircleAvatar(
+    return AppUserAvatar(
+      name: cell.primary,
+      imageUrl: cell.avatarUrl,
       radius: 16,
-      backgroundColor: const Color(0xFFE5E7EB),
-      child: Text(
-        initial,
-        style: AppFonts.labelMedium(color: _muted).copyWith(
-          fontWeight: FontWeight.w700,
-          fontSize: 11,
-        ),
-      ),
+      foregroundColor: _muted,
+      fontSize: 11,
     );
   }
 
@@ -299,11 +414,11 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Row(
         children: [
-          for (var i = 0; i < _table.columns.length; i++) ...[
+          for (var i = 0; i < _tableColumns.length; i++) ...[
             if (i > 0) const SizedBox(width: 16),
             Expanded(
-              flex: _table.columns[i].flex,
-              child: _headerCell(_table.columns[i]),
+              flex: _tableColumns[i].flex,
+              child: _headerCell(_tableColumns[i]),
             ),
           ],
         ],
@@ -321,13 +436,13 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          for (var i = 0; i < _table.columns.length; i++) ...[
+          for (var i = 0; i < _tableColumns.length; i++) ...[
             if (i > 0) const SizedBox(width: 16),
             Expanded(
-              flex: _table.columns[i].flex,
+              flex: _tableColumns[i].flex,
               child: _dataCell(
-                _table.columns[i],
-                row.cellFor(_table.columns[i].key),
+                _tableColumns[i],
+                row.cellFor(_tableColumns[i].key),
               ),
             ),
           ],
@@ -336,9 +451,10 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
     );
   }
 
-  Widget _dataTable() {
+  Widget _dataTable({double? height}) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final maxH = height ?? constraints.maxHeight;
         final width = constraints.maxWidth < _tableMinWidth
             ? _tableMinWidth
             : constraints.maxWidth;
@@ -347,7 +463,7 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
           scrollDirection: Axis.horizontal,
           child: SizedBox(
             width: width,
-            height: constraints.maxHeight,
+            height: maxH,
             child: Column(
               children: [
                 _tableHeaderRow(width),
@@ -369,6 +485,31 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
     );
   }
 
+  double get _embeddedTableHeight {
+    if (_filtered.isEmpty) return 180;
+    return 48 + _filtered.length * 68.0;
+  }
+
+  Widget _embeddedTableCard() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _border),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            height: _embeddedTableHeight,
+            child: _dataTable(height: _embeddedTableHeight),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _listView() {
     if (_filteredCards.isEmpty) {
       return ListView(children: [_emptyResults()]);
@@ -378,12 +519,24 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       itemCount: _filteredCards.length,
       separatorBuilder: (context, index) => const SizedBox(height: 12),
-      itemBuilder: (context, index) =>
-          ReportSummaryListCard(item: _filteredCards[index]),
+      itemBuilder: (context, index) => ReportSummaryListCard(
+        item: _filteredCards[index],
+        selectedFields: _selectedFields,
+      ),
     );
   }
 
   Widget _summaryContent() {
+    if (_savedChart != null) {
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 8),
+        children: [
+          _chartPreviewCard(),
+          _embeddedTableCard(),
+        ],
+      );
+    }
+
     if (_viewMode == ReportSummaryViewMode.list) {
       return _listView();
     }
@@ -446,7 +599,7 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
           color: AppColors.inkStrong,
         ),
         title: Text(
-          _report.title,
+          _pageTitle,
           style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
             fontWeight: FontWeight.w800,
             fontSize: 17,
@@ -455,10 +608,10 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
         centerTitle: true,
         actions: [
           IconButton(
-            onPressed: () => _showPlaceholder('Edit'),
+            onPressed: _onEditReport,
             icon: const Icon(Icons.edit_outlined, size: 22),
             color: AppColors.inkStrong,
-            tooltip: 'Edit',
+            tooltip: 'Configure report',
           ),
           const SizedBox(width: 4),
         ],
@@ -476,7 +629,7 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: _exportAndViewToggleRow(),
+            child: _actionRow(),
           ),
           Expanded(child: _summaryContent()),
           SafeArea(
@@ -487,7 +640,7 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
                 width: double.infinity,
                 height: 52,
                 child: FilledButton(
-                  onPressed: _onCreateChart,
+                  onPressed: _onChartAction,
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF121212),
                     foregroundColor: AppColors.white,
@@ -496,7 +649,7 @@ class _ReportSummaryPageState extends State<ReportSummaryPage> {
                     ),
                   ),
                   child: Text(
-                    'Create Chart',
+                    _savedChart == null ? 'Create Chart' : 'Update Chart',
                     style: AppFonts.titleMedium(color: AppColors.white).copyWith(
                       fontWeight: FontWeight.w700,
                       fontSize: 16,

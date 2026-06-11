@@ -13,7 +13,7 @@ abstract final class LocalStorageKeys {
   /// Active organization id (login response + [OrganizationIdHeader]).
   static const authOrganizationId = 'auth_organization_id';
 
-  /// Static / backend role slug used for post-login role dashboards.
+  /// Role display name from `/user-profile/` `role_detail.role_name` (e.g. `Admin`, `Technician`).
   static const authRole = 'auth_role';
 
   /// JSON: `{ "documents": [...], "selectedIndex": int }` (legacy; migrated on read)
@@ -30,4 +30,7 @@ abstract final class LocalStorageKeys {
 
   /// JSON: module slug -> { fieldKey -> bool }
   static const adminFieldsEnabled = 'admin_fields_enabled_v1';
+
+  /// JSON: `"jobId:yyyy-MM-dd"` -> true when operative completed pre-start safety.
+  static const employeeJobSafetyVerified = 'employee_job_safety_verified_v1';
 }

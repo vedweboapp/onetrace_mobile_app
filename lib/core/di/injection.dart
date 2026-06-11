@@ -7,6 +7,8 @@ import 'package:red5/core/network/auth_bearer_interceptor.dart';
 import 'package:red5/core/network/organization_id_interceptor.dart';
 import 'package:red5/core/network/dio_multipart_transfer.dart';
 import 'package:red5/core/network/success_toast_interceptor.dart';
+import 'package:red5/core/database/technician_form_database.dart';
+import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/features/clients/data/clients_api_client.dart';
@@ -41,6 +43,11 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
   await sl.reset();
   sl.registerSingleton<LocalStorage>(localStorage);
   sl.registerSingleton<AuthRedirectNotifier>(AuthRedirectNotifier());
+  sl.registerSingleton<ConnectivityService>(ConnectivityService());
+  sl.registerSingletonAsync<TechnicianFormDatabase>(
+    TechnicianFormDatabase.open,
+  );
+  await sl.isReady<TechnicianFormDatabase>();
 
   sl.registerLazySingleton<AuthApiClient>(() {
     final storage = sl<LocalStorage>();

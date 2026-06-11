@@ -1,49 +1,42 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:red5/core/di/injection.dart';
 import 'package:red5/employee_role/projects/data/project_map_job.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 final projectMapRepositoryProvider = Provider<ProjectMapRepository>((ref) {
-  return const ProjectMapRepository();
+  return ProjectMapRepository(sl<QuoteProjectApiClient>());
 });
 
 final class ProjectMapRepository {
-  const ProjectMapRepository();
+  ProjectMapRepository(this._api);
 
-  static const _inbuiltJobs = <ProjectMapJob>[
-    ProjectMapJob(
-      id: 101,
-      title: 'North Wing Foundation',
-      address: 'Employee Site A, Riverside Tower',
-      status: 'ACTIVE',
-      position: LatLng(40.71386, -74.0072),
-      distanceMiles: 0.4,
-      isActive: true,
-    ),
-    ProjectMapJob(
-      id: 102,
-      title: 'East Parking Structure',
-      address: 'Employee Site B, East Gate',
-      status: 'SCHEDULED',
-      position: LatLng(40.71605, -74.0019),
-      distanceMiles: 1.2,
-      isActive: true,
-    ),
-    ProjectMapJob(
-      id: 103,
-      title: 'Utility Check-in',
-      address: 'Employee Site C, West Gate Entry',
-      status: 'IN PROGRESS',
-      position: LatLng(40.71064, -74.0111),
-      distanceMiles: 0.2,
-      isActive: true,
-    ),
-  ];
+  final QuoteProjectApiClient _api;
 
-  Future<List<ProjectMapJob>> fetchJobs({String? search}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+  Future<List<ProjectMapJob>> fetchJobs({
+    int? projectId,
+    String? search,
+  }) async {
+    if (projectId == null) return const [];
+
+    final project = await _api.fetchProjectById(projectId.toString());
+    final allJobs = await _api.fetchAllJobs();
+    final projectJobs = allJobs
+        .where((job) => job.project == projectId)
+        .map(ProjectMapJob.fromJobRead)
+        .whereType<ProjectMapJob>()
+        .toList(growable: false);
+
+    final items = projectJobs.isNotEmpty
+        ? projectJobs
+        : project.sites
+              .where((site) => site.isActive)
+              .map(ProjectMapJob.fromSite)
+              .toList(growable: false);
+
     final query = search?.trim().toLowerCase();
-    if (query == null || query.isEmpty) return _inbuiltJobs;
-    return _inbuiltJobs
+    if (query == null || query.isEmpty) return items;
+
+    return items
         .where((job) {
           return job.title.toLowerCase().contains(query) ||
               job.address.toLowerCase().contains(query) ||

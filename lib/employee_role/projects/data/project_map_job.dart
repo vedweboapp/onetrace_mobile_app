@@ -1,5 +1,6 @@
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/sites/data/site_models.dart';
 
 final class ProjectMapJob {
   const ProjectMapJob({
@@ -40,6 +41,28 @@ final class ProjectMapJob {
       position: position ?? this.position,
       distanceMiles: distanceMiles ?? this.distanceMiles,
       isActive: isActive ?? this.isActive,
+    );
+  }
+
+  static ProjectMapJob fromSite(SiteModel site) {
+    final address = [
+      site.addressLine1,
+      site.addressLine2,
+      site.city,
+      site.state,
+      site.postalCode,
+    ].where((part) => part.trim().isNotEmpty).join(', ');
+
+    final id = int.tryParse(site.id) ?? site.id.hashCode;
+
+    return ProjectMapJob(
+      id: id,
+      title: site.siteName,
+      address: address.isEmpty ? site.clientName : address,
+      status: site.isActive ? 'ACTIVE' : 'INACTIVE',
+      position: const LatLng(0, 0),
+      distanceMiles: 0,
+      isActive: site.isActive,
     );
   }
 

@@ -19,12 +19,9 @@ import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
-import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/employee_role/employee_home/employee_home_page.dart';
-import 'package:red5/employee_role/presentation/employee_personal_profile_placeholder.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/presentation/widgets/technician_settings_drawer.dart';
-import 'package:red5/employee_role/data/role_session.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
@@ -46,7 +43,7 @@ class PersonalProfilePage extends ConsumerStatefulWidget {
   });
 
   /// When true (technician/worker routes), drawer shows only Profile + Privacy,
-  /// exit returns to [TechnicianHomePage], and profile data stays local (no API).
+  /// exit returns to [TechnicianHomePage]. Profile data uses `/user-profile/` API.
   final bool useTechnicianSettingsNav;
 
   static const path = '/settings/personal-profile';
@@ -133,8 +130,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   // --- Main app navigation (dashboard overflow menu) ---
   NavMenuStyle _navMenuStyle = NavMenuStyle.drawer;
 
-  /// Admin settings use `/user-profile/`; technician/worker screens are UI-only.
-  bool get _usesProfileApi => !widget.useTechnicianSettingsNav;
+  bool get _isTechnicianProfile => widget.useTechnicianSettingsNav;
 
   @override
   void initState() {
@@ -145,11 +141,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     _phoneCountries.add(PhoneNumberUtils.defaultCountry);
     _emailControllers = [TextEditingController()];
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_usesProfileApi) {
-        unawaited(_loadProfile());
-      } else {
-        unawaited(_loadLocalProfile());
-      }
+      unawaited(_loadProfile());
       _loadNavMenuPreference();
     });
   }
@@ -176,26 +168,6 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         ),
       );
     }
-  }
-
-  Future<void> _loadLocalProfile() async {
-    if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _loadError = null;
-    });
-    await Future<void>.delayed(Duration.zero);
-    if (!mounted) return;
-    final storage = ref.read(localStorageProvider);
-    final roleLabel = EmployeePersonalProfilePlaceholder.roleLabelFromStorage(
-      RoleSession.readRole(storage)?.slug ?? storage.getString(LocalStorageKeys.authRole),
-    );
-    setState(() {
-      _roles = EmployeePersonalProfilePlaceholder.rolesFor(roleLabel);
-      _loadError = null;
-      _loading = false;
-    });
-    _applyProfile(EmployeePersonalProfilePlaceholder.profile(roleLabel: roleLabel));
   }
 
   Future<void> _loadProfile() async {
@@ -265,7 +237,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     _firstNameController.text = profile.firstName;
     _lastNameController.text = profile.lastName;
     _dobController.text = profile.dateOfBirth;
-    final rid = int.tryParse(profile.roleId.trim());
+    final rid = int.tryParse(
+      profile.roleDetail?.id.trim() ?? profile.roleId.trim(),
+    );
     _selectedRoleId = rid;
 
     for (final c in _phoneControllers) {
@@ -479,10 +453,6 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
   }
 
   Future<void> _saveChanges() async {
-    if (!_usesProfileApi) {
-      await _saveLocalChanges();
-      return;
-    }
     final profileId = _profileId;
     if (profileId == null || profileId.isEmpty) {
       context.showTopSnackBar(
@@ -537,8 +507,14 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
       return;
     }
 
-    final roleInt =
-        _selectedRoleId ?? int.tryParse(_profile?.roleId ?? '') ?? 0;
+    final roleInt = _isTechnicianProfile
+        ? (int.tryParse(
+              _profile?.roleDetail?.id.trim() ??
+                  _profile?.roleId.trim() ??
+                  '',
+            ) ??
+            0)
+        : (_selectedRoleId ?? int.tryParse(_profile?.roleId ?? '') ?? 0);
     if (roleInt <= 0) {
       context.showTopSnackBar(const SnackBar(content: Text('Select a role.')));
       return;
@@ -579,69 +555,6 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         SnackBar(content: Text(ApiResponseMessage.fromAnyError(e))),
       );
     }
-  }
-
-  Future<void> _saveLocalChanges() async {
-    if (_saving) return;
-    FocusScope.of(context).unfocus();
-
-    final firstName = _firstNameController.text.trim();
-    final lastName = _lastNameController.text.trim();
-    final gender = _gender.trim();
-    if (firstName.isEmpty || lastName.isEmpty || gender.isEmpty) {
-      context.showTopSnackBar(
-        const SnackBar(
-          content: Text('First name, last name, and gender are required.'),
-        ),
-      );
-      return;
-    }
-
-    String primaryEmail = '';
-    for (final c in _emailControllers) {
-      final t = c.text.trim();
-      if (t.isNotEmpty) {
-        primaryEmail = t;
-        break;
-      }
-    }
-    if (primaryEmail.isEmpty) {
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Email is required.')),
-      );
-      return;
-    }
-
-    String primaryPhone = '';
-    for (var i = 0; i < _phoneControllers.length; i++) {
-      final national = _phoneControllers[i].text.trim();
-      if (national.isEmpty) continue;
-      final country = i < _phoneCountries.length
-          ? _phoneCountries[i]
-          : PhoneNumberUtils.defaultCountry;
-      primaryPhone = PhoneNumberUtils.formatFull(country, national);
-      break;
-    }
-    if (primaryPhone.isEmpty) {
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Phone number is required.')),
-      );
-      return;
-    }
-
-    setState(() => _saving = true);
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    if (!mounted) return;
-    setState(() {
-      _saving = false;
-      _editable = false;
-      _profilePhotoBytes = null;
-      _pickedImageFilename = null;
-    });
-    context.showSuccessTopPopup(
-      title: 'Profile updated',
-      subtitle: 'Saved on this device. Account sync is not connected yet.',
-    );
   }
 
   void _addPhone() {
@@ -1341,11 +1254,23 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
     if (sid == null) return out;
     final idStr = sid.toString();
     if (out.any((r) => r.id == idStr)) return out;
-    final label = (_profile?.role ?? '').trim();
+    final label = (_profile?.roleDetail?.roleName ?? _profile?.role ?? '').trim();
     return [
       RoleModel(id: idStr, roleName: label.isNotEmpty ? label : 'Role #$idStr'),
       ...out,
     ];
+  }
+
+  Widget _roleReadOnlyField() {
+    final label = (_profile?.roleDetail?.roleName.trim().isNotEmpty ?? false)
+        ? _profile!.roleDetail!.roleName.trim()
+        : (_profile?.role.trim().isNotEmpty ?? false)
+        ? _profile!.role.trim()
+        : '—';
+    return InputDecorator(
+      decoration: _fieldDecoration(),
+      child: Text(label, style: _fieldTextStyle()),
+    );
   }
 
   Widget _roleDropdown(bool enabled) {
@@ -1758,13 +1683,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
             ),
             const SizedBox(height: 16),
             FilledButton(
-              onPressed: () {
-                if (_usesProfileApi) {
-                  unawaited(_loadProfile());
-                } else {
-                  unawaited(_loadLocalProfile());
-                }
-              },
+              onPressed: () => unawaited(_loadProfile()),
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.inkStrong,
                 foregroundColor: AppColors.white,
@@ -1781,7 +1700,7 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
       controller: _tabController,
       children: [
         RefreshIndicator(
-          onRefresh: _usesProfileApi ? _loadProfile : _loadLocalProfile,
+          onRefresh: _loadProfile,
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
             children: [_buildProfileTabContent(enabled)],
@@ -1886,7 +1805,9 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         ),
         const SizedBox(height: 14),
         _label('Role'),
-        _roleDropdown(enabled && _usesProfileApi),
+        _isTechnicianProfile
+            ? _roleReadOnlyField()
+            : _roleDropdown(enabled),
         if (_organizationName.isNotEmpty) ...[
           const SizedBox(height: 14),
           _label('Organization'),

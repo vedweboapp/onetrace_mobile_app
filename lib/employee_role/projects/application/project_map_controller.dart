@@ -17,6 +17,9 @@ final class ProjectMapState {
     this.searchQuery = '',
     this.selectedJobId,
     this.isDarkMap = false,
+    this.projectId,
+    this.projectName,
+    this.activeSites = 0,
   });
 
   final List<ProjectMapJob> jobs;
@@ -25,6 +28,9 @@ final class ProjectMapState {
   final String searchQuery;
   final int? selectedJobId;
   final bool isDarkMap;
+  final int? projectId;
+  final String? projectName;
+  final int activeSites;
 
   ProjectMapJob? get selectedJob {
     final id = selectedJobId;
@@ -44,6 +50,9 @@ final class ProjectMapState {
     int? selectedJobId,
     bool clearSelectedJob = false,
     bool? isDarkMap,
+    int? projectId,
+    String? projectName,
+    int? activeSites,
   }) {
     return ProjectMapState(
       jobs: jobs ?? this.jobs,
@@ -54,6 +63,9 @@ final class ProjectMapState {
           ? null
           : selectedJobId ?? this.selectedJobId,
       isDarkMap: isDarkMap ?? this.isDarkMap,
+      projectId: projectId ?? this.projectId,
+      projectName: projectName ?? this.projectName,
+      activeSites: activeSites ?? this.activeSites,
     );
   }
 }
@@ -63,15 +75,27 @@ final class ProjectMapController extends StateNotifier<ProjectMapState> {
 
   final ProjectMapRepository _repository;
 
-  Future<void> loadJobs({String? search}) async {
+  Future<void> loadJobs({
+    int? projectId,
+    String? projectName,
+    int? activeSites,
+    String? search,
+  }) async {
     final query = search ?? state.searchQuery;
+    final effectiveProjectId = projectId ?? state.projectId;
     state = state.copyWith(
       isLoading: true,
       clearError: true,
       searchQuery: query,
+      projectId: effectiveProjectId,
+      projectName: projectName ?? state.projectName,
+      activeSites: activeSites ?? state.activeSites,
     );
     try {
-      final jobs = await _repository.fetchJobs(search: query);
+      final jobs = await _repository.fetchJobs(
+        projectId: effectiveProjectId,
+        search: query,
+      );
       final selectedJobId = jobs.any((job) => job.id == state.selectedJobId)
           ? state.selectedJobId
           : jobs.isEmpty

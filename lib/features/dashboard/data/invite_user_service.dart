@@ -1,56 +1,49 @@
-import 'dart:typed_data';
-
 import 'package:red5/core/network/auth_api_client.dart';
 
-/// Invite payload assembled from the invite form ([profilePhotoBytes] optional).
+/// Invite payload assembled from the invite form — matches `POST /auth/invite-user/`.
 final class InviteUserPayload {
   const InviteUserPayload({
+    required this.email,
     required this.firstName,
     required this.lastName,
-    required this.role,
+    required this.phoneNumber,
     required this.gender,
-    required this.dateOfBirth,
-    required this.phone,
-    required this.email,
-    required this.addressLine1,
-    required this.addressLine2,
-    required this.city,
+    required this.role,
+    required this.address1,
+    required this.address2,
+    required this.country,
     required this.state,
-    required this.zipCode,
-    this.profilePhotoBytes,
+    required this.city,
+    required this.pincode,
   });
 
+  final String email;
   final String firstName;
   final String lastName;
-  final String role;
+  final String phoneNumber;
   final String gender;
-  final String dateOfBirth;
-  final String phone;
-  final String email;
-  final String addressLine1;
-  final String addressLine2;
-  final String city;
+  final int role;
+  final String address1;
+  final String address2;
+  final String country;
   final String state;
-  final String zipCode;
-  final Uint8List? profilePhotoBytes;
+  final String city;
+  final String pincode;
 
-  /// Snake-cased fields matching the typical Django REST naming the backend
-  /// expects. `profile_photo` is intentionally omitted: the photo is sent
-  /// as a multipart file when present.
   Map<String, dynamic> toJson() => <String, dynamic>{
-    'first_name': firstName,
-    'last_name': lastName,
-    'role': role,
-    'gender': gender,
-    'date_of_birth': dateOfBirth,
-    'phone': phone,
-    'email': email,
-    'address_line1': addressLine1,
-    'address_line2': addressLine2,
-    'city': city,
-    'state': state,
-    'zip_code': zipCode,
-  };
+        'email': email,
+        'first_name': firstName,
+        'last_name': lastName,
+        'phone_number': phoneNumber,
+        'gender': gender,
+        'role': role,
+        'address1': address1,
+        'address2': address2,
+        'country': country,
+        'state': state,
+        'city': city,
+        'pincode': pincode,
+      };
 }
 
 /// Remote invite API — see [InviteUserApiService] for the live `POST /auth/invite-user/`
@@ -59,8 +52,7 @@ abstract class InviteUserService {
   Future<void> invite(InviteUserPayload payload);
 }
 
-/// Calls `POST /auth/invite-user/` via [AuthApiClient]. Sends multipart when
-/// [InviteUserPayload.profilePhotoBytes] is provided.
+/// Calls `POST /auth/invite-user/` via [AuthApiClient].
 final class InviteUserApiService implements InviteUserService {
   InviteUserApiService(this._client);
 
@@ -68,10 +60,7 @@ final class InviteUserApiService implements InviteUserService {
 
   @override
   Future<void> invite(InviteUserPayload payload) async {
-    await _client.inviteUser(
-      data: payload.toJson(),
-      profilePhotoBytes: payload.profilePhotoBytes,
-    );
+    await _client.inviteUser(data: payload.toJson());
   }
 }
 

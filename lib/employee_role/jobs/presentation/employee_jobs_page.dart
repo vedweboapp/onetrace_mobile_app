@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
@@ -60,10 +61,7 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
   }
 
   void _openDetails(EmployeeJobSummary job) {
-    context.push(
-      EmployeeJobDetailsPage.path,
-      extra: <String, Object?>{'jobId': job.id},
-    );
+    openEmployeeJob(context, job: job);
   }
 
   @override
@@ -91,10 +89,10 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
               children: [
                 const _FilterFields(),
                 const SizedBox(height: 18),
-                if (state.isLoading)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 80),
-                    child: Center(child: CircularProgressIndicator()),
+                if (state.isLoading && state.jobs.isEmpty)
+                  const AppSkeletonProjectsListBody(
+                    includeSearchAndFilters: false,
+                    cardCount: 5,
                   )
                 else if (state.errorMessage != null)
                   _JobsErrorState(

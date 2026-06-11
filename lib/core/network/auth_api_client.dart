@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
@@ -198,34 +196,11 @@ final class AuthApiClient {
     };
   }
 
-  /// Invite a new user. When [profilePhotoBytes] is provided the request is
-  /// sent as `multipart/form-data` so the photo can be uploaded alongside
-  /// [data]; otherwise it's a regular JSON POST.
+  /// Invite a new user (`POST /auth/invite-user/`).
   Future<Response<Map<String, dynamic>>> inviteUser({
     required Map<String, dynamic> data,
-    Uint8List? profilePhotoBytes,
-    String profilePhotoFieldName = 'profile_photo',
-    String profilePhotoFileName = 'profile.jpg',
     CancelToken? cancelToken,
   }) async {
-    if (profilePhotoBytes != null && profilePhotoBytes.isNotEmpty) {
-      final form = FormData.fromMap(<String, dynamic>{
-        ...data,
-        profilePhotoFieldName: MultipartFile.fromBytes(
-          profilePhotoBytes,
-          filename: profilePhotoFileName,
-        ),
-      });
-      return _dio.post<Map<String, dynamic>>(
-        AppApiUrls.authInviteUser,
-        data: form,
-        cancelToken: cancelToken,
-        options: Options(
-          contentType: 'multipart/form-data',
-          extra: _inviteSuccessToastExtra(data),
-        ),
-      );
-    }
     return _dio.post<Map<String, dynamic>>(
       AppApiUrls.authInviteUser,
       data: data,

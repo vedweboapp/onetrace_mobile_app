@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
@@ -10,6 +12,8 @@ import 'package:red5/features/dashboard/presentation/views/settings/settings_fea
 import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
 /// User directory: search, status filters, list, FAB — matches RED5 settings visual language.
 class UsersSettingsPage extends StatefulWidget {
@@ -32,7 +36,7 @@ class _UserRowData {
     required this.role,
     required this.createdByLabel,
     required this.directoryStatus,
-    this.useInitialsAvatar = false,
+    this.useInitialsAvatar = true,
   });
 
   final String name;
@@ -42,6 +46,34 @@ class _UserRowData {
 
   /// When true, show colored circle with initials; when false, gray person icon.
   final bool useInitialsAvatar;
+
+  factory _UserRowData.fromProfile(UserProfileModel profile) {
+    final name = '${profile.firstName} ${profile.lastName}'.trim();
+    final role = profile.role.trim().isNotEmpty ? profile.role.trim() : '—';
+    return _UserRowData(
+      name: name.isNotEmpty ? name : profile.email,
+      role: role,
+      createdByLabel: profile.email.isNotEmpty ? profile.email : '—',
+      directoryStatus: _directoryStatusFromProfile(profile),
+      useInitialsAvatar: name.isNotEmpty,
+    );
+  }
+}
+
+_UserDirectoryStatus _directoryStatusFromProfile(UserProfileModel profile) {
+  final status = profile.userDetail.inviteStatus.toLowerCase().trim();
+  if (status.contains('invit') ||
+      status == 'pending' ||
+      status == 'sent' ||
+      status == 'awaiting') {
+    return _UserDirectoryStatus.invited;
+  }
+  if (status == 'inactive' ||
+      status == 'disabled' ||
+      status == 'deactivated') {
+    return _UserDirectoryStatus.inactive;
+  }
+  return _UserDirectoryStatus.active;
 }
 
 class _UsersSettingsPageState extends State<UsersSettingsPage> {
@@ -49,48 +81,46 @@ class _UsersSettingsPageState extends State<UsersSettingsPage> {
   final TextEditingController _searchController = TextEditingController();
 
   _UserFilterTab _filterTab = _UserFilterTab.active;
+  List<_UserRowData> _allUsers = const [];
+  bool _loading = true;
+  String? _loadError;
 
-  static final List<_UserRowData> _allUsers = [
-    const _UserRowData(
-      name: 'Sarah Miller',
-      role: 'Lead Architect',
-      createdByLabel: 'Created By : Admin',
-      directoryStatus: _UserDirectoryStatus.inactive,
-    ),
-    const _UserRowData(
-      name: 'James Lee',
-      role: 'Senior Developer',
-      createdByLabel: 'Created By : Admin',
-      directoryStatus: _UserDirectoryStatus.active,
-      useInitialsAvatar: true,
-    ),
-    const _UserRowData(
-      name: 'Emily Johns',
-      role: 'Product Manager',
-      createdByLabel: 'Created By : Admin',
-      directoryStatus: _UserDirectoryStatus.invited,
-      useInitialsAvatar: true,
-    ),
-    const _UserRowData(
-      name: 'Michael Smith',
-      role: 'UI/UX Designer',
-      createdByLabel: 'Created By : Admin',
-      directoryStatus: _UserDirectoryStatus.inactive,
-    ),
-    const _UserRowData(
-      name: 'Anna Brown',
-      role: 'QA Tester',
-      createdByLabel: 'Created By : Admin',
-      directoryStatus: _UserDirectoryStatus.active,
-      useInitialsAvatar: true,
-    ),
-    const _UserRowData(
-      name: 'David Wilson',
-      role: 'Data Analyst',
-      createdByLabel: 'Created By : Admin',
-      directoryStatus: _UserDirectoryStatus.inactive,
-    ),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadUsers();
+  }
+
+  Future<void> _loadUsers() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final profiles = await sl<UserProfileApiClient>().fetchAllUserProfiles();
+      if (!mounted) return;
+      setState(() {
+        _allUsers = profiles.map(_UserRowData.fromProfile).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Could not load users. Please try again.',
+        );
+      });
+    }
+  }
+
+  Future<void> _openInviteUser() async {
+    final invited = await context.push<bool>(InviteUserPage.path);
+    if (invited == true && mounted) {
+      await _loadUsers();
+    }
+  }
 
   @override
   void dispose() {
@@ -175,7 +205,7 @@ class _UsersSettingsPageState extends State<UsersSettingsPage> {
       ),
       floatingActionButton: FloatingActionButton(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
-        onPressed: () => context.push(InviteUserPage.path),
+        onPressed: _loading ? null : _openInviteUser,
         backgroundColor: const Color(0xFF111111),
         foregroundColor: AppColors.white,
         elevation: 4,
@@ -248,17 +278,51 @@ class _UsersSettingsPageState extends State<UsersSettingsPage> {
             ),
           ),
           Expanded(
-            child: ListView.separated(
-              itemCount: _visibleUsers.length,
-              separatorBuilder: (_, _) => const Divider(
-                height: 1,
-                thickness: 1,
-                color: Color(0xFFE8E8EA),
-              ),
-              itemBuilder: (context, index) {
-                return _UserListTile(user: _visibleUsers[index]);
-              },
-            ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _loadError != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _loadError!,
+                                textAlign: TextAlign.center,
+                                style: AppFonts.bodyMedium(
+                                  color: const Color(0xFF6B7280),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              FilledButton(
+                                onPressed: _loadUsers,
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : _visibleUsers.isEmpty
+                        ? Center(
+                            child: Text(
+                              'No users found',
+                              style: AppFonts.bodyMedium(
+                                color: const Color(0xFF9CA3AF),
+                              ),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: _visibleUsers.length,
+                            separatorBuilder: (_, _) => const Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: Color(0xFFE8E8EA),
+                            ),
+                            itemBuilder: (context, index) {
+                              return _UserListTile(user: _visibleUsers[index]);
+                            },
+                          ),
           ),
         ],
       ),

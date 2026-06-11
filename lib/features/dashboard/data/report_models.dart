@@ -1,4 +1,4 @@
-enum ReportCategory {
+﻿enum ReportCategory {
   projects,
   jobs,
   quotations,
@@ -147,6 +147,7 @@ final class ReportListCardItem {
     required this.dueDate,
     this.progressLabel = 'PROGRESS',
     this.dueDateLabel = 'DUE DATE',
+    this.extraFields = const {},
   });
 
   final String id;
@@ -159,6 +160,7 @@ final class ReportListCardItem {
   final DateTime dueDate;
   final String progressLabel;
   final String dueDateLabel;
+  final Map<String, String> extraFields;
 
   bool matchesQuery(String query) {
     if (query.isEmpty) return true;
@@ -226,6 +228,12 @@ abstract final class ReportMockData {
   static ReportListItem detailForId(String id) =>
       reportById(id) ?? listItems.first;
 
+  static const newReportId = 'new';
+
+  static bool isNewReport(String id) => id == newReportId;
+
+  static List<ReportListCardItem> cardsForNewReport() => _projectStatusListCards;
+
   static ReportTableData tableFor(String reportId) {
     return _tablesByReportId[reportId] ?? _projectStatusTable;
   }
@@ -259,63 +267,54 @@ abstract final class ReportMockData {
         'Cloud Migration',
         'Infrastructure',
         'Alex Morgan',
-        'https://i.pravatar.cc/150?img=12',
       ),
       _projectRow(
         'mobile-app-v2',
         'Mobile App V2',
         'Product',
         'Jordan Lee',
-        'https://i.pravatar.cc/150?img=32',
       ),
       _projectRow(
         'security-audit',
         'Security Audit',
         'Compliance',
         'Sam Rivera',
-        'https://i.pravatar.cc/150?img=15',
       ),
       _projectRow(
         'data-analytics',
         'Data Analytics Dashboard',
         'Business Intelligence',
         'Taylor Brooks',
-        'https://i.pravatar.cc/150?img=47',
       ),
       _projectRow(
         'website-redesign',
         'Website Redesign',
         'Design',
         'Casey Nguyen',
-        'https://i.pravatar.cc/150?img=5',
       ),
       _projectRow(
         'ai-chatbot',
         'AI Chatbot Implementation',
         'Technology',
         'Morgan Patel',
-        'https://i.pravatar.cc/150?img=21',
       ),
       _projectRow(
         'ecommerce-upgrade',
         'E-commerce Platform Upgrade',
         'Development',
         'Riley Chen',
-        'https://i.pravatar.cc/150?img=38',
       ),
       _projectRow(
         'social-media',
         'Social Media Strategy',
         'Marketing',
         'Avery Kim',
-        'https://i.pravatar.cc/150?img=9',
       ),
       _projectRow(
         'crm-overhaul',
         'CRM System Overhaul',
         'Sales',
         'Drew Martinez',
-        'https://i.pravatar.cc/150?img=27',
       ),
     ],
   );
@@ -325,7 +324,6 @@ abstract final class ReportMockData {
     String name,
     String department,
     String client,
-    String avatarUrl,
   ) {
     return ReportTableRow(
       id: id,
@@ -334,10 +332,7 @@ abstract final class ReportMockData {
           primary: name,
           secondary: department,
         ),
-        'client': ReportTableCell.avatar(
-          primary: client,
-          avatarUrl: avatarUrl,
-        ),
+        'client': ReportTableCell.avatar(primary: client),
       },
     );
   }
@@ -369,19 +364,17 @@ abstract final class ReportMockData {
     rows: [
       _jobRow(
         'hvac-install',
-        'HVAC Install — Block A',
-        'Site A · Level 2',
+        'HVAC Install â€” Block A',
+        'Site A Â· Level 2',
         'In Progress',
         'Chris Hall',
-        'https://i.pravatar.cc/150?img=11',
       ),
       _jobRow(
         'electrical-rough',
         'Electrical Rough-In',
-        'Site B · Wing 1',
+        'Site B Â· Wing 1',
         'Completed',
         'Jamie Fox',
-        'https://i.pravatar.cc/150?img=22',
       ),
       _jobRow(
         'plumbing-fit',
@@ -389,15 +382,13 @@ abstract final class ReportMockData {
         'Site C',
         'Pending',
         'Pat Ellis',
-        'https://i.pravatar.cc/150?img=33',
       ),
       _jobRow(
         'fire-safety',
         'Fire Safety Inspection',
-        'Site A · Roof',
+        'Site A Â· Roof',
         'Scheduled',
         'Quinn Adams',
-        'https://i.pravatar.cc/150?img=44',
       ),
       _jobRow(
         'roof-waterproof',
@@ -405,7 +396,6 @@ abstract final class ReportMockData {
         'Site D',
         'In Progress',
         'Blake Turner',
-        'https://i.pravatar.cc/150?img=55',
       ),
     ],
   );
@@ -416,17 +406,13 @@ abstract final class ReportMockData {
     String location,
     String status,
     String technician,
-    String avatarUrl,
   ) {
     return ReportTableRow(
       id: id,
       cells: {
         'job': ReportTableCell.stacked(primary: job, secondary: location),
         'status': ReportTableCell.text(status),
-        'technician': ReportTableCell.avatar(
-          primary: technician,
-          avatarUrl: avatarUrl,
-        ),
+        'technician': ReportTableCell.avatar(primary: technician),
       },
     );
   }
@@ -462,7 +448,6 @@ abstract final class ReportMockData {
         'Tower Fit-Out',
         'Sent',
         'Northline Corp',
-        'https://i.pravatar.cc/150?img=18',
       ),
       _quoteRow(
         'quote-1038',
@@ -470,7 +455,6 @@ abstract final class ReportMockData {
         'Site Services',
         'Under Review',
         'Harbor Industries',
-        'https://i.pravatar.cc/150?img=28',
       ),
       _quoteRow(
         'quote-1031',
@@ -478,7 +462,6 @@ abstract final class ReportMockData {
         'Maintenance Plan',
         'Won',
         'Summit Holdings',
-        'https://i.pravatar.cc/150?img=39',
       ),
       _quoteRow(
         'quote-1024',
@@ -486,7 +469,6 @@ abstract final class ReportMockData {
         'Equipment Lease',
         'Draft',
         'Blue Ridge LLC',
-        'https://i.pravatar.cc/150?img=49',
       ),
     ],
   );
@@ -497,17 +479,13 @@ abstract final class ReportMockData {
     String title,
     String status,
     String client,
-    String avatarUrl,
   ) {
     return ReportTableRow(
       id: id,
       cells: {
         'quotation': ReportTableCell.stacked(primary: code, secondary: title),
         'status': ReportTableCell.text(status),
-        'client': ReportTableCell.avatar(
-          primary: client,
-          avatarUrl: avatarUrl,
-        ),
+        'client': ReportTableCell.avatar(primary: client),
       },
     );
   }
@@ -531,6 +509,7 @@ abstract final class ReportMockData {
     required DateTime dueDate,
     String progressLabel = 'PROGRESS',
     String dueDateLabel = 'DUE DATE',
+    Map<String, String>? extraFields,
   }) {
     return ReportListCardItem(
       id: id,
@@ -543,8 +522,50 @@ abstract final class ReportMockData {
       dueDate: dueDate,
       progressLabel: progressLabel,
       dueDateLabel: dueDateLabel,
+      extraFields: extraFields ?? _sampleExtraFields(id, subtitle),
     );
   }
+
+  static Map<String, String> _sampleExtraFields(String id, String subtitle) {
+    return {
+      'address': '1200 Market St, Suite 400',
+      'address_city': 'San Francisco',
+      'address_state': 'CA',
+      'address_zip': '94103',
+      'address_country': 'United States',
+      'address_latitude': '37.7749',
+      'address_longitude': '-122.4194',
+      'description': 'Project scope and delivery tracking for $id.',
+      'phone_number': '+1 (415) 555-0182',
+      'email': 'contact@example.com',
+      'site_name': 'Downtown Hub',
+      'what3words': 'index.home.raft',
+      'quote_name': 'Q-${id.hashCode.abs() % 9000 + 1000}',
+      'order_number': 'ORD-${id.hashCode.abs() % 500 + 100}',
+      'salesperson': 'Alex Morgan',
+      'project_manager': assigneeNameFromId(id),
+      'tags': subtitle,
+      'technicians': 'Team Alpha',
+      'customer_id': 'CUST-${id.hashCode.abs() % 9999}',
+      'job_title': 'Site Coordinator',
+      'assigned_worker': assigneeNameFromId(id),
+      'project_type': subtitle,
+      'group_name': 'Operations',
+      'composite_item': 'Standard Kit',
+      'item_name': 'Service Package',
+      'sku': 'SKU-${id.substring(0, 3).toUpperCase()}',
+      'quantity': '12',
+      'cost_price': r'$4,200',
+      'selling_price': r'$6,800',
+      'composite_items': '3 items',
+    };
+  }
+
+  static String assigneeNameFromId(String id) => switch (id) {
+        'cloud-migration' => 'Michael Chen',
+        'mobile-app-v2' => 'Sarah Jenkins',
+        _ => 'Michael Chen',
+      };
 
   static final _projectStatusListCards = [
     _listCard(
@@ -553,7 +574,6 @@ abstract final class ReportMockData {
       subtitle: 'Infrastructure',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Michael Chen',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=12',
       progressPercent: 75,
       dueDate: DateTime(2023, 12, 15),
     ),
@@ -563,7 +583,6 @@ abstract final class ReportMockData {
       subtitle: 'Product',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Sarah Jenkins',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=32',
       progressPercent: 40,
       dueDate: DateTime(2023, 11, 30),
     ),
@@ -573,7 +592,6 @@ abstract final class ReportMockData {
       subtitle: 'Compliance',
       status: ReportSummaryLifecycleStatus.inactive,
       assigneeName: 'Michael Chen',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=15',
       progressPercent: 15,
       dueDate: DateTime(2023, 10, 25),
     ),
@@ -583,7 +601,6 @@ abstract final class ReportMockData {
       subtitle: 'Business Intelligence',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Taylor Brooks',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=47',
       progressPercent: 62,
       dueDate: DateTime(2024, 1, 8),
     ),
@@ -593,7 +610,6 @@ abstract final class ReportMockData {
       subtitle: 'Design',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Casey Nguyen',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=5',
       progressPercent: 88,
       dueDate: DateTime(2024, 2, 14),
     ),
@@ -603,7 +619,6 @@ abstract final class ReportMockData {
       subtitle: 'Technology',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Morgan Patel',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=21',
       progressPercent: 33,
       dueDate: DateTime(2024, 3, 20),
     ),
@@ -613,7 +628,6 @@ abstract final class ReportMockData {
       subtitle: 'Development',
       status: ReportSummaryLifecycleStatus.inactive,
       assigneeName: 'Riley Chen',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=38',
       progressPercent: 10,
       dueDate: DateTime(2023, 9, 5),
     ),
@@ -623,7 +637,6 @@ abstract final class ReportMockData {
       subtitle: 'Marketing',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Avery Kim',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=9',
       progressPercent: 55,
       dueDate: DateTime(2024, 4, 2),
     ),
@@ -633,7 +646,6 @@ abstract final class ReportMockData {
       subtitle: 'Sales',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Drew Martinez',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=27',
       progressPercent: 48,
       dueDate: DateTime(2024, 5, 18),
     ),
@@ -642,11 +654,10 @@ abstract final class ReportMockData {
   static final _jobCompletionListCards = [
     _listCard(
       id: 'hvac-install',
-      title: 'HVAC Install — Block A',
-      subtitle: 'Site A · Level 2',
+      title: 'HVAC Install â€” Block A',
+      subtitle: 'Site A Â· Level 2',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Chris Hall',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=11',
       progressPercent: 65,
       dueDate: DateTime(2024, 6, 12),
       progressLabel: 'COMPLETION',
@@ -654,10 +665,9 @@ abstract final class ReportMockData {
     _listCard(
       id: 'electrical-rough',
       title: 'Electrical Rough-In',
-      subtitle: 'Site B · Wing 1',
+      subtitle: 'Site B Â· Wing 1',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Jamie Fox',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=22',
       progressPercent: 100,
       dueDate: DateTime(2024, 5, 30),
       progressLabel: 'COMPLETION',
@@ -668,7 +678,6 @@ abstract final class ReportMockData {
       subtitle: 'Site C',
       status: ReportSummaryLifecycleStatus.inactive,
       assigneeName: 'Pat Ellis',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=33',
       progressPercent: 0,
       dueDate: DateTime(2024, 7, 1),
       progressLabel: 'COMPLETION',
@@ -676,10 +685,9 @@ abstract final class ReportMockData {
     _listCard(
       id: 'fire-safety',
       title: 'Fire Safety Inspection',
-      subtitle: 'Site A · Roof',
+      subtitle: 'Site A Â· Roof',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Quinn Adams',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=44',
       progressPercent: 20,
       dueDate: DateTime(2024, 6, 20),
       progressLabel: 'COMPLETION',
@@ -690,7 +698,6 @@ abstract final class ReportMockData {
       subtitle: 'Site D',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Blake Turner',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=55',
       progressPercent: 52,
       dueDate: DateTime(2024, 6, 28),
       progressLabel: 'COMPLETION',
@@ -704,7 +711,6 @@ abstract final class ReportMockData {
       subtitle: 'Tower Fit-Out',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Northline Corp',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=18',
       progressPercent: 80,
       dueDate: DateTime(2024, 8, 15),
       progressLabel: 'WIN RATE',
@@ -716,7 +722,6 @@ abstract final class ReportMockData {
       subtitle: 'Site Services',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Harbor Industries',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=28',
       progressPercent: 45,
       dueDate: DateTime(2024, 7, 22),
       progressLabel: 'WIN RATE',
@@ -728,7 +733,6 @@ abstract final class ReportMockData {
       subtitle: 'Maintenance Plan',
       status: ReportSummaryLifecycleStatus.active,
       assigneeName: 'Summit Holdings',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=39',
       progressPercent: 100,
       dueDate: DateTime(2024, 6, 10),
       progressLabel: 'WIN RATE',
@@ -740,7 +744,6 @@ abstract final class ReportMockData {
       subtitle: 'Equipment Lease',
       status: ReportSummaryLifecycleStatus.inactive,
       assigneeName: 'Blue Ridge LLC',
-      assigneeAvatarUrl: 'https://i.pravatar.cc/150?img=49',
       progressPercent: 12,
       dueDate: DateTime(2024, 5, 5),
       progressLabel: 'WIN RATE',

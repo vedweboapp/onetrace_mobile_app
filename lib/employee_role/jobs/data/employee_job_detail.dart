@@ -9,8 +9,11 @@ final class EmployeeJobDetail {
     required this.block,
     required this.plot,
     required this.description,
-    required this.materials,
+    required this.items,
     required this.safetyChecklist,
+    this.formId,
+    this.formIds = const [],
+    this.projectId,
   });
 
   final int id;
@@ -22,8 +25,32 @@ final class EmployeeJobDetail {
   final String block;
   final String plot;
   final String description;
-  final List<EmployeeJobMaterial> materials;
+  final List<EmployeeJobItem> items;
   final List<EmployeeSafetyChecklistItem> safetyChecklist;
+  final int? formId;
+  final List<int> formIds;
+  final int? projectId;
+
+  List<int> get linkedFormIds {
+    if (formIds.isNotEmpty) return formIds;
+    if (formId != null) return [formId!];
+    return const [];
+  }
+}
+
+/// Mandatory pre-start safety checks shown before the job timer begins.
+abstract final class EmployeeJobPreStartSafetyChecklist {
+  EmployeeJobPreStartSafetyChecklist._();
+
+  static const items = [
+    EmployeeSafetyChecklistItem(id: 'ppe', title: 'Wearing PPE'),
+    EmployeeSafetyChecklistItem(id: 'equipment', title: 'Equipment Inspected'),
+    EmployeeSafetyChecklistItem(id: 'work_area', title: 'Work Area Clear'),
+    EmployeeSafetyChecklistItem(
+      id: 'safety_guard',
+      title: 'Safety Guard in Place',
+    ),
+  ];
 }
 
 final class EmployeeJobSummary {
@@ -35,6 +62,7 @@ final class EmployeeJobSummary {
     required this.location,
     required this.schedule,
     required this.primaryActionLabel,
+    this.startDate,
   });
 
   final int id;
@@ -44,6 +72,7 @@ final class EmployeeJobSummary {
   final String location;
   final String schedule;
   final String primaryActionLabel;
+  final DateTime? startDate;
 }
 
 enum EmployeeJobStatus {
@@ -57,16 +86,28 @@ enum EmployeeJobStatus {
   final String label;
 }
 
-final class EmployeeJobMaterial {
-  const EmployeeJobMaterial({
+final class EmployeeJobItem {
+  const EmployeeJobItem({
     required this.name,
-    required this.quantity,
+    required this.quantityLabel,
     required this.iconName,
   });
 
   final String name;
-  final String quantity;
+  final String quantityLabel;
   final String iconName;
+}
+
+final class EmployeeRequiredFormItem {
+  const EmployeeRequiredFormItem({
+    required this.id,
+    required this.title,
+    required this.isComplete,
+  });
+
+  final String id;
+  final String title;
+  final bool isComplete;
 }
 
 final class EmployeeSafetyChecklistItem {

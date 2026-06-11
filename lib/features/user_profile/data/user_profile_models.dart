@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:red5/features/user_profile/data/role_models.dart';
 
 /// One row from `communications` on user profile GET/PUT.
 @immutable
@@ -264,6 +265,7 @@ class UserProfileModel {
     required this.userDetail,
     required this.role,
     required this.roleId,
+    this.roleDetail,
     required this.organizationDetail,
     required this.appearanceSettings,
     required this.dateOfBirth,
@@ -283,6 +285,8 @@ class UserProfileModel {
   final String role;
   /// FK to `/api/v1/role/` when API returns int or nested role object.
   final String roleId;
+  /// Nested `role_detail` from `/user-profile/`.
+  final RoleDetailModel? roleDetail;
   final OrganizationDetailModel? organizationDetail;
   final AppearanceSettingsModel? appearanceSettings;
   final String dateOfBirth;
@@ -336,14 +340,20 @@ class UserProfileModel {
     final detail = UserDetail.fromJson(merged);
 
     final parsedRole = _parseRoleFields(json, merged);
+    final roleDetail = _parseRoleDetail(json);
     final organizationDetail = _parseOrganizationDetail(json);
     final appearanceSettings = _parseAppearanceSettings(json);
 
     return UserProfileModel(
       id: id.isNotEmpty ? id : detail.id,
       userDetail: detail,
-      role: parsedRole.displayName,
-      roleId: parsedRole.roleId,
+      role: parsedRole.displayName.isNotEmpty
+          ? parsedRole.displayName
+          : (roleDetail?.roleName ?? ''),
+      roleId: parsedRole.roleId.isNotEmpty
+          ? parsedRole.roleId
+          : (roleDetail?.id ?? ''),
+      roleDetail: roleDetail,
       organizationDetail: organizationDetail,
       appearanceSettings: appearanceSettings,
       dateOfBirth: _readString(json, const [
@@ -373,6 +383,14 @@ class UserProfileModel {
       ]),
       communications: communications,
       addresses: addresses,
+    );
+  }
+
+  static RoleDetailModel? _parseRoleDetail(Map<String, dynamic> json) {
+    final raw = json['role_detail'] ?? json['role_details'];
+    if (raw is! Map) return null;
+    return RoleDetailModel.fromJson(
+      Map<String, dynamic>.from(raw.map((k, v) => MapEntry(k.toString(), v))),
     );
   }
 

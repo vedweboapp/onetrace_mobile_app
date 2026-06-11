@@ -106,6 +106,11 @@ class AppStrings {
   // --- API / network (user-visible) ---
   static const apiErrorNetwork =
       'No internet connection. Check your network and try again.';
+  static const connectivityOfflineTitle = 'No internet connection';
+  static const connectivityOfflineSubtitle =
+      'Check your Wi‑Fi or mobile data and try again.';
+  static const connectivityOnlineTitle = 'Connected';
+  static const connectivityOnlineSubtitle = "You're back online";
   static const apiErrorTimeout =
       'The request took too long. Please try again.';
   static const apiErrorBadCertificate =

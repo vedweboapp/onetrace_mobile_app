@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
+import 'package:red5/core/auth/user_role_navigation.dart';
 import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/auth_api_client.dart';
@@ -14,6 +15,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/employee_role/data/role_session.dart';
 
 class SplashPage extends StatefulWidget {
@@ -56,13 +58,25 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
     final storage = container.read(localStorageProvider);
     final authApi = container.read(authApiClientProvider);
 
-    final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
-    if (AuthSession.isJwtValid(access)) {
+    Future<void> goHomeForSession() async {
       if (!mounted) return;
       sl<AuthRedirectNotifier>().notifyAuthChanged();
-      context.go(
-        RoleSession.homePathForStoredRole(storage) ?? DashboardPage.homePath,
-      );
+      try {
+        final homePath = await UserRoleNavigation.resolveAndPersistHomePath(
+          storage: storage,
+          profileClient: sl<UserProfileApiClient>(),
+        );
+        if (!mounted) return;
+        context.go(homePath);
+      } catch (_) {
+        if (!mounted) return;
+        context.go(RoleSession.homePathForStoredRole(storage));
+      }
+    }
+
+    final access = storage.getString(LocalStorageKeys.authAccessToken)?.trim();
+    if (AuthSession.isJwtValid(access)) {
+      await goHomeForSession();
       return;
     }
 
@@ -87,12 +101,7 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
               newRefresh,
             );
           }
-          if (!mounted) return;
-          sl<AuthRedirectNotifier>().notifyAuthChanged();
-          context.go(
-            RoleSession.homePathForStoredRole(storage) ??
-                DashboardPage.homePath,
-          );
+          await goHomeForSession();
           return;
         }
       } catch (_) {

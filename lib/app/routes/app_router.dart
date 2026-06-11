@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/app/routes/route_observers.dart';
 import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
+import 'package:red5/core/auth/user_role_navigation.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/widgets/app_navigator_key.dart';
 import 'package:red5/core/storage/local_storage.dart';
@@ -56,6 +57,13 @@ import 'package:red5/features/dashboard/presentation/views/bill_detail_page.dart
 import 'package:red5/features/dashboard/presentation/views/bill_preview_page.dart';
 import 'package:red5/features/vendors/presentation/views/add_vendor_page.dart';
 import 'package:red5/features/vendors/presentation/views/vendor_detail_page.dart';
+import 'package:red5/features/dashboard/data/report_chart_config.dart';
+import 'package:red5/features/dispatch/presentation/views/create_dispatch_page.dart';
+import 'package:red5/features/dispatch/presentation/views/dispatch_detail_page.dart';
+import 'package:red5/features/material_requests/presentation/views/create_material_request_page.dart';
+import 'package:red5/features/material_requests/presentation/views/material_request_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/report_configure_page.dart';
+import 'package:red5/features/dashboard/presentation/views/widgets/create_new_report_dialog.dart';
 import 'package:red5/features/dashboard/presentation/views/report_summary_page.dart';
 import 'package:red5/features/dashboard/presentation/views/report_create_chart_page.dart';
 import 'package:red5/features/dashboard/presentation/views/purchase_order_detail_page.dart';
@@ -77,6 +85,8 @@ import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_confirmation_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_form_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_safety_verification_page.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
@@ -128,7 +138,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // Always allow splash + login flow routes.
       if (isSplash || isLoginFlow) {
         if (isLoggedIn && isLoginFlow) {
-          return roleHomePath ?? DashboardPage.homePath;
+          return roleHomePath;
         }
         return null;
       }
@@ -136,13 +146,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // Block all other routes when not authenticated.
       if (!isLoggedIn) return LoginPage.path;
 
+      final appShell = RoleSession.readAppShell(storage);
+      if (appShell == AppShell.admin &&
+          location.startsWith(TechnicianHomePage.path)) {
+        return DashboardPage.homePath;
+      }
+      if (appShell == AppShell.employee &&
+          (location == DashboardPage.path ||
+              location == DashboardPage.homePath)) {
+        return roleHomePath;
+      }
+
       // Canonical post-login URL is /home (same shell as /dashboard).
       if (isLoggedIn && location == DashboardPage.path) {
-        return roleHomePath ?? DashboardPage.homePath;
+        return roleHomePath;
       }
       if (isLoggedIn &&
           location == DashboardPage.homePath &&
-          roleHomePath != null) {
+          roleHomePath != DashboardPage.homePath) {
         return roleHomePath;
       }
       return null;
@@ -260,11 +281,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: EmployeeProjectMapPage.path,
         name: EmployeeProjectMapPage.name,
         pageBuilder: (context, state) {
-          var projectName = 'Riverside Tower';
-          var activeSites = 3;
+          var projectName = 'Project';
+          var activeSites = 0;
+          int? projectId;
           final extra = state.extra;
           if (extra is Map) {
             final m = Map<String, dynamic>.from(extra);
+            final rawProjectId = m['projectId'];
+            if (rawProjectId is int) {
+              projectId = rawProjectId;
+            } else if (rawProjectId != null) {
+              projectId = int.tryParse(rawProjectId.toString().trim());
+            }
             final rawProjectName = m['projectName'];
             if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
               projectName = rawProjectName.trim();
@@ -280,6 +308,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return _animatedPage(
             state: state,
             child: EmployeeProjectMapPage(
+              projectId: projectId,
               projectName: projectName,
               activeSites: activeSites,
             ),
@@ -292,18 +321,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: EmployeeProjectDetailsPage.name,
         pageBuilder: (context, state) {
           String? projectName;
+          int? projectId;
           final extra = state.extra;
           if (extra is Map) {
-            final rawProjectName = Map<String, dynamic>.from(
-              extra,
-            )['projectName'];
+            final map = Map<String, dynamic>.from(extra);
+            final rawProjectName = map['projectName'];
             if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
               projectName = rawProjectName.trim();
+            }
+            final rawProjectId = map['projectId'];
+            if (rawProjectId is int) {
+              projectId = rawProjectId;
+            } else if (rawProjectId != null) {
+              projectId = int.tryParse(rawProjectId.toString().trim());
             }
           }
           return _animatedPage(
             state: state,
-            child: EmployeeProjectDetailsPage(projectName: projectName),
+            child: EmployeeProjectDetailsPage(
+              projectId: projectId,
+              projectName: projectName,
+            ),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -325,6 +363,59 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return _animatedPage(
             state: state,
             child: EmployeeJobDetailsPage(jobId: jobId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeJobSafetyVerificationPage.path,
+        name: EmployeeJobSafetyVerificationPage.name,
+        pageBuilder: (context, state) {
+          int? jobId;
+          final extra = state.extra;
+          if (extra is Map) {
+            final rawJobId = Map<String, dynamic>.from(extra)['jobId'];
+            if (rawJobId is int) {
+              jobId = rawJobId;
+            } else if (rawJobId != null) {
+              jobId = int.tryParse(rawJobId.toString().trim());
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeJobSafetyVerificationPage(jobId: jobId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeJobFormPage.path,
+        name: EmployeeJobFormPage.name,
+        pageBuilder: (context, state) {
+          int? formId;
+          int? jobId;
+          final extra = state.extra;
+          if (extra is Map) {
+            final map = Map<String, dynamic>.from(extra);
+            final rawFormId = map['formId'];
+            if (rawFormId is int) {
+              formId = rawFormId;
+            } else if (rawFormId != null) {
+              formId = int.tryParse(rawFormId.toString().trim());
+            }
+            final rawJobId = map['jobId'];
+            if (rawJobId is int) {
+              jobId = rawJobId;
+            } else if (rawJobId != null) {
+              jobId = int.tryParse(rawJobId.toString().trim());
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeJobFormPage(
+              formId: formId ?? 0,
+              jobId: jobId,
+            ),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -617,6 +708,62 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: CreateMaterialRequestPage.path,
+        name: CreateMaterialRequestPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const CreateMaterialRequestPage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: '${MaterialRequestDetailPage.pathPrefix}/:materialRequestId',
+        name: MaterialRequestDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['materialRequestId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: MaterialRequestDetailPage(materialRequestId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: CreateDispatchPage.path,
+        name: CreateDispatchPage.name,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          CreateDispatchRouteExtra? routeExtra;
+          if (extra is CreateDispatchRouteExtra) {
+            routeExtra = extra;
+          }
+          return _animatedPage(
+            state: state,
+            child: CreateDispatchPage(
+              initialMaterialRequestId: routeExtra?.materialRequestId,
+              initialDispatchTo: routeExtra?.dispatchTo,
+            ),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${DispatchDetailPage.pathPrefix}/:dispatchId',
+        name: DispatchDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['dispatchId'] ?? '').trim(),
+          );
+          return _animatedPage(
+            state: state,
+            child: DispatchDetailPage(dispatchId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: AddBillPage.path,
         name: AddBillPage.name,
         pageBuilder: (context, state) => _animatedPage(
@@ -660,13 +807,52 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final id = Uri.decodeComponent(
             (state.pathParameters['reportId'] ?? '').trim(),
           );
+          final extra = state.extra;
+          ReportSummaryRouteExtra? routeExtra;
+          if (extra is ReportSummaryRouteExtra) {
+            routeExtra = extra;
+          }
           return _animatedPage(
             state: state,
-            child: ReportSummaryPage(reportId: id),
+            child: ReportSummaryPage(
+              reportId: id,
+              primaryModule: routeExtra?.primaryModule,
+              initialColumnKeys: routeExtra?.columnKeys,
+            ),
             beginOffset: const Offset(0.08, 0),
           );
         },
         routes: [
+          GoRoute(
+            path: 'configure',
+            name: ReportConfigurePage.name,
+            pageBuilder: (context, state) {
+              final id = Uri.decodeComponent(
+                (state.pathParameters['reportId'] ?? '').trim(),
+              );
+              final extra = state.extra;
+              if (extra is! ReportConfigureRouteExtra) {
+                return _animatedPage(
+                  state: state,
+                  child: ReportConfigurePage(
+                    reportId: id,
+                    primaryModule: ReportPrimaryModule.leads,
+                  ),
+                  beginOffset: const Offset(0.08, 0),
+                );
+              }
+              return _animatedPage(
+                state: state,
+                child: ReportConfigurePage(
+                  reportId: id,
+                  primaryModule: extra.primaryModule,
+                  initialState: extra.initialState,
+                  replaceOnGenerate: extra.replaceOnGenerate,
+                ),
+                beginOffset: const Offset(0.08, 0),
+              );
+            },
+          ),
           GoRoute(
             path: 'create-chart',
             name: ReportCreateChartPage.name,
@@ -674,9 +860,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               final id = Uri.decodeComponent(
                 (state.pathParameters['reportId'] ?? '').trim(),
               );
+              final extra = state.extra;
               return _animatedPage(
                 state: state,
-                child: ReportCreateChartPage(reportId: id),
+                child: ReportCreateChartPage(
+                  reportId: id,
+                  initialConfig:
+                      extra is ReportChartConfig ? extra : null,
+                ),
                 beginOffset: const Offset(0, 0.08),
               );
             },

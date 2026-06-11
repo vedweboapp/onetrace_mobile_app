@@ -91,7 +91,13 @@ abstract final class EmployeePersonalProfilePlaceholder {
     );
   }
 
-  static String roleLabelFromStorage(String? roleSlug) {
-    return AppRole.fromSlug(roleSlug)?.label ?? 'Technician';
+  static String roleLabelFromStorage(String? roleSlugOrName) {
+    final stored = roleSlugOrName?.trim() ?? '';
+    if (stored.isEmpty) return 'Technician';
+    final fromSlug = AppRole.fromSlug(stored);
+    if (fromSlug != null) return fromSlug.label;
+    final fromName = AppRole.fromRoleName(stored);
+    if (fromName != null) return fromName.label;
+    return stored;
   }
 }

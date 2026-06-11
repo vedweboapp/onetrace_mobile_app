@@ -523,3 +523,95 @@ final class AppSkeletonScreenBody extends StatelessWidget {
     );
   }
 }
+
+/// Project / job card placeholder matching technician list cards.
+final class AppSkeletonProjectCard extends StatelessWidget {
+  const AppSkeletonProjectCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: AppSkeletonGradientBox(
+                  width: double.infinity,
+                  height: 22,
+                  borderRadius: 8,
+                ),
+              ),
+              SizedBox(width: 10),
+              AppSkeletonGradientBox(width: 72, height: 22, borderRadius: 6),
+            ],
+          ),
+          SizedBox(height: 12),
+          AppSkeletonGradientBox(width: 200, height: 14, borderRadius: 8),
+          SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerRight,
+            child: AppSkeletonGradientBox(width: 88, height: 16, borderRadius: 8),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Search + filter chips + stacked project cards (technician projects tab).
+final class AppSkeletonProjectsListBody extends StatelessWidget {
+  const AppSkeletonProjectsListBody({
+    super.key,
+    this.padding = const EdgeInsets.fromLTRB(18, 8, 18, 20),
+    this.cardCount = 4,
+    this.includeSearchAndFilters = true,
+  });
+
+  final EdgeInsets padding;
+  final int cardCount;
+  final bool includeSearchAndFilters;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = cardCount.clamp(1, 8);
+    return ListView(
+      padding: padding,
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
+      children: [
+        if (includeSearchAndFilters) ...[
+          const AppSkeletonGradientBox(
+            width: double.infinity,
+            height: 48,
+            borderRadius: 13,
+          ),
+          const SizedBox(height: 14),
+          const Row(
+            children: [
+              AppSkeletonGradientBox(width: 56, height: 38, borderRadius: 999),
+              SizedBox(width: 10),
+              AppSkeletonGradientBox(width: 72, height: 38, borderRadius: 999),
+              SizedBox(width: 10),
+              AppSkeletonGradientBox(width: 96, height: 38, borderRadius: 999),
+            ],
+          ),
+          const SizedBox(height: 18),
+        ],
+        for (var i = 0; i < n; i++) ...[
+          if (i > 0) const SizedBox(height: 16),
+          const AppSkeletonProjectCard(),
+        ],
+      ],
+    );
+  }
+}

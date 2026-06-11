@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
+import 'package:red5/core/auth/user_role_navigation.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -23,11 +24,10 @@ import 'package:red5/core/widgets/app_button.dart';
 import 'package:red5/core/widgets/app_frosted_panel.dart';
 import 'package:red5/core/widgets/app_screen_stack.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
-import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/features/login/presentation/views/forgot_password_page.dart';
 import 'package:red5/features/login/presentation/views/otp_verify_page.dart';
 import 'package:red5/features/login/presentation/widgets/signup_bottom_sheet.dart';
-import 'package:red5/employee_role/data/app_role.dart';
 import 'package:red5/employee_role/data/role_session.dart';
 import 'package:red5/employee_role/data/static_role_accounts.dart';
 
@@ -277,7 +277,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         }
         if (!mounted) return;
         sl<AuthRedirectNotifier>().notifyAuthChanged();
-        context.go(RoleSession.homePathFor(staticAccount.role));
+        context.go(
+          UserRoleNavigation.homePathForRoleName(staticAccount.role.label),
+        );
         return;
       }
 
@@ -333,12 +335,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         storage,
         AuthSession.readOrganizationId(payload),
       );
-      final role = AppRole.fromSlug(AuthSession.readRoleSlug(payload));
-      if (role != null) {
-        await RoleSession.persistRole(storage, role);
-      } else {
-        await RoleSession.clearRole(storage);
-      }
+      final homePath = await UserRoleNavigation.resolveAndPersistHomePath(
+        storage: storage,
+        profileClient: sl<UserProfileApiClient>(),
+      );
       if (_rememberMe) {
         await storage.setBool(LocalStorageKeys.authRememberMe, true);
         await storage.setString(
@@ -352,9 +352,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
       if (!mounted) return;
       sl<AuthRedirectNotifier>().notifyAuthChanged();
-      context.go(
-        role == null ? DashboardPage.homePath : RoleSession.homePathFor(role),
-      );
+      context.go(homePath);
     } on DioException catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(

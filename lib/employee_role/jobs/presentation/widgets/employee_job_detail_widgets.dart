@@ -117,10 +117,10 @@ class _DetailPair extends StatelessWidget {
   }
 }
 
-class EmployeeMaterialsCard extends StatelessWidget {
-  const EmployeeMaterialsCard({super.key, required this.materials});
+class EmployeeJobItemsCard extends StatelessWidget {
+  const EmployeeJobItemsCard({super.key, required this.items});
 
-  final List<EmployeeJobMaterial> materials;
+  final List<EmployeeJobItem> items;
 
   @override
   Widget build(BuildContext context) {
@@ -128,7 +128,7 @@ class EmployeeMaterialsCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Materials Required',
+          'Items',
           style: AppFonts.titleMedium(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w900, fontSize: 18),
@@ -142,9 +142,9 @@ class EmployeeMaterialsCard extends StatelessWidget {
           ),
           child: Column(
             children: [
-              for (final material in materials) ...[
-                _MaterialRow(material: material),
-                if (material != materials.last) const SizedBox(height: 12),
+              for (final item in items) ...[
+                _JobItemRow(item: item),
+                if (item != items.last) const SizedBox(height: 12),
               ],
             ],
           ),
@@ -154,10 +154,18 @@ class EmployeeMaterialsCard extends StatelessWidget {
   }
 }
 
-class _MaterialRow extends StatelessWidget {
-  const _MaterialRow({required this.material});
+class _JobItemRow extends StatelessWidget {
+  const _JobItemRow({required this.item});
 
-  final EmployeeJobMaterial material;
+  final EmployeeJobItem item;
+
+  IconData get _icon {
+    return switch (item.iconName) {
+      'wire' => Icons.link_rounded,
+      'sensor' => Icons.sensors_rounded,
+      _ => Icons.inventory_2_outlined,
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -172,9 +180,7 @@ class _MaterialRow extends StatelessWidget {
             border: Border.all(color: AppColors.borderLight),
           ),
           child: Icon(
-            material.iconName == 'wire'
-                ? Icons.cable_rounded
-                : Icons.sensors_rounded,
+            _icon,
             size: 16,
             color: AppColors.muted,
           ),
@@ -182,14 +188,14 @@ class _MaterialRow extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            material.name,
+            item.name,
             style: AppFonts.bodyMedium(
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w600),
           ),
         ),
         Text(
-          material.quantity,
+          item.quantityLabel,
           style: AppFonts.labelMedium(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w900),
@@ -218,9 +224,9 @@ class EmployeeJobTabs extends StatelessWidget {
       child: Row(
         children: [
           _TabButton(
-            label: 'Form',
-            selected: selectedTab == EmployeeJobDetailTab.form,
-            onTap: () => onChanged(EmployeeJobDetailTab.form),
+            label: 'Forms',
+            selected: selectedTab == EmployeeJobDetailTab.forms,
+            onTap: () => onChanged(EmployeeJobDetailTab.forms),
           ),
           _TabButton(
             label: 'Location',
@@ -268,6 +274,91 @@ class _TabButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class EmployeeJobPhotosPreview extends StatelessWidget {
+  const EmployeeJobPhotosPreview({
+    super.key,
+    required this.beforeBytes,
+    required this.afterBytes,
+    required this.onEdit,
+  });
+
+  final Uint8List beforeBytes;
+  final Uint8List afterBytes;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Job Photos',
+                style: AppFonts.titleSmall(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w900),
+              ),
+            ),
+            TextButton(
+              onPressed: onEdit,
+              child: Text(
+                'Edit',
+                style: AppFonts.labelLarge(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _JobPhotoThumb(label: 'Before', bytes: beforeBytes),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _JobPhotoThumb(label: 'After', bytes: afterBytes),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _JobPhotoThumb extends StatelessWidget {
+  const _JobPhotoThumb({required this.label, required this.bytes});
+
+  final String label;
+  final Uint8List bytes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppFonts.labelSmall(
+            color: AppColors.muted,
+          ).copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: AspectRatio(
+            aspectRatio: 4 / 3,
+            child: Image.memory(bytes, fit: BoxFit.cover),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -481,6 +572,277 @@ class EmployeeSafetyChecklist extends StatelessWidget {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
+  required EmployeeJobDetail job,
+  List<int> formIds = const [],
+  Set<int> completedFormIds = const {},
+  required bool hasBeforePhoto,
+  required bool hasMaterialUsed,
+  required bool hasCustomerSignature,
+  required bool dynamicFormComplete,
+}) {
+  final linkedFormIds = formIds.isNotEmpty ? formIds : job.linkedFormIds;
+  final hasDynamicForms = linkedFormIds.isNotEmpty;
+
+  final completedForms = linkedFormIds
+      .where((formId) => completedFormIds.contains(formId))
+      .length;
+  final formItems = hasDynamicForms
+      ? [
+          EmployeeRequiredFormItem(
+            id: 'linked_forms',
+            title: linkedFormIds.length > 1
+                ? 'Fill required forms ($completedForms/${linkedFormIds.length})'
+                : 'Fill required form',
+            isComplete: dynamicFormComplete,
+          ),
+        ]
+      : [
+          EmployeeRequiredFormItem(
+            id: 'safety_checklist',
+            title: 'Fill safety checklist',
+            isComplete: job.safetyChecklist.isNotEmpty &&
+                job.safetyChecklist.every((item) => item.isChecked),
+          ),
+        ];
+
+  return [
+    EmployeeRequiredFormItem(
+      id: 'before_photo',
+      title: 'Upload before & after photo',
+      isComplete: hasBeforePhoto,
+    ),
+    ...formItems,
+    EmployeeRequiredFormItem(
+      id: 'material_used',
+      title: 'Add material used',
+      isComplete: hasMaterialUsed,
+    ),
+    EmployeeRequiredFormItem(
+      id: 'signature',
+      title: 'Add site/customer signature',
+      isComplete: hasCustomerSignature,
+    ),
+  ];
+}
+
+class EmployeeRequiredFormChecklist extends StatelessWidget {
+  const EmployeeRequiredFormChecklist({
+    super.key,
+    required this.items,
+    this.onItemTap,
+  });
+
+  final List<EmployeeRequiredFormItem> items;
+  final void Function(String itemId)? onItemTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = items.where((item) => item.isComplete).length;
+    final total = items.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Required Form',
+                style: AppFonts.titleLarge(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
+              ),
+            ),
+            Text(
+              '$completed/$total Complete',
+              style: AppFonts.labelLarge(
+                color: const Color(0xFF5E4BFF),
+              ).copyWith(fontWeight: FontWeight.w900),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        for (var i = 0; i < items.length; i++) ...[
+          _RequiredFormTaskCard(
+            item: items[i],
+            onTap: onItemTap == null ? null : () => onItemTap!(items[i].id),
+          ),
+          if (i < items.length - 1) const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+}
+
+class _RequiredFormTaskCard extends StatelessWidget {
+  const _RequiredFormTaskCard({required this.item, this.onTap});
+
+  final EmployeeRequiredFormItem item;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final complete = item.isComplete;
+    final child = Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: complete ? AppColors.inkStrong : AppColors.transparent,
+              border: Border.all(
+                color: complete ? AppColors.inkStrong : AppColors.border,
+                width: 1.8,
+              ),
+            ),
+            child: complete
+                ? const Icon(
+                    Icons.check_rounded,
+                    size: 14,
+                    color: AppColors.white,
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              item.title,
+              style: AppFonts.bodyMedium(
+                color: AppColors.inkStrong,
+              ).copyWith(fontWeight: FontWeight.w600, height: 1.3),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: complete
+                  ? const Color(0xFFE9FFF5)
+                  : AppColors.surfaceHigh,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              complete ? 'Complete' : 'Pending',
+              style: AppFonts.labelSmall(
+                color: complete
+                    ? const Color(0xFF00A86B)
+                    : AppColors.muted,
+              ).copyWith(fontWeight: FontWeight.w800, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (onTap == null) return child;
+
+    return Material(
+      color: AppColors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: child,
+      ),
+    );
+  }
+}
+
+class EmployeeJobSignatureCapture extends StatelessWidget {
+  const EmployeeJobSignatureCapture({
+    super.key,
+    required this.captured,
+    required this.onCapture,
+    required this.onClear,
+  });
+
+  final bool captured;
+  final VoidCallback onCapture;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Site / Customer Signature',
+          style: AppFonts.titleSmall(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 12),
+        DottedBorder(
+          options: const RoundedRectDottedBorderOptions(
+            color: AppColors.border,
+            strokeWidth: 1,
+            dashPattern: [5, 4],
+            radius: Radius.circular(12),
+            padding: EdgeInsets.zero,
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: captured ? onClear : onCapture,
+            child: SizedBox(
+              width: double.infinity,
+              height: 120,
+              child: captured
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.draw_rounded,
+                            color: AppColors.inkStrong,
+                            size: 28,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Signature captured · Tap to clear',
+                            style: AppFonts.bodySmall(
+                              color: AppColors.muted,
+                            ).copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.gesture_rounded,
+                            color: AppColors.muted,
+                            size: 28,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Tap to add signature',
+                            style: AppFonts.bodySmall(
+                              color: AppColors.muted,
+                            ).copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+        ),
       ],
     );
   }

@@ -1,22 +1,22 @@
-import 'package:dotted_border/dotted_border.dart';
+import 'package:country_code_picker/country_code_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
-import 'package:country_code_picker/country_code_picker.dart';
 import 'package:red5/core/utils/phone_number_utils.dart';
 import 'package:red5/core/widgets/app_phone_text_field.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/invite_user_service.dart';
 import 'package:red5/features/dashboard/presentation/providers/invite_user_ui_provider.dart';
+import 'package:red5/features/user_profile/data/role_models.dart';
+import 'package:red5/features/user_profile/data/roles_api_client.dart';
 
-/// Invite a user: photo (optional), basic info, contact, address, invitation notice, send action.
+/// Invite a user: basic info, contact, address, send action.
 class InviteUserPage extends ConsumerStatefulWidget {
   const InviteUserPage({super.key});
 
@@ -29,42 +29,63 @@ class InviteUserPage extends ConsumerStatefulWidget {
 
 class _InviteUserPageState extends ConsumerState<InviteUserPage> {
   final _formKey = GlobalKey<FormState>();
-  final _imagePicker = ImagePicker();
 
-  final _firstNameController = TextEditingController(text: 'John');
-  final _lastNameController = TextEditingController(text: 'Doe');
-  final _roleController = TextEditingController(text: 'Site Supervisor');
-  final _dobController = TextEditingController(text: '01/01/1990');
-  final _phoneController = TextEditingController(text: '5550001234');
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _phoneController = TextEditingController();
   CountryCode _phoneCountry = PhoneNumberUtils.defaultCountry;
-  final _emailController =
-      TextEditingController(text: 'john.doe@acmeconstruction.com');
-  final _addr1Controller = TextEditingController(text: '123 Industrial Way');
-  final _addr2Controller = TextEditingController(text: 'Suite 400');
-  final _cityController = TextEditingController(text: 'San Francisco');
-  final _stateController = TextEditingController(text: 'California');
-  final _zipController = TextEditingController(text: '94105');
+  final _emailController = TextEditingController();
+  final _addr1Controller = TextEditingController();
+  final _addr2Controller = TextEditingController();
+  final _countryController = TextEditingController();
+  final _cityController = TextEditingController();
+  final _stateController = TextEditingController();
+  final _pincodeController = TextEditingController();
 
   String _gender = 'Male';
-  bool _photoPickInFlight = false;
+  int? _selectedRoleId;
+  List<RoleModel> _roles = const [];
+  bool _rolesLoading = true;
 
   static const _labelGrey = Color(0xFF6B7280);
   static const _fieldBorderGrey = Color(0xFFD8D8DA);
-  static const _captionPhoto = Color(0xFF6B8FA8);
+  static const _genderOptions = ['Male', 'Female', 'Other'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRoles();
+  }
+
+  Future<void> _loadRoles() async {
+    try {
+      final roles = await sl<RolesApiClient>().fetchAllRoles();
+      if (!mounted) return;
+      setState(() {
+        _roles = roles;
+        _rolesLoading = false;
+        if (_selectedRoleId == null && roles.isNotEmpty) {
+          _selectedRoleId = int.tryParse(roles.first.id);
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _rolesLoading = false);
+    }
+  }
 
   @override
   void dispose() {
     _firstNameController.dispose();
     _lastNameController.dispose();
-    _roleController.dispose();
-    _dobController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
     _addr1Controller.dispose();
     _addr2Controller.dispose();
+    _countryController.dispose();
     _cityController.dispose();
     _stateController.dispose();
-    _zipController.dispose();
+    _pincodeController.dispose();
     super.dispose();
   }
 
@@ -72,8 +93,7 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(10),
       borderSide: BorderSide(
-        color:
-            focused ? AppColors.textFieldFocusBorder : _fieldBorderGrey,
+        color: focused ? AppColors.textFieldFocusBorder : _fieldBorderGrey,
         width: focused ? 1.2 : 1,
       ),
     );
@@ -84,15 +104,13 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
       isDense: true,
       filled: true,
       fillColor: AppColors.white,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       border: _outlineBorder(),
       enabledBorder: _outlineBorder(),
       focusedBorder: _outlineBorder(focused: true),
       disabledBorder: _outlineBorder(),
       suffixIcon: suffixIcon,
-      suffixIconConstraints:
-          const BoxConstraints(minWidth: 44, minHeight: 44),
+      suffixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
     );
   }
 
@@ -141,198 +159,6 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
     );
   }
 
-  String _photoPickErrorMessage(Object e) {
-    final s = e.toString().toLowerCase();
-    if (s.contains('camera')) return 'Could not open camera.';
-    if (s.contains('photo') ||
-        s.contains('gallery') ||
-        s.contains('permission') ||
-        s.contains('denied')) {
-      return 'Photos access was denied or unavailable.';
-    }
-    return 'Could not select image.';
-  }
-
-  Future<void> _pickPhoto(ImageSource source) async {
-    if (_photoPickInFlight || !mounted) return;
-    setState(() => _photoPickInFlight = true);
-    try {
-      final picked = await _imagePicker.pickImage(
-        source: source,
-        imageQuality: 82,
-        maxWidth: 2048,
-        maxHeight: 2048,
-      );
-      if (!mounted || picked == null) return;
-      final bytes = await picked.readAsBytes();
-      if (!mounted) return;
-      ref.read(inviteUserUiProvider.notifier).setProfilePhotoBytes(bytes);
-    } catch (e) {
-      if (!mounted) return;
-      context.showTopSnackBar(
-        SnackBar(content: Text(_photoPickErrorMessage(e))),
-      );
-    } finally {
-      if (mounted) setState(() => _photoPickInFlight = false);
-    }
-  }
-
-  void _showPhotoOptionsSheet() {
-    FocusScope.of(context).unfocus();
-    final hadPhoto =
-        ref.read(inviteUserUiProvider).profilePhotoBytes != null;
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x1A000000),
-                  blurRadius: 16,
-                  offset: Offset(0, -4),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 10),
-                  Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE2E2E4),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(22, 16, 22, 6),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Profile photo',
-                        style: AppFonts.titleMedium(
-                          color: AppColors.inkStrong,
-                        ).copyWith(fontWeight: FontWeight.w700, fontSize: 17),
-                      ),
-                    ),
-                  ),
-                  const Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: Color(0xFFEAEAEC),
-                  ),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 22,
-                      vertical: 4,
-                    ),
-                    leading: const Icon(
-                      Icons.photo_camera_outlined,
-                      color: AppColors.inkStrong,
-                    ),
-                    title: Text(
-                      'Take photo',
-                      style: AppFonts.bodyLarge(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w500),
-                    ),
-                    onTap: () async {
-                      Navigator.of(ctx).pop();
-                      await _pickPhoto(ImageSource.camera);
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 22,
-                      vertical: 4,
-                    ),
-                    leading: const Icon(
-                      Icons.photo_library_outlined,
-                      color: AppColors.inkStrong,
-                    ),
-                    title: Text(
-                      'Choose from gallery',
-                      style: AppFonts.bodyLarge(color: AppColors.inkStrong)
-                          .copyWith(fontWeight: FontWeight.w500),
-                    ),
-                    onTap: () async {
-                      Navigator.of(ctx).pop();
-                      await _pickPhoto(ImageSource.gallery);
-                    },
-                  ),
-                  if (hadPhoto)
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 22,
-                        vertical: 4,
-                      ),
-                      leading: const Icon(
-                        Icons.delete_outline_rounded,
-                        color: Color(0xFFE53935),
-                      ),
-                      title: Text(
-                        'Remove photo',
-                        style: AppFonts.bodyLarge(
-                          color: const Color(0xFFE53935),
-                        ).copyWith(fontWeight: FontWeight.w600),
-                      ),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        ref
-                            .read(inviteUserUiProvider.notifier)
-                            .clearProfilePhoto();
-                      },
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: TextButton(
-                        onPressed: () => Navigator.of(ctx).pop(),
-                        child: Text(
-                          'Cancel',
-                          style: AppFonts.bodyMedium(
-                            color: _labelGrey,
-                          ).copyWith(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _pickDob() async {
-    final initial = DateTime(1990, 1, 1);
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
-    );
-    if (picked != null && mounted) {
-      final m = picked.month.toString().padLeft(2, '0');
-      final d = picked.day.toString().padLeft(2, '0');
-      setState(() {
-        _dobController.text = '$m/$d/${picked.year}';
-      });
-    }
-  }
-
   String? _required(String? v, String label) {
     if (v == null || v.trim().isEmpty) return '$label is required';
     return null;
@@ -346,7 +172,12 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
     return null;
   }
 
-  Widget _genderDropdown() {
+  String? _roleValidator(int? _) {
+    if (_selectedRoleId == null) return 'Role is required';
+    return null;
+  }
+
+  Widget _genderDropdown(bool submitting) {
     return InputDecorator(
       decoration: _dropdownDecoration(),
       child: DropdownButtonHideUnderline(
@@ -360,7 +191,7 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
           style: _fieldTextStyle(),
           dropdownColor: AppColors.white,
           padding: EdgeInsets.zero,
-          items: ['Male', 'Female', 'Other']
+          items: _genderOptions
               .map(
                 (e) => DropdownMenuItem<String>(
                   value: e,
@@ -368,9 +199,71 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                 ),
               )
               .toList(),
-          onChanged: (value) {
-            if (value != null) setState(() => _gender = value);
-          },
+          onChanged: submitting
+              ? null
+              : (value) {
+                  if (value != null) setState(() => _gender = value);
+                },
+        ),
+      ),
+    );
+  }
+
+  Widget _roleDropdown(bool submitting) {
+    if (_rolesLoading) {
+      return InputDecorator(
+        decoration: _dropdownDecoration(),
+        child: Text(
+          'Loading roles…',
+          style: _fieldTextStyle().copyWith(color: _labelGrey),
+        ),
+      );
+    }
+    if (_roles.isEmpty) {
+      return InputDecorator(
+        decoration: _dropdownDecoration(),
+        child: Text(
+          'No roles available',
+          style: _fieldTextStyle().copyWith(color: _labelGrey),
+        ),
+      );
+    }
+
+    final items = <DropdownMenuItem<int>>[];
+    for (final role in _roles) {
+      final id = int.tryParse(role.id);
+      if (id == null) continue;
+      items.add(
+        DropdownMenuItem<int>(
+          value: id,
+          child: Text(role.roleName, style: _fieldTextStyle()),
+        ),
+      );
+    }
+
+    final value = _selectedRoleId != null &&
+            items.any((e) => e.value == _selectedRoleId)
+        ? _selectedRoleId
+        : null;
+
+    return InputDecorator(
+      decoration: _dropdownDecoration(),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          isExpanded: true,
+          value: value,
+          hint: Text('Select role', style: _fieldTextStyle()),
+          icon: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: Color(0xFF6B7280),
+          ),
+          style: _fieldTextStyle(),
+          dropdownColor: AppColors.white,
+          padding: EdgeInsets.zero,
+          items: items,
+          onChanged: submitting
+              ? null
+              : (value) => setState(() => _selectedRoleId = value),
         ),
       ),
     );
@@ -378,27 +271,34 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
 
   Future<void> _onSendInvite() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_selectedRoleId == null) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Please select a role')),
+      );
+      return;
+    }
+
     final ui = ref.read(inviteUserUiProvider.notifier);
     ui.setSubmitting(true);
     try {
       final payload = InviteUserPayload(
+        email: _emailController.text.trim(),
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
-        role: _roleController.text.trim(),
+        phoneNumber:
+            PhoneNumberUtils.formatFull(_phoneCountry, _phoneController.text),
         gender: _gender,
-        dateOfBirth: _dobController.text.trim(),
-        phone: PhoneNumberUtils.formatFull(_phoneCountry, _phoneController.text),
-        email: _emailController.text.trim(),
-        addressLine1: _addr1Controller.text.trim(),
-        addressLine2: _addr2Controller.text.trim(),
-        city: _cityController.text.trim(),
+        role: _selectedRoleId!,
+        address1: _addr1Controller.text.trim(),
+        address2: _addr2Controller.text.trim(),
+        country: _countryController.text.trim(),
         state: _stateController.text.trim(),
-        zipCode: _zipController.text.trim(),
-        profilePhotoBytes: ref.read(inviteUserUiProvider).profilePhotoBytes,
+        city: _cityController.text.trim(),
+        pincode: _pincodeController.text.trim(),
       );
       await sl<InviteUserService>().invite(payload);
       if (!mounted) return;
-      context.pop();
+      context.pop(true);
     } catch (e) {
       if (!mounted) return;
       context.showTopSnackBar(
@@ -418,9 +318,7 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
 
   @override
   Widget build(BuildContext context) {
-    final photoBytes = ref.watch(inviteUserUiProvider).profilePhotoBytes;
     final submitting = ref.watch(inviteUserUiProvider).submitting;
-
     final fieldTextStyle = _fieldTextStyle();
 
     return Scaffold(
@@ -458,190 +356,66 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Center(
-                        child: GestureDetector(
-                          onTap: _showPhotoOptionsSheet,
-                          behavior: HitTestBehavior.opaque,
-                          child: SizedBox(
-                            width: 148,
-                            height: 148,
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.center,
-                              children: [
-                                DottedBorder(
-                                  options: RoundedRectDottedBorderOptions(
-                                    radius: const Radius.circular(74),
-                                    strokeWidth: 1.8,
-                                    color: const Color(0xFFC5CAD1),
-                                    dashPattern: const [5, 4],
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(72),
-                                    child: Container(
-                                      width: 140,
-                                      height: 140,
-                                      color: const Color(0xFFF5F6F8),
-                                      child: photoBytes != null
-                                          ? Image.memory(
-                                              photoBytes,
-                                              fit: BoxFit.cover,
-                                            )
-                                          : Icon(
-                                              Icons.person_outline_rounded,
-                                              size: 56,
-                                              color: AppColors.mutedLight,
-                                            ),
-                                    ),
-                                  ),
-                                ),
-                                if (_photoPickInFlight)
-                                  Positioned.fill(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: AppColors.white
-                                            .withValues(alpha: 0.75),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Center(
-                                        child: SizedBox(
-                                          width: 28,
-                                          height: 28,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.5,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                Positioned(
-                                  right: 4,
-                                  bottom: 4,
-                                  child: Material(
-                                    elevation: 3,
-                                    color: const Color(0xFF111111),
-                                    shape: const CircleBorder(),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: InkWell(
-                                      onTap: submitting
-                                          ? null
-                                          : _showPhotoOptionsSheet,
-                                      customBorder: const CircleBorder(),
-                                      child: const Padding(
-                                        padding: EdgeInsets.all(10),
-                                        child: Icon(
-                                          Icons.photo_camera_rounded,
-                                          color: Colors.white,
-                                          size: 18,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Center(
-                        child: Text(
-                          'Upload Profile Photo (Optional)',
-                          style: AppFonts.bodyMedium(
-                            color: _captionPhoto,
-                          ).copyWith(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
                       _sectionHeader('BASIC INFO'),
                       _label('First Name'),
                       AppTextField(
                         controller: _firstNameController,
-                        hintText: '',
+                        hintText: 'Enter first name',
                         enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
-                        validator: (v) =>
-                            _required(v, 'First name'),
+                        validator: (v) => _required(v, 'First name'),
                       ),
                       const SizedBox(height: 14),
                       _label('Last Name'),
                       AppTextField(
                         controller: _lastNameController,
-                        hintText: '',
+                        hintText: 'Enter last name',
                         enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
-                        validator: (v) =>
-                            _required(v, 'Last name'),
+                        validator: (v) => _required(v, 'Last name'),
                       ),
                       const SizedBox(height: 14),
                       _label('Role'),
-                      AppTextField(
-                        controller: _roleController,
-                        hintText: '',
-                        enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
-                        textStyle: fieldTextStyle,
-                        validator: (v) => _required(v, 'Role'),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('Gender'),
-                                _genderDropdown(),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('Date of Birth'),
-                                TextFormField(
-                                  controller: _dobController,
-                                  readOnly: true,
-                                  onTap:
-                                      submitting ? null : _pickDob,
-                                  enabled: !submitting,
-                                  style: fieldTextStyle,
-                                  decoration: _dropdownDecoration(
-                                    suffixIcon: IconButton(
-                                      icon: const Icon(
-                                        Icons.calendar_month_rounded,
-                                        color: Color(0xFF6B7280),
-                                      ),
-                                      onPressed:
-                                          submitting ? null : _pickDob,
+                      FormField<int>(
+                        validator: _roleValidator,
+                        builder: (state) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _roleDropdown(submitting),
+                              if (state.hasError)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    state.errorText!,
+                                    style: AppFonts.bodySmall(
+                                      color: Theme.of(context).colorScheme.error,
                                     ),
                                   ),
-                                  validator: (v) =>
-                                      _required(v, 'Date of birth'),
                                 ),
-                              ],
-                            ),
-                          ),
-                        ],
+                            ],
+                          );
+                        },
                       ),
+                      const SizedBox(height: 14),
+                      _label('Gender'),
+                      _genderDropdown(submitting),
                       _sectionHeader('CONTACT'),
+                      _label('Email'),
+                      AppTextField(
+                        controller: _emailController,
+                        hintText: 'Enter email address',
+                        keyboardType: TextInputType.emailAddress,
+                        enabled: !submitting,
+                        textStyle: fieldTextStyle,
+                        validator: _emailValidator,
+                      ),
+                      const SizedBox(height: 14),
                       _label('Phone'),
                       AppPhoneTextField(
                         controller: _phoneController,
                         hintText: 'Phone number',
                         enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
                         onCountryChanged: (c) => _phoneCountry = c,
                         validator: (v) => PhoneNumberUtils.validateNational(
@@ -650,48 +424,38 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                           invalidMessage: 'Enter a valid phone number',
                         ),
                       ),
-                      const SizedBox(height: 14),
-                      _label('Email'),
-                      AppTextField(
-                        controller: _emailController,
-                        hintText: '',
-                        keyboardType: TextInputType.emailAddress,
-                        enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
-                        textStyle: fieldTextStyle,
-                        validator: _emailValidator,
-                      ),
                       _sectionHeader('ADDRESS'),
                       _label('Address Line 1'),
                       AppTextField(
                         controller: _addr1Controller,
-                        hintText: '',
+                        hintText: 'Street address',
                         enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
-                        validator: (v) =>
-                            _required(v, 'Address line 1'),
+                        validator: (v) => _required(v, 'Address line 1'),
                       ),
                       const SizedBox(height: 14),
                       _label('Address Line 2'),
                       AppTextField(
                         controller: _addr2Controller,
-                        hintText: '',
+                        hintText: 'Suite, unit, etc. (optional)',
                         enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
+                      ),
+                      const SizedBox(height: 14),
+                      _label('Country'),
+                      AppTextField(
+                        controller: _countryController,
+                        hintText: 'Enter country',
+                        enabled: !submitting,
+                        textStyle: fieldTextStyle,
+                        validator: (v) => _required(v, 'Country'),
                       ),
                       const SizedBox(height: 14),
                       _label('City'),
                       AppTextField(
                         controller: _cityController,
-                        hintText: '',
+                        hintText: 'Enter city',
                         enabled: !submitting,
-                        hintStyle:
-                            const TextStyle(color: Colors.transparent),
                         textStyle: fieldTextStyle,
                         validator: (v) => _required(v, 'City'),
                       ),
@@ -706,15 +470,10 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                                 _label('State'),
                                 AppTextField(
                                   controller: _stateController,
-                                  hintText: '',
+                                  hintText: 'Enter state',
                                   enabled: !submitting,
-                                  hintStyle:
-                                      const TextStyle(
-                                        color: Colors.transparent,
-                                      ),
                                   textStyle: fieldTextStyle,
-                                  validator: (v) =>
-                                      _required(v, 'State'),
+                                  validator: (v) => _required(v, 'State'),
                                 ),
                               ],
                             ),
@@ -724,19 +483,14 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _label('ZIP Code'),
+                                _label('Pincode'),
                                 AppTextField(
-                                  controller: _zipController,
-                                  hintText: '',
+                                  controller: _pincodeController,
+                                  hintText: 'Enter pincode',
                                   keyboardType: TextInputType.text,
                                   enabled: !submitting,
-                                  hintStyle:
-                                      const TextStyle(
-                                        color: Colors.transparent,
-                                      ),
                                   textStyle: fieldTextStyle,
-                                  validator: (v) =>
-                                      _required(v, 'ZIP Code'),
+                                  validator: (v) => _required(v, 'Pincode'),
                                 ),
                               ],
                             ),
@@ -749,24 +503,21 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                         decoration: BoxDecoration(
                           color: const Color(0xFFEAF1FA),
                           borderRadius: BorderRadius.circular(12),
-                          border:
-                              Border.all(color: const Color(0xFFBFDBFE)),
+                          border: Border.all(color: const Color(0xFFBFDBFE)),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.info_outline_rounded,
-                              color: const Color(0xFF2563EB),
+                              color: Color(0xFF2563EB),
                               size: 22,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 'The user will be sent an invitation email '
-                                'to set up their account. They will have '
-                                'access to all public project documents '
-                                'by default.',
+                                'to set up their account.',
                                 style: AppFonts.bodyMedium(
                                   color: const Color(0xFF4B5563),
                                 ).copyWith(height: 1.35, fontSize: 14),
@@ -795,8 +546,7 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF111111),
                     foregroundColor: AppColors.white,
-                    disabledBackgroundColor:
-                        const Color(0xFF9CA3AF),
+                    disabledBackgroundColor: const Color(0xFF9CA3AF),
                     disabledForegroundColor: AppColors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),

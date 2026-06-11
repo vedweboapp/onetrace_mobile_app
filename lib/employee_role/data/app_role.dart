@@ -52,13 +52,15 @@ enum AppRole {
     return null;
   }
 
-  static bool isTechnician(String? value) =>
-      fromSlug(value) == AppRole.technician;
-
-  static bool isOperative(String? value) =>
-      fromSlug(value) == AppRole.operative;
-
-  static bool isSales(String? value) => fromSlug(value) == AppRole.sales;
-
-  static bool isManager(String? value) => fromSlug(value) == AppRole.manager;
+  /// Maps API `role_detail.role_name` (or similar) to the closest [AppRole] for UI copy.
+  static AppRole? fromRoleName(String? roleName) {
+    final normalized = roleName?.trim().toLowerCase() ?? '';
+    if (normalized.isEmpty) return null;
+    if (normalized.contains('technician')) return AppRole.technician;
+    if (normalized.contains('manager')) return AppRole.manager;
+    if (normalized.contains('site')) return AppRole.technician;
+    if (normalized.contains('operative')) return AppRole.operative;
+    if (normalized.contains('sales')) return AppRole.sales;
+    return fromSlug(normalized);
+  }
 }

@@ -10,13 +10,15 @@ import 'package:red5/employee_role/projects/presentation/widgets/project_map_ove
 class EmployeeProjectMapPage extends ConsumerStatefulWidget {
   const EmployeeProjectMapPage({
     super.key,
-    this.projectName = 'Riverside Tower',
-    this.activeSites = 3,
+    this.projectId,
+    this.projectName = 'Project',
+    this.activeSites = 0,
   });
 
   static const path = '/employee-role/projects/map';
   static const name = 'employee-project-map';
 
+  final int? projectId;
   final String projectName;
   final int activeSites;
 
@@ -33,7 +35,11 @@ class _EmployeeProjectMapPageState
   void initState() {
     super.initState();
     Future.microtask(() {
-      ref.read(projectMapControllerProvider.notifier).loadJobs();
+      ref.read(projectMapControllerProvider.notifier).loadJobs(
+            projectId: widget.projectId,
+            projectName: widget.projectName,
+            activeSites: widget.activeSites,
+          );
     });
   }
 
@@ -97,9 +103,11 @@ class _EmployeeProjectMapPageState
     return Scaffold(
       backgroundColor: AppColors.white,
       appBar: ProjectMapTopBar(
-        projectName: widget.projectName,
+        projectName: mapState.projectName ?? widget.projectName,
         activeSites: mapState.jobs.isEmpty
-            ? widget.activeSites
+            ? (mapState.activeSites > 0
+                  ? mapState.activeSites
+                  : widget.activeSites)
             : mapState.jobs.length,
         onSearch: _showSearchSheet,
       ),
@@ -118,8 +126,8 @@ class _EmployeeProjectMapPageState
             top: MediaQuery.sizeOf(context).height * 0.40,
             child: ProjectMapFloatingButtons(
               onCurrentLocation: () {
-                final selected =
-                    mapState.selectedJob ?? mapState.jobs.firstOrNull;
+                final selected = mapState.selectedJob ??
+                    (mapState.jobs.isNotEmpty ? mapState.jobs.first : null);
                 if (selected != null) _selectJob(selected);
               },
               onToggleTheme: () {
@@ -135,10 +143,13 @@ class _EmployeeProjectMapPageState
             isLoading: mapState.isLoading,
             errorMessage: mapState.errorMessage,
             searchQuery: mapState.searchQuery,
-            onRefresh: () =>
-                ref.read(projectMapControllerProvider.notifier).loadJobs(),
+            onRefresh: () => ref
+                .read(projectMapControllerProvider.notifier)
+                .loadJobs(projectId: widget.projectId),
             onRetry: () {
-              ref.read(projectMapControllerProvider.notifier).loadJobs();
+              ref.read(projectMapControllerProvider.notifier).loadJobs(
+                    projectId: widget.projectId,
+                  );
             },
             onSearchChanged: _searchJobs,
             onJobTap: _selectJob,
@@ -172,12 +183,14 @@ class InbuiltProjectSiteMap extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             CustomPaint(painter: _ProjectSiteMapPainter(isDark: isDark)),
-            for (final job in jobs)
+            for (var index = 0; index < jobs.length; index++)
               _PositionedSitePin(
-                job: job,
+                job: jobs[index],
+                index: index,
+                total: jobs.length,
                 canvasSize: Size(constraints.maxWidth, constraints.maxHeight),
-                selected: job.id == selectedJobId,
-                onTap: () => onJobTap(job),
+                selected: jobs[index].id == selectedJobId,
+                onTap: () => onJobTap(jobs[index]),
               ),
           ],
         );
@@ -190,19 +203,23 @@ class InbuiltProjectSiteMap extends StatelessWidget {
 class _PositionedSitePin extends StatelessWidget {
   const _PositionedSitePin({
     required this.job,
+    required this.index,
+    required this.total,
     required this.canvasSize,
     required this.selected,
     required this.onTap,
   });
 
   final ProjectMapJob job;
+  final int index;
+  final int total;
   final Size canvasSize;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final point = _sitePointFor(job.id);
+    final point = _sitePointForIndex(index, total);
     final size = selected ? 42.0 : 32.0;
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 220),
@@ -213,13 +230,14 @@ class _PositionedSitePin extends StatelessWidget {
     );
   }
 
-  static Offset _sitePointFor(int jobId) {
-    return switch (jobId) {
-      101 => const Offset(0.56, 0.25),
-      102 => const Offset(0.81, 0.19),
-      103 => const Offset(0.28, 0.42),
-      _ => const Offset(0.62, 0.34),
-    };
+  static Offset _sitePointForIndex(int index, int total) {
+    if (total <= 1) return const Offset(0.5, 0.35);
+    final cols = total <= 3 ? total : 3;
+    final row = index ~/ cols;
+    final col = index % cols;
+    final x = 0.2 + (col + 1) * (0.6 / (cols + 1));
+    final y = 0.2 + (row + 1) * 0.15;
+    return Offset(x.clamp(0.15, 0.85), y.clamp(0.15, 0.65));
   }
 }
 

@@ -9,6 +9,7 @@ import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_int_parsing.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/quote/data/project_read.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 
 final class LevelSyncResult {
@@ -223,6 +224,63 @@ final class QuoteProjectApiClient {
       );
     }
     return id;
+  }
+
+  /// `GET /project/{id}/` — project_read
+  Future<ProjectRead> fetchProjectById(String projectId) async {
+    final response = await _dio.get<dynamic>(AppApiUrls.projectById(projectId));
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final project = ProjectRead.tryFromMap(body.isNotEmpty ? body : root);
+    if (project == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Project response did not include a valid id.',
+      );
+    }
+    return project;
+  }
+
+  /// Fetches all pages from `GET /project/`.
+  Future<List<ProjectRead>> fetchAllProjects({int pageSize = 50}) async {
+    final projects = <ProjectRead>[];
+    var page = 1;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.projects,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'page_size': pageSize,
+        },
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = root['results'] is List
+          ? (root['results'] as List<dynamic>)
+          : (root['data'] is List
+                ? (root['data'] as List<dynamic>)
+                : const <dynamic>[]);
+      for (final row in rows) {
+        if (row is! Map) continue;
+        final project = ProjectRead.tryFromMap(
+          Map<String, dynamic>.from(row),
+        );
+        if (project != null) projects.add(project);
+      }
+      final hasNext = root['next'] != null && rows.isNotEmpty;
+      final pagination = _coerceMap(root['pagination']);
+      final pagNext = pagination['next'];
+      if (hasNext ||
+          (pagNext != null && pagNext.toString().trim().isNotEmpty)) {
+        page += 1;
+        continue;
+      }
+      if (rows.isEmpty) break;
+      page += 1;
+      if (rows.length < pageSize) break;
+    }
+    return projects;
   }
 
   Future<void> updateProject({

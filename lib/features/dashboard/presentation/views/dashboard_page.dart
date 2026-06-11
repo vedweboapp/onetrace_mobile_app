@@ -32,6 +32,8 @@ import 'package:red5/features/dashboard/presentation/views/bills_list_page.dart'
 import 'package:red5/features/dashboard/presentation/views/add_bill_page.dart';
 import 'package:red5/features/vendors/presentation/views/vendors_list_page.dart';
 import 'package:red5/features/dashboard/presentation/views/reports_list_page.dart';
+import 'package:red5/features/material_requests/presentation/views/material_requests_list_page.dart';
+import 'package:red5/features/dispatch/presentation/views/dispatches_list_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quotations_list_page.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
 import 'package:red5/features/dashboard/presentation/invoice_list_refresh.dart';
@@ -345,6 +347,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       12 => 'Bill Order',
       13 => 'Vendor',
       14 => 'Reports',
+      15 => 'Material Requests',
+      16 => 'Dispatch',
       _ => 'Home',
     };
     return Text(
@@ -755,6 +759,19 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
         selected: _selectedIndex == 14,
         onTap: () => _selectDrawerIndex(14),
       ),
+      _drawerSectionTitle('Operations'),
+      _drawerIconItem(
+        iconData: Icons.inventory_2_outlined,
+        label: 'Material Requests',
+        selected: _selectedIndex == 15,
+        onTap: () => _selectDrawerIndex(15),
+      ),
+      _drawerIconItem(
+        iconData: Icons.local_shipping_outlined,
+        label: 'Dispatch',
+        selected: _selectedIndex == 16,
+        onTap: () => _selectDrawerIndex(16),
+      ),
       _drawerItem(
         icon: 'assets/images/groups.png',
         label: 'Groups',
@@ -1105,6 +1122,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
           const BillsListPage(),
           const VendorsListPage(),
           const ReportsListPage(),
+          const MaterialRequestsListPage(),
+          const DispatchesListPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_user_avatar.dart';
+import 'package:red5/features/dashboard/data/report_column_fields.dart';
+import 'package:red5/features/dashboard/data/report_field_values.dart';
 import 'package:red5/features/dashboard/data/report_models.dart';
 
 enum ReportSummaryViewMode { table, list }
@@ -70,9 +73,14 @@ class ReportSummaryViewToggle extends StatelessWidget {
 }
 
 class ReportSummaryListCard extends StatelessWidget {
-  const ReportSummaryListCard({super.key, required this.item});
+  const ReportSummaryListCard({
+    super.key,
+    required this.item,
+    required this.selectedFields,
+  });
 
   final ReportListCardItem item;
+  final List<ReportFieldDefinition> selectedFields;
 
   static final _dateFormat = DateFormat('MMM d, yyyy');
 
@@ -90,39 +98,122 @@ class ReportSummaryListCard extends StatelessWidget {
   }
 
   Widget _assigneeAvatar() {
-    final url = item.assigneeAvatarUrl?.trim();
-    final initial = item.assigneeName.trim().isNotEmpty
-        ? item.assigneeName.trim()[0].toUpperCase()
-        : '?';
-
-    if (url != null && url.isNotEmpty) {
-      return CircleAvatar(
-        radius: 14,
-        backgroundColor: const Color(0xFFE5E7EB),
-        backgroundImage: NetworkImage(url),
-        onBackgroundImageError: (_, _) {},
-        child: Text(
-          initial,
-          style: AppFonts.labelMedium(color: const Color(0xFF6B7280))
-              .copyWith(fontWeight: FontWeight.w700, fontSize: 10),
-        ),
-      );
-    }
-
-    return CircleAvatar(
+    return AppUserAvatar(
+      name: item.assigneeName,
+      imageUrl: item.assigneeAvatarUrl,
       radius: 14,
-      backgroundColor: const Color(0xFFE5E7EB),
+      fontSize: 10,
+    );
+  }
+
+  Widget _fieldLabel(String label) {
+    return Text(
+      label.toUpperCase(),
+      style: AppFonts.labelMedium(color: const Color(0xFF9CA3AF)).copyWith(
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.5,
+        fontSize: 10,
+      ),
+    );
+  }
+
+  Widget _valueForField(ReportFieldDefinition field) {
+    final values = item.allTextValues;
+    return switch (field.key) {
+      'status' => _statusBadge(item.status),
+      'client' || 'created_by' || 'assigned_worker' || 'project_manager' =>
+        Row(
+          children: [
+            _assigneeAvatar(),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                values[field.key] ?? '—',
+                style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      'progress' => Text(
+        '${item.progressPercent}%',
+        style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+          fontWeight: FontWeight.w800,
+          fontSize: 18,
+        ),
+      ),
+      'due_date' => Text(
+        _dateFormat.format(item.dueDate),
+        style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: 14,
+        ),
+      ),
+      'project_name' => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              item.title,
+              style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+                fontWeight: FontWeight.w800,
+                fontSize: 17,
+                height: 1.2,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              item.subtitle,
+              style: AppFonts.bodyMedium(color: const Color(0xFF6B7280))
+                  .copyWith(
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      _ => Text(
+          values[field.key] ?? '—',
+          style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+          ),
+        ),
+    };
+  }
+
+  Widget _statusBadge(ReportSummaryLifecycleStatus status) {
+    final colors = _statusColors(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: colors.bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
       child: Text(
-        initial,
-        style: AppFonts.labelMedium(color: const Color(0xFF6B7280))
-            .copyWith(fontWeight: FontWeight.w700, fontSize: 10),
+        status.label,
+        style: AppFonts.labelMedium(color: colors.fg).copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final statusColors = _statusColors(item.status);
+    if (selectedFields.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final hasProjectName = selectedFields.any((f) => f.key == 'project_name');
+    final hasStatus = selectedFields.any((f) => f.key == 'status');
+    final headerFields = selectedFields
+        .where((f) => f.key == 'project_name' || f.key == 'status')
+        .toList();
+    final bodyFields =
+        selectedFields.where((f) => !headerFields.contains(f)).toList();
 
     return Container(
       width: double.infinity,
@@ -135,111 +226,39 @@ class ReportSummaryListCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      style: AppFonts.titleMedium(color: AppColors.inkStrong)
-                          .copyWith(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                        height: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      item.subtitle,
-                      style: AppFonts.bodyMedium(color: const Color(0xFF6B7280))
-                          .copyWith(
-                        fontWeight: FontWeight.w500,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: statusColors.bg,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  item.status.label,
-                  style: AppFonts.labelMedium(color: statusColors.fg).copyWith(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              _assigneeAvatar(),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  item.assigneeName,
-                  style: AppFonts.bodyMedium(color: AppColors.inkStrong)
-                      .copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    item.progressLabel,
-                    style: AppFonts.labelMedium(color: const Color(0xFF9CA3AF))
-                        .copyWith(
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
-                      fontSize: 10,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${item.progressPercent}%',
-                    style: AppFonts.titleMedium(color: AppColors.inkStrong)
-                        .copyWith(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 18,
-                    ),
-                  ),
+          if (hasProjectName || hasStatus)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (hasProjectName)
+                  Expanded(child: _valueForField(headerFields.firstWhere(
+                    (f) => f.key == 'project_name',
+                    orElse: () => selectedFields.first,
+                  )))
+                else
+                  const Spacer(),
+                if (hasStatus) ...[
+                  const SizedBox(width: 8),
+                  _statusBadge(item.status),
                 ],
-              ),
+              ],
+            ),
+          for (var i = 0; i < bodyFields.length; i++) ...[
+            if (i > 0 || hasProjectName || hasStatus) ...[
+              const SizedBox(height: 14),
+              if (bodyFields[i].key != 'client' &&
+                  bodyFields[i].key != 'progress')
+                const Divider(height: 1, color: Color(0xFFE5E7EB)),
+              if (bodyFields[i].key != 'client' &&
+                  bodyFields[i].key != 'progress')
+                const SizedBox(height: 12),
             ],
-          ),
-          const SizedBox(height: 16),
-          const Divider(height: 1, color: Color(0xFFE5E7EB)),
-          const SizedBox(height: 12),
-          Text(
-            item.dueDateLabel,
-            style: AppFonts.labelMedium(color: const Color(0xFF9CA3AF)).copyWith(
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-              fontSize: 10,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _dateFormat.format(item.dueDate),
-            style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-            ),
-          ),
+            if (bodyFields[i].key != 'project_name') ...[
+              _fieldLabel(bodyFields[i].label),
+              const SizedBox(height: 4),
+              _valueForField(bodyFields[i]),
+            ],
+          ],
         ],
       ),
     );

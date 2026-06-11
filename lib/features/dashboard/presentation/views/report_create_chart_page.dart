@@ -2,13 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/features/dashboard/data/report_chart_config.dart';
 import 'package:red5/features/dashboard/data/report_models.dart';
 import 'package:red5/features/dashboard/presentation/views/report_summary_page.dart';
 import 'package:red5/features/dashboard/presentation/views/widgets/report_chart_preview.dart';
 
 /// Chart builder screen opened from report summary (UI preview).
 class ReportCreateChartPage extends StatefulWidget {
-  const ReportCreateChartPage({super.key, required this.reportId});
+  const ReportCreateChartPage({
+    super.key,
+    required this.reportId,
+    this.initialConfig,
+  });
 
   static const pathSuffix = '/create-chart';
   static const name = 'report-create-chart';
@@ -17,6 +22,7 @@ class ReportCreateChartPage extends StatefulWidget {
       '${ReportSummaryPage.pathFor(reportId)}$pathSuffix';
 
   final String reportId;
+  final ReportChartConfig? initialConfig;
 
   @override
   State<ReportCreateChartPage> createState() => _ReportCreateChartPageState();
@@ -29,14 +35,14 @@ class _ReportCreateChartPageState extends State<ReportCreateChartPage> {
   static const _fieldBg = Color(0xFFF9FAFB);
   static const _accent = Color(0xFF3B82F6);
 
-  ReportChartType _chartType = ReportChartType.column;
-  String _measure = 'Record Count';
-  String _grouping = 'Lead Owner - Leads';
-  String _sortBy = 'Label Ascending';
-  bool _shortenNumbers = true;
+  late ReportChartType _chartType;
+  late String _measure;
+  late String _grouping;
+  late String _sortBy;
+  late bool _shortenNumbers;
 
-  final _benchmarkController = TextEditingController();
-  final _maxGroupingController = TextEditingController(text: '75');
+  late final TextEditingController _benchmarkController;
+  late final TextEditingController _maxGroupingController;
 
   static const _measureOptions = [
     'Record Count',
@@ -62,7 +68,18 @@ class _ReportCreateChartPageState extends State<ReportCreateChartPage> {
   @override
   void initState() {
     super.initState();
-    _cards = ReportMockData.listCardsFor(widget.reportId);
+    final config = widget.initialConfig;
+    _chartType = config?.chartType ?? ReportChartType.column;
+    _measure = config?.measure ?? 'Record Count';
+    _grouping = config?.grouping ?? 'Status - Projects';
+    _sortBy = config?.sortBy ?? 'Label Ascending';
+    _shortenNumbers = config?.shortenNumbers ?? true;
+    _benchmarkController = TextEditingController(text: config?.benchmark ?? '');
+    _maxGroupingController =
+        TextEditingController(text: config?.maxGrouping ?? '75');
+    _cards = ReportMockData.isNewReport(widget.reportId)
+        ? ReportMockData.cardsForNewReport()
+        : ReportMockData.listCardsFor(widget.reportId);
     _benchmarkController.addListener(() => setState(() {}));
     _maxGroupingController.addListener(() => setState(() {}));
   }
@@ -74,42 +91,24 @@ class _ReportCreateChartPageState extends State<ReportCreateChartPage> {
     super.dispose();
   }
 
-  ReportChartSeries get _chartSeries {
-    final active =
-        _cards.where((c) => c.status == ReportSummaryLifecycleStatus.active);
-    final inactive =
-        _cards.where((c) => c.status == ReportSummaryLifecycleStatus.inactive);
+  ReportChartConfig get _currentConfig => ReportChartConfig(
+        chartType: _chartType,
+        measure: _measure,
+        grouping: _grouping,
+        sortBy: _sortBy,
+        shortenNumbers: _shortenNumbers,
+        benchmark: _benchmarkController.text.trim().isEmpty
+            ? null
+            : _benchmarkController.text.trim(),
+        maxGrouping: _maxGroupingController.text.trim().isEmpty
+            ? '75'
+            : _maxGroupingController.text.trim(),
+      );
 
-    return switch (_grouping) {
-      'Status - Projects' => ReportChartSeries(
-          labels: const ['Active', 'Inactive'],
-          values: [
-            active.length.toDouble(),
-            inactive.length.toDouble(),
-          ],
-        ),
-      'Client - Projects' => ReportChartSeries(
-          labels: const ['Assigned', 'Unassigned'],
-          values: [
-            _cards.where((c) => c.assigneeName.isNotEmpty).length.toDouble(),
-            _cards.where((c) => c.assigneeName.isEmpty).length.toDouble(),
-          ],
-        ),
-      _ => ReportChartSeries(
-          labels: const ['Active', 'Inactive'],
-          values: [
-            active.length.toDouble(),
-            inactive.length.toDouble(),
-          ],
-        ),
-    };
-  }
+  ReportChartSeries get _chartSeries => _currentConfig.seriesFor(_cards);
 
   void _onSave() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Chart saved')),
-    );
-    context.pop(true);
+    context.pop(_currentConfig);
   }
 
   Widget _sectionTitle(String text) {
@@ -296,7 +295,7 @@ class _ReportCreateChartPageState extends State<ReportCreateChartPage> {
           color: AppColors.inkStrong,
         ),
         title: Text(
-          'Create Chart',
+          widget.initialConfig == null ? 'Create Chart' : 'Update Chart',
           style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
             fontWeight: FontWeight.w800,
             fontSize: 17,

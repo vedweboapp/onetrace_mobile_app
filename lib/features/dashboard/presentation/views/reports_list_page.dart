@@ -6,6 +6,8 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/features/dashboard/data/report_models.dart';
+import 'package:red5/features/dashboard/presentation/views/report_configure_page.dart';
+import 'package:red5/features/dashboard/presentation/views/widgets/create_new_report_dialog.dart';
 
 /// Admin reports list (UI preview until reports API is available).
 class ReportsListPage extends StatefulWidget {
@@ -67,9 +69,13 @@ class _ReportsListPageState extends State<ReportsListPage> {
     super.dispose();
   }
 
-  void _onCreateReport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Create report is coming soon')),
+  Future<void> _onCreateReport() async {
+    final module = await showCreateNewReportDialog(context);
+    if (!mounted || module == null) return;
+
+    context.push(
+      ReportConfigurePage.pathFor(ReportMockData.newReportId),
+      extra: ReportConfigureRouteExtra(primaryModule: module),
     );
   }
 

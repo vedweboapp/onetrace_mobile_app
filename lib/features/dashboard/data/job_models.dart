@@ -26,11 +26,15 @@ final class JobRead {
     this.pin,
     this.quotation,
     this.form,
+    this.formIds = const [],
     this.assignedWorker,
     this.jobStatus,
     this.client,
     this.project,
     this.site,
+    this.projectName,
+    this.clientName,
+    this.siteName,
     this.organization,
     this.qrCode,
     this.raw = const <String, dynamic>{},
@@ -62,11 +66,15 @@ final class JobRead {
   final int? pin;
   final int? quotation;
   final int? form;
+  final List<int> formIds;
   final int? assignedWorker;
   final int? jobStatus;
   final int? client;
   final int? project;
   final int? site;
+  final String? projectName;
+  final String? clientName;
+  final String? siteName;
   final int? organization;
   final int? qrCode;
   final Map<String, dynamic> raw;
@@ -84,6 +92,8 @@ final class JobRead {
   }
 
   String get displayLocation {
+    final site = siteName?.trim();
+    if (site != null && site.isNotEmpty) return site;
     final section = sectionName?.trim();
     if (section != null && section.isNotEmpty) return section;
     final plot = plotName?.trim();
@@ -105,14 +115,22 @@ final class JobRead {
     final id = _readInt(map['id']);
     if (id == null) return null;
     final title = _readString(map, const ['title']) ?? 'Untitled Job';
+    final jobMeta = _readMap(map['job_meta']);
+    var total = _readDouble(map['total']);
+    if (total == null) total = _readDouble(jobMeta['total']);
+    final siteName = _readNestedSiteName(map['site']);
     return JobRead(
       id: id,
       title: title,
       description: _readString(map, const ['description']),
-      workerName: _readString(map, const ['worker_name']),
+      workerName:
+          _readString(map, const ['worker_name']) ??
+          _readNestedName(map['assigned_worker']),
       pinStatusName: _readString(map, const ['pin_status_name']),
       formsDetails: _readString(map, const ['forms_details']),
-      jobPinStatus: _readString(map, const ['job_pin_status']),
+      jobPinStatus:
+          _readString(map, const ['job_pin_status']) ??
+          _readNestedStatusName(map['job_status']),
       jobSource: _readString(map, const ['job_source']),
       startDate: _readDate(map['start_date']),
       endDate: _readDate(map['end_date']),
@@ -121,22 +139,27 @@ final class JobRead {
       pinXCoordinate: _readDouble(map['pin_x_coordinate']),
       pinYCoordinate: _readDouble(map['pin_y_coordinate']),
       itemName: _readString(map, const ['item_name']),
-      sectionName: _readString(map, const ['section_name']),
+      sectionName:
+          siteName ?? _readString(map, const ['section_name']),
       plotName: _readString(map, const ['plot_name']),
       pinName: _readString(map, const ['pin_name']),
       quantity: _readInt(map['quantity']),
       sellingPrice: _readDouble(map['selling_price']),
-      total: _readDouble(map['total']),
+      total: total,
       isVirtualPin: _readBool(map['is_virtual_pin']) ?? false,
-      jobMeta: _readMap(map['job_meta']),
+      jobMeta: jobMeta,
       pin: _readInt(map['pin']),
       quotation: _readInt(map['quotation']),
-      form: _readInt(map['form']) ?? _readInt(map['forms']),
-      assignedWorker: _readInt(map['assigned_worker']),
-      jobStatus: _readInt(map['job_status']),
+      form: _readInt(map['form']) ?? _readFirstFormId(map['forms']),
+      formIds: _readIntList(map['form_ids']),
+      assignedWorker: _readFkId(map['assigned_worker']),
+      jobStatus: _readFkId(map['job_status']),
       client: _readFkId(map['client']),
       project: _readFkId(map['project']),
       site: _readFkId(map['site']),
+      projectName: _readNestedName(map['project']),
+      clientName: _readNestedName(map['client']),
+      siteName: siteName,
       organization: _readInt(map['organization']),
       qrCode: _readInt(map['qr_code']),
       raw: Map<String, dynamic>.from(map),
@@ -168,6 +191,51 @@ final class JobRead {
       return _readInt(map['id']);
     }
     return _readInt(value);
+  }
+
+  static String? _readNestedName(dynamic value) {
+    if (value is! Map) return null;
+    final map = Map<String, dynamic>.from(
+      value.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    return _readString(map, const ['name', 'site_name', 'title']);
+  }
+
+  static String? _readNestedSiteName(dynamic value) {
+    if (value is! Map) return null;
+    final map = Map<String, dynamic>.from(
+      value.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    return _readString(map, const ['site_name', 'name', 'title']);
+  }
+
+  static String? _readNestedStatusName(dynamic value) {
+    if (value is! Map) return null;
+    final map = Map<String, dynamic>.from(
+      value.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    return _readString(map, const ['status_name', 'name', 'label']);
+  }
+
+  static List<int> _readIntList(dynamic value) {
+    if (value is! List) return const [];
+    return value.map(_readInt).whereType<int>().toList(growable: false);
+  }
+
+  static int? _readFirstFormId(dynamic value) {
+    if (value is! List || value.isEmpty) return null;
+    for (final row in value) {
+      if (row is! Map) continue;
+      final map = Map<String, dynamic>.from(
+        row.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final formId =
+          _readInt(map['project_form_id']) ??
+          _readInt(map['form_id']) ??
+          _readInt(map['job_form_id']);
+      if (formId != null) return formId;
+    }
+    return null;
   }
 
   static String? _readString(Map<String, dynamic> map, List<String> keys) {
