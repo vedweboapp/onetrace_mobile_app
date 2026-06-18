@@ -104,11 +104,12 @@ final class JobRead {
   }
 
   String get displayStatus {
+    if (completedAt != null) return 'Completed';
     final direct = pinStatusName?.trim();
     if (direct != null && direct.isNotEmpty) return direct;
     final pinStatus = jobPinStatus?.trim();
     if (pinStatus != null && pinStatus.isNotEmpty) return pinStatus;
-    return completedAt == null ? 'Active' : 'Completed';
+    return 'Active';
   }
 
   static JobRead? tryFromMap(Map<String, dynamic> map) {
@@ -286,4 +287,19 @@ final class JobRead {
     }
     return const <String, dynamic>{};
   }
+}
+
+/// Paginated jobs list from `GET /api/v1/jobs/`.
+class JobsPageResult {
+  const JobsPageResult({
+    required this.items,
+    required this.currentPage,
+    required this.totalPages,
+    required this.totalRecords,
+  });
+
+  final List<JobRead> items;
+  final int currentPage;
+  final int totalPages;
+  final int totalRecords;
 }

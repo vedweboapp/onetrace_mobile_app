@@ -7,7 +7,9 @@ class EmployeeJobTimerBanner extends StatelessWidget {
 
   final Duration elapsed;
 
-  String get _formatted {
+  String get _formatted => formatDuration(elapsed);
+
+  static String formatDuration(Duration elapsed) {
     final hours = elapsed.inHours;
     final minutes = elapsed.inMinutes.remainder(60);
     final seconds = elapsed.inSeconds.remainder(60);

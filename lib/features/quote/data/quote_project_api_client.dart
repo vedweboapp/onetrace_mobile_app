@@ -7,8 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_int_parsing.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/features/quote/data/project_read.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 
@@ -150,6 +152,8 @@ final class CompositeItemOption {
     required this.name,
     this.groupId,
     this.abbreviation = '',
+    this.sellingPrice,
+    this.quantity = 1,
   });
 
   final int id;
@@ -158,6 +162,12 @@ final class CompositeItemOption {
 
   /// Short code shown on map pins (e.g. "SRK").
   final String abbreviation;
+
+  /// Item sell price from `/items/` or nested item payload.
+  final double? sellingPrice;
+
+  /// Default quantity from the group line (falls back to 1).
+  final int quantity;
 }
 
 final class GroupCompositeCatalog {
@@ -191,6 +201,8 @@ final class QuoteProjectApiClient {
     required String name,
     int? organizationId,
     int? clientId,
+    int? projectTypeId,
+    int? siteId,
     String? description,
     String? startDate,
     String? endDate,
@@ -198,6 +210,8 @@ final class QuoteProjectApiClient {
     final payload = <String, dynamic>{'name': name};
     if (organizationId != null) payload['organization'] = organizationId;
     if (clientId != null) payload['client'] = clientId;
+    if (projectTypeId != null) payload['project_type'] = projectTypeId;
+    if (siteId != null) payload['sites'] = [siteId];
     if (description != null) payload['description'] = description;
     if (startDate != null) payload['start_date'] = startDate;
     if (endDate != null) payload['end_date'] = endDate;
@@ -440,7 +454,8 @@ final class QuoteProjectApiClient {
     );
   }
 
-  /// `PUT` [project_level_update] — JSON body per API: `{ "plots": [...] }`.
+  /// `PUT` [project_level_update] — JSON body: `{ "payload": "<json string>" }`
+  /// where the string decodes to `{ "plots": [...] }`.
   /// To clear markup, send each plot id with `coordinates` / `pins` set to null.
   /// Per-plot pin removal: omit deleted pins from `pins` and/or send `deleted_pin_ids`.
   /// Returns normalized response `data` (when present) for pin/plot id sync.
@@ -449,16 +464,17 @@ final class QuoteProjectApiClient {
     required String levelId,
     required List<Map<String, dynamic>> plots,
   }) async {
-    final payload = <String, dynamic>{'plots': plots};
+    final payloadJson = jsonEncode(<String, dynamic>{'plots': plots});
+    final requestBody = <String, dynamic>{'payload': payloadJson};
     final endpoint = AppApiUrls.projectLevelById(projectId, levelId);
     _logOutgoingPayload(
       methodName: 'updateLevelPlots',
       endpoint: endpoint,
-      payload: payload,
+      payload: <String, dynamic>{'payload': plots},
     );
     final response = await _dio.put<dynamic>(
       endpoint,
-      data: jsonEncode(payload),
+      data: requestBody,
       options: Options(
         contentType: Headers.jsonContentType,
         headers: const <String, dynamic>{
@@ -467,15 +483,38 @@ final class QuoteProjectApiClient {
       ),
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
-    final body = _entityBody(root);
+    final body = _levelUpdateResponseBody(root);
     if (kDebugMode) {
-      final plotsRaw = body['plots'] ?? root['plots'];
+      final plotsRaw = body['plots'];
       final plotCount = plotsRaw is List ? plotsRaw.length : 0;
       debugPrint(
         '[API RESPONSE] updateLevelPlots $endpoint status=${response.statusCode} plots=$plotCount',
       );
     }
     return body.isNotEmpty ? body : (root.isEmpty ? null : root);
+  }
+
+  static Map<String, dynamic> _levelUpdateResponseBody(Map<String, dynamic> root) {
+    final body = _entityBody(root);
+    final payload = body['payload'];
+    if (payload is Map) {
+      return Map<String, dynamic>.from(
+        payload.map((k, v) => MapEntry(k.toString(), v)),
+      );
+    }
+    if (payload is String && payload.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is Map) {
+          return Map<String, dynamic>.from(
+            decoded.map((k, v) => MapEntry(k.toString(), v)),
+          );
+        }
+      } catch (_) {
+        // Fall through to body below.
+      }
+    }
+    return body;
   }
 
   /// Plot entries returned after level update (for debugging / id sync).
@@ -582,41 +621,128 @@ final class QuoteProjectApiClient {
       AppApiUrls.projectLevels(projectId),
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
-    final data = root['data'];
-    final rows = data is List ? data : const <dynamic>[];
+    final rows = _listRowsFromApiRoot(root);
     final out = <ProjectLevelItem>[];
     for (final row in rows) {
-      final map = _coerceMap(row);
-      final id = _readString(map, const ['id', 'level_id']);
-      if (id == null || id.isEmpty) continue;
-      final drawingFile = _readString(map, const ['drawing_file']) ?? '';
-      final name = _readString(map, const ['name']) ?? 'Level';
-      final orderRaw = map['order'];
-      final sortOrder = orderRaw is int
-          ? orderRaw
-          : int.tryParse('${orderRaw ?? ''}') ?? 0;
-      final rawPlots = map['plots'];
-      final parsedPlots = <Map<String, dynamic>>[];
-      if (rawPlots is List) {
-        for (final p in rawPlots) {
-          final plot = _coerceMap(p);
-          if (plot.isNotEmpty) {
-            parsedPlots.add(plot);
-          }
-        }
-      }
-      out.add(
-        ProjectLevelItem(
-          id: id,
-          name: name,
-          drawingFile: drawingFile,
-          plots: parsedPlots,
-          sortOrder: sortOrder,
-        ),
-      );
+      final item = _projectLevelItemFromMap(_coerceMap(row));
+      if (item != null) out.add(item);
     }
     out.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return out;
+  }
+
+  /// Loads each level's full detail when the list response omits `plots` / `pins`.
+  Future<List<ProjectLevelItem>> fetchProjectLevelsForQuotation({
+    required String projectId,
+  }) async {
+    final levels = await fetchProjectLevels(projectId: projectId);
+    if (levels.isEmpty) return levels;
+
+    final enriched = <ProjectLevelItem>[];
+    for (final level in levels) {
+      if (level.plots.isNotEmpty && _levelHasPinData(level)) {
+        enriched.add(level);
+        continue;
+      }
+      try {
+        final detail = await fetchProjectLevelById(
+          projectId: projectId,
+          levelId: level.id,
+        );
+        enriched.add(detail ?? level);
+      } catch (_) {
+        enriched.add(level);
+      }
+    }
+    return enriched;
+  }
+
+  Future<ProjectLevelItem?> fetchProjectLevelById({
+    required String projectId,
+    required String levelId,
+  }) async {
+    final id = levelId.trim();
+    if (id.isEmpty) return null;
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.projectLevelById(projectId, id),
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return _projectLevelItemFromMap(body.isNotEmpty ? body : root);
+  }
+
+  static bool _levelHasPinData(ProjectLevelItem level) {
+    for (final plot in level.plots) {
+      final pins = plot['pins'];
+      if (pins is List && pins.isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  static List<dynamic> _listRowsFromApiRoot(Map<String, dynamic> root) {
+    final data = root['data'];
+    if (data is List) return data;
+    if (data is Map) {
+      for (final key in const ['results', 'items', 'rows', 'levels']) {
+        final nested = data[key];
+        if (nested is List) return nested;
+      }
+    }
+    for (final key in const ['results', 'items', 'rows', 'levels']) {
+      final nested = root[key];
+      if (nested is List) return nested;
+    }
+    return const <dynamic>[];
+  }
+
+  static ProjectLevelItem? _projectLevelItemFromMap(Map<String, dynamic> map) {
+    if (map.isEmpty) return null;
+    final id = _readString(map, const ['id', 'level_id']);
+    if (id == null || id.isEmpty) return null;
+    final drawingFile = _readString(map, const ['drawing_file']) ?? '';
+    final name = _readString(map, const ['name']) ?? 'Level';
+    final orderRaw = map['order'];
+    final sortOrder = orderRaw is int
+        ? orderRaw
+        : int.tryParse('${orderRaw ?? ''}') ?? 0;
+    return ProjectLevelItem(
+      id: id,
+      name: name,
+      drawingFile: drawingFile,
+      plots: _plotsFromLevelMap(map),
+      sortOrder: sortOrder,
+    );
+  }
+
+  /// Plots may be nested under `payload` (JSON string or map) on level read responses.
+  static List<Map<String, dynamic>> _plotsFromLevelMap(
+    Map<String, dynamic> map,
+  ) {
+    final direct = _asMapList(map['plots']);
+    if (direct.isNotEmpty) return direct;
+
+    final payload = map['payload'];
+    if (payload is Map) {
+      final fromPayload = _asMapList(payload['plots']);
+      if (fromPayload.isNotEmpty) return fromPayload;
+    }
+    if (payload is String && payload.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(payload);
+        if (decoded is Map) {
+          final fromPayload = _asMapList(decoded['plots']);
+          if (fromPayload.isNotEmpty) return fromPayload;
+        }
+      } catch (_) {
+        // Ignore malformed payload strings.
+      }
+    }
+
+    for (final key in const ['plot_areas', 'plot_data', 'markup']) {
+      final alt = _asMapList(map[key]);
+      if (alt.isNotEmpty) return alt;
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   Future<List<PinStatusItem>> fetchPinStatuses({
@@ -716,6 +842,7 @@ final class QuoteProjectApiClient {
   }
 
   Future<List<CompositeItemOption>> fetchCompositeItems({int? groupId}) async {
+    List<CompositeItemOption> groupItems = const [];
     if (groupId != null) {
       try {
         final response = await _dio.get<dynamic>(
@@ -723,100 +850,154 @@ final class QuoteProjectApiClient {
         );
         final root = _coerceMap(_normalizeResponseData(response.data));
         final body = _entityBody(root);
-        final rows = _asMapList(body['items'] ?? root['items']);
+        final rows = _asMapList(
+          body['items'] ??
+              body['composite_items'] ??
+              root['items'] ??
+              root['composite_items'],
+        );
         if (rows.isNotEmpty) {
           final out = <CompositeItemOption>[];
           final seen = <int>{};
           for (final map in rows) {
-            final idRaw =
-                map['item'] ??
-                map['composite_item'] ??
-                map['composite_item_id'] ??
-                map['item_id'] ??
-                map['id'];
-            final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
-            if (id == null || !seen.add(id)) continue;
-            final name =
-                _readString(map, const ['item_name', 'name', 'title']) ??
-                'Item $id';
-            final abbreviation =
-                _readString(map, const [
-                  'abbreviation',
-                  'short_code',
-                  'code',
-                ]) ??
-                '';
-            out.add(
-              CompositeItemOption(
-                id: id,
-                name: name,
-                groupId: groupId,
-                abbreviation: abbreviation,
-              ),
-            );
+            final parsed = _parseCompositeItemOption(map, groupId: groupId);
+            if (parsed == null || !seen.add(parsed.id)) continue;
+            out.add(parsed);
           }
-          return out;
+          groupItems = out;
         }
       } catch (_) {
-        // Fallback to list endpoint below.
+        // Fall back to catalog list below.
       }
     }
 
-    final response = await _dio.get<dynamic>(
-      AppApiUrls.items,
-      queryParameters: <String, dynamic>{
-        'page': 1,
-        'page_size': 20,
-        'is_composite': true,
-        if (groupId != null) 'group': groupId,
-      },
+    final requiredIds = groupItems.map((e) => e.id).toSet();
+    var catalogPrices = await _fetchCompositeSellingPricesById(
+      groupId: groupId,
     );
-    final root = _coerceMap(_normalizeResponseData(response.data));
-    final rows = root['data'] is List
-        ? (root['data'] as List<dynamic>)
-        : (root['results'] is List
-              ? (root['results'] as List<dynamic>)
-              : const <dynamic>[]);
-    final out = <CompositeItemOption>[];
-    for (final row in rows) {
-      final map = _coerceMap(row);
-      final idRaw =
-          map['item'] ??
-          map['composite_item'] ??
-          map['composite_item_id'] ??
-          map['item_id'] ??
-          map['id'];
-      final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
-      if (id == null) continue;
-      final rawGroup = map['group'] ?? map['group_id'];
-      final parsedGroupId = rawGroup is Map
-          ? int.tryParse('${rawGroup['id'] ?? ''}')
-          : (rawGroup is int ? rawGroup : int.tryParse('${rawGroup ?? ''}'));
-      if (groupId != null &&
-          parsedGroupId != null &&
-          parsedGroupId != groupId) {
-        continue;
+    if (groupId != null &&
+        requiredIds.isNotEmpty &&
+        requiredIds.any((id) => !catalogPrices.containsKey(id))) {
+      final globalPrices = await _fetchCompositeSellingPricesById();
+      for (final id in requiredIds) {
+        if (catalogPrices.containsKey(id)) continue;
+        final price = globalPrices[id];
+        if (price != null) catalogPrices[id] = price;
       }
-      final name =
-          _readString(map, const ['name', 'item_name', 'title']) ??
-          'Item $id';
-      final abbreviation =
-          _readString(map, const [
-            'abbreviation',
-            'short_code',
-            'code',
-          ]) ??
-          '';
-      out.add(
-        CompositeItemOption(
-          id: id,
-          name: name,
-          groupId: parsedGroupId,
-          abbreviation: abbreviation,
-        ),
+    }
+
+    if (groupItems.isNotEmpty) {
+      return _enrichCompositeItemsWithSellingPrices(groupItems, catalogPrices);
+    }
+
+    return _fetchCompositeItemsFromCatalog(groupId: groupId);
+  }
+
+  /// Selling prices keyed by composite item id from `GET /item/?is_composite=true`.
+  Future<Map<int, double>> _fetchCompositeSellingPricesById({
+    int? groupId,
+  }) async {
+    final prices = <int, double>{};
+    var page = 1;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.items,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'page_size': kDefaultApiPageSize,
+          'is_composite': true,
+          if (groupId != null) 'group': groupId,
+        },
       );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = readApiRows(root);
+      if (rows.isEmpty) break;
+
+      for (final map in rows) {
+        final idRaw = map['id'];
+        final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+        if (id == null) continue;
+        final price = _readDouble(map, const [
+          'selling_price',
+          'sell_price',
+          'price',
+          'unit_price',
+        ]);
+        if (price != null) prices[id] = price;
+      }
+
+      final meta = readApiPageMeta(root, page: page);
+      if (meta.currentPage >= meta.totalPages) break;
+      page = meta.currentPage + 1;
+      if (page > 50) break;
+    }
+    return prices;
+  }
+
+  Future<List<CompositeItemOption>> _fetchCompositeItemsFromCatalog({
+    int? groupId,
+  }) async {
+    final out = <CompositeItemOption>[];
+    var page = 1;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.items,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'page_size': kDefaultApiPageSize,
+          'is_composite': true,
+          if (groupId != null) 'group': groupId,
+        },
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = readApiRows(root);
+      if (rows.isEmpty) break;
+
+      for (final map in rows) {
+        final rawGroup = map['group'] ?? map['group_id'];
+        final parsedGroupId = rawGroup is Map
+            ? int.tryParse('${rawGroup['id'] ?? ''}')
+            : (rawGroup is int ? rawGroup : int.tryParse('${rawGroup ?? ''}'));
+        if (groupId != null &&
+            parsedGroupId != null &&
+            parsedGroupId != groupId) {
+          continue;
+        }
+        final parsed = _parseCompositeItemOption(
+          map,
+          groupId: parsedGroupId ?? groupId,
+        );
+        if (parsed != null) out.add(parsed);
+      }
+
+      final meta = readApiPageMeta(root, page: page);
+      if (meta.currentPage >= meta.totalPages) break;
+      page = meta.currentPage + 1;
+      if (page > 50) break;
     }
     return out;
+  }
+
+  static List<CompositeItemOption> _enrichCompositeItemsWithSellingPrices(
+    List<CompositeItemOption> items,
+    Map<int, double> catalogPrices,
+  ) {
+    if (catalogPrices.isEmpty) return items;
+    return items
+        .map((item) {
+          if (item.sellingPrice != null) return item;
+          final price = catalogPrices[item.id];
+          if (price == null) return item;
+          return CompositeItemOption(
+            id: item.id,
+            name: item.name,
+            groupId: item.groupId,
+            abbreviation: item.abbreviation,
+            sellingPrice: price,
+            quantity: item.quantity,
+          );
+        })
+        .toList(growable: false);
   }
 
   /// Sites linked to a project (`GET /project/{id}/` → `sites[]`).
@@ -873,49 +1054,26 @@ final class QuoteProjectApiClient {
         g['items'] ?? g['composite_items'] ?? g['products'] ?? g['line_items'],
       );
       for (final item in itemNodes) {
-        final itemIdRaw =
-            item['item'] ??
-            item['composite_item'] ??
-            item['composite_item_id'] ??
-            item['item_id'] ??
-            item['id'];
-        final itemId = itemIdRaw is int
-            ? itemIdRaw
-            : int.tryParse('${itemIdRaw ?? ''}');
-        if (itemId == null || !seenItemIds.add(itemId)) continue;
-        final name =
-            _readString(item, const [
-              'name',
-              'item_name',
-              'title',
-              'product_name',
-            ]) ??
-            'Item $itemId';
-        final abbreviation =
-            _readString(item, const [
-              'abbreviation',
-              'short_code',
-              'code',
-            ]) ??
-            '';
         final nestedGroupRaw = item['group'] ?? item['group_id'];
         final nestedGroupId = nestedGroupRaw is Map
             ? int.tryParse('${nestedGroupRaw['id'] ?? ''}')
             : (nestedGroupRaw is int
                   ? nestedGroupRaw
                   : int.tryParse('${nestedGroupRaw ?? ''}'));
-        items.add(
-          CompositeItemOption(
-            id: itemId,
-            name: name,
-            groupId: nestedGroupId ?? groupId,
-            abbreviation: abbreviation,
-          ),
+        final parsed = _parseCompositeItemOption(
+          item,
+          groupId: nestedGroupId ?? groupId,
         );
+        if (parsed == null || !seenItemIds.add(parsed.id)) continue;
+        items.add(parsed);
       }
     }
 
-    return GroupCompositeCatalog(groups: groups, items: items);
+    final catalogPrices = await _fetchCompositeSellingPricesById();
+    return GroupCompositeCatalog(
+      groups: groups,
+      items: _enrichCompositeItemsWithSellingPrices(items, catalogPrices),
+    );
   }
 
   Future<PinStatusItem> createPinStatus({
@@ -1073,6 +1231,49 @@ final class QuoteProjectApiClient {
         .toList(growable: false);
   }
 
+  /// Paginated `GET /jobs/` — jobs list for the dashboard Jobs screen.
+  Future<JobsPageResult> fetchJobsPage({
+    int page = 1,
+    int pageSize = kDefaultApiPageSize,
+    String? jobStatus,
+    String? assignedWorker,
+    String? jobSource,
+    String? search,
+  }) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.jobs,
+      queryParameters: <String, dynamic>{
+        if (jobStatus != null && jobStatus.trim().isNotEmpty)
+          'job_status': jobStatus.trim(),
+        if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
+          'assigned_worker': assignedWorker.trim(),
+        if (jobSource != null && jobSource.trim().isNotEmpty)
+          'job_source': jobSource.trim(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        'page': page < 1 ? 1 : page,
+        'page_size': pageSize,
+      },
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final rows = root['results'] is List
+        ? (root['results'] as List<dynamic>)
+        : (root['data'] is List
+              ? (root['data'] as List<dynamic>)
+              : const <dynamic>[]);
+    final items = rows
+        .whereType<Map>()
+        .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
+        .whereType<JobRead>()
+        .toList(growable: false);
+    final meta = readApiPageMeta(root, page: page);
+    return JobsPageResult(
+      items: items,
+      currentPage: meta.currentPage,
+      totalPages: meta.totalPages,
+      totalRecords: meta.totalRecords,
+    );
+  }
+
   /// Fetches all pages from `GET /jobs/`.
   Future<List<JobRead>> fetchAllJobs({
     String? jobStatus,
@@ -1099,6 +1300,16 @@ final class QuoteProjectApiClient {
           'page_size': pageSize,
         },
       );
+      if (kDebugMode && page == 1) {
+        JobCompletionDebugLog.banner('Employee home — GET /jobs/');
+        JobCompletionDebugLog.api(
+          label: 'Jobs list (page 1)',
+          method: 'GET',
+          url: '/api/v1${AppApiUrls.jobs}',
+          statusCode: response.statusCode,
+          response: response.data,
+        );
+      }
       final root = _coerceMap(_normalizeResponseData(response.data));
       final rows = root['results'] is List
           ? (root['results'] as List<dynamic>)
@@ -1125,6 +1336,59 @@ final class QuoteProjectApiClient {
     );
   }
 
+  /// Project type options for create project forms.
+  Future<List<NamedIdOption>> fetchProjectTypeOptions() async {
+    return _fetchNamedIdOptions(
+      AppApiUrls.projectTypes,
+      nameKeys: const ['project_type', 'type_name', 'name', 'title', 'label'],
+      queryParameters: const <String, dynamic>{
+        'page': 1,
+        'page_size': 500,
+        'is_active': true,
+      },
+    );
+  }
+
+  /// `POST /project-type/` — create a project type metadata row.
+  Future<NamedIdOption> createProjectType({
+    required String projectType,
+    required String bgColor,
+    required String textColor,
+    bool isActive = true,
+  }) async {
+    final payload = <String, dynamic>{
+      'project_type': projectType.trim(),
+      'bg_color': bgColor.trim().toLowerCase(),
+      'text_color': textColor.trim().toLowerCase(),
+      'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'createProjectType',
+      endpoint: AppApiUrls.projectTypes,
+      payload: payload,
+    );
+    final response = await _dio.post<dynamic>(
+      AppApiUrls.projectTypes,
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final idRaw = body['id'];
+    final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+    if (id == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Project type created but no id returned.',
+      );
+    }
+    final name =
+        _readString(body, const ['project_type', 'name']) ??
+        projectType.trim();
+    return NamedIdOption(id: id, name: name);
+  }
+
   /// Registered QR codes for create/edit job forms.
   Future<List<NamedIdOption>> fetchQrCodeOptions() async {
     return _fetchNamedIdOptions(
@@ -1136,11 +1400,13 @@ final class QuoteProjectApiClient {
   Future<List<NamedIdOption>> _fetchNamedIdOptions(
     String endpoint, {
     required List<String> nameKeys,
+    Map<String, dynamic>? queryParameters,
   }) async {
     try {
       final response = await _dio.get<dynamic>(
         endpoint,
-        queryParameters: const <String, dynamic>{'page': 1, 'page_size': 100},
+        queryParameters: queryParameters ??
+            const <String, dynamic>{'page': 1, 'page_size': 100},
       );
       final root = _coerceMap(_normalizeResponseData(response.data));
       final rows = root['data'] is List
@@ -1242,6 +1508,15 @@ final class QuoteProjectApiClient {
       AppApiUrls.jobById(jobId),
       data: payload,
     );
+    if (kDebugMode) {
+      JobCompletionDebugLog.api(
+        label: 'updateJob (HTTP)',
+        method: 'PUT',
+        url: '/api/v1${AppApiUrls.jobById(jobId)}',
+        statusCode: response.statusCode,
+        response: response.data,
+      );
+    }
     final root = _coerceMap(_normalizeResponseData(response.data));
     final body = _entityBody(root);
     return JobRead.tryFromMap(body) ?? fetchJobById(jobId);
@@ -1419,6 +1694,126 @@ final class QuoteProjectApiClient {
       if (text.isNotEmpty) return text;
     }
     return null;
+  }
+
+  static double? _readDouble(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value is num) return value.toDouble();
+      if (value == null) continue;
+      final parsed = double.tryParse(
+        value.toString().trim().replaceAll(RegExp(r'[^\d.-]'), ''),
+      );
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  static int _readInt(
+    Map<String, dynamic> map,
+    List<String> keys, {
+    int fallback = 1,
+  }) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value is int) return value;
+      if (value is num) return value.round();
+      if (value == null) continue;
+      final parsed = int.tryParse(value.toString().trim());
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
+  static Map<String, dynamic>? _nestedItemMap(Map<String, dynamic> map) {
+    for (final key in const [
+      'item',
+      'composite_item',
+      'product',
+      'item_detail',
+      'composite_item_detail',
+    ]) {
+      final raw = map[key];
+      if (raw is Map) {
+        return Map<String, dynamic>.from(
+          raw.map((k, v) => MapEntry(k.toString(), v)),
+        );
+      }
+    }
+    return null;
+  }
+
+  static int? _resolveCompositeItemId(
+    Map<String, dynamic> map,
+    Map<String, dynamic>? nested,
+  ) {
+    for (final key in const ['composite_item_id', 'item_id']) {
+      final raw = map[key];
+      if (raw is int) return raw;
+      final parsed = int.tryParse('${raw ?? ''}');
+      if (parsed != null) return parsed;
+    }
+    if (nested != null) {
+      final raw = nested['id'];
+      if (raw is int) return raw;
+      final parsed = int.tryParse('${raw ?? ''}');
+      if (parsed != null) return parsed;
+    }
+    for (final key in const ['item', 'composite_item']) {
+      final raw = map[key];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+    }
+    final raw = map['id'];
+    if (raw is int) return raw;
+    return int.tryParse('${raw ?? ''}');
+  }
+
+  static CompositeItemOption? _parseCompositeItemOption(
+    Map<String, dynamic> map, {
+    int? groupId,
+  }) {
+    final nested = _nestedItemMap(map);
+    final id = _resolveCompositeItemId(map, nested);
+    if (id == null) return null;
+
+    final name =
+        _readString(map, const ['item_name', 'name', 'title', 'product_name']) ??
+        (nested != null
+            ? _readString(nested, const ['name', 'item_name', 'title'])
+            : null) ??
+        'Item $id';
+    final abbreviation =
+        _readString(map, const ['abbreviation', 'short_code', 'code']) ??
+        (nested != null
+            ? _readString(nested, const ['abbreviation', 'short_code', 'code'])
+            : null) ??
+        '';
+    final sellingPrice =
+        _readDouble(map, const [
+          'selling_price',
+          'sell_price',
+          'price',
+          'unit_price',
+        ]) ??
+        (nested != null
+            ? _readDouble(nested, const [
+                'selling_price',
+                'sell_price',
+                'price',
+                'unit_price',
+              ])
+            : null);
+    final quantity = _readInt(map, const ['quantity', 'qty'], fallback: 1);
+
+    return CompositeItemOption(
+      id: id,
+      name: name,
+      groupId: groupId,
+      abbreviation: abbreviation,
+      sellingPrice: sellingPrice,
+      quantity: quantity > 0 ? quantity : 1,
+    );
   }
 
   static Map<String, dynamic> _entityBody(Map<String, dynamic> root) {

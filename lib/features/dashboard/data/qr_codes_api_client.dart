@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/core/utils/qr_code_utils.dart';
+import 'package:red5/employee_role/jobs/data/qr_code_details_models.dart';
 import 'package:red5/features/dashboard/data/qr_code_models.dart';
 
 final class QrCodesPageResult {
@@ -18,9 +20,14 @@ final class QrCodesPageResult {
 }
 
 final class QrCodesApiClient {
-  QrCodesApiClient({required Dio dio}) : _dio = dio;
+  QrCodesApiClient({
+    required Dio dio,
+    Dio? publicDio,
+  })  : _dio = dio,
+        _publicDio = publicDio ?? dio;
 
   final Dio _dio;
+  final Dio _publicDio;
 
   /// `GET /qr-codes/` — paginated list.
   Future<QrCodesPageResult> fetchQrCodesPage({
@@ -83,6 +90,50 @@ final class QrCodesApiClient {
     return QrCodeModel.fromJson(_entityBody(root));
   }
 
+  /// `GET /qr-codes/{qr_code}/details/` — public job lookup by QR value.
+  Future<QrCodeJobDetails> fetchQrCodeDetails(String qrCode) async {
+    final normalized = QrCodeUtils.normalizeScannedValue(qrCode);
+    DioException? lastError;
+
+    for (final client in <Dio>[_publicDio, _dio]) {
+      try {
+        final response = await client.get<dynamic>(
+          AppApiUrls.qrCodeDetailsByCode(normalized),
+        );
+        final parsed = _parseQrCodeDetailsResponse(response, normalized);
+        if (parsed != null) return parsed;
+      } on DioException catch (error) {
+        lastError = error;
+        if (_isNotFound(error)) continue;
+        rethrow;
+      }
+    }
+
+    throw lastError ??
+        DioException(
+          requestOptions: RequestOptions(
+            path: AppApiUrls.qrCodeDetailsByCode(normalized),
+          ),
+          type: DioExceptionType.badResponse,
+          message: 'QR code details response missing job_id.',
+        );
+  }
+
+  QrCodeJobDetails? _parseQrCodeDetailsResponse(
+    Response<dynamic> response,
+    String normalized,
+  ) {
+    final root = _coerceMap(response.data);
+    final body = _entityBody(root);
+    return QrCodeJobDetails.tryFromMap(body, qrCode: normalized) ??
+        QrCodeJobDetails.tryFromMap(root, qrCode: normalized);
+  }
+
+  static bool _isNotFound(DioException error) {
+    final status = error.response?.statusCode;
+    return status == 404;
+  }
+
   /// `POST /qr-codes/generate/`
   Future<List<QrCodeModel>> generateQrCodes({required int count}) async {
     final response = await _dio.post<dynamic>(
@@ -137,7 +188,7 @@ final class QrCodesApiClient {
     final pagNext = pagination['next'];
     return pagNext != null && pagNext.toString().trim().isNotEmpty;
   }
-
+ 
   static int? _readInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();

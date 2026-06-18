@@ -15,6 +15,15 @@ class EmployeeJobStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final normalized = status.trim().toUpperCase();
+    final inProgress = normalized.contains('PROGRESS');
+    final completed = normalized.contains('COMPLETE');
+    final statusColor = inProgress
+        ? const Color(0xFF5E4BFF)
+        : completed
+            ? const Color(0xFF00A553)
+            : const Color(0xFFE34D1C);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
@@ -35,7 +44,7 @@ class EmployeeJobStatusCard extends StatelessWidget {
           Text(
             status,
             style: AppFonts.labelSmall(
-              color: const Color(0xFFE34D1C),
+              color: statusColor,
             ).copyWith(fontWeight: FontWeight.w900, letterSpacing: 0.4),
           ),
         ],
@@ -581,10 +590,9 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
   required EmployeeJobDetail job,
   List<int> formIds = const [],
   Set<int> completedFormIds = const {},
-  required bool hasBeforePhoto,
-  required bool hasMaterialUsed,
-  required bool hasCustomerSignature,
+  required bool hasQrScan,
   required bool dynamicFormComplete,
+  bool isJobCompleted = false,
 }) {
   final linkedFormIds = formIds.isNotEmpty ? formIds : job.linkedFormIds;
   final hasDynamicForms = linkedFormIds.isNotEmpty;
@@ -596,9 +604,13 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
       ? [
           EmployeeRequiredFormItem(
             id: 'linked_forms',
-            title: linkedFormIds.length > 1
-                ? 'Fill required forms ($completedForms/${linkedFormIds.length})'
-                : 'Fill required form',
+            title: isJobCompleted
+                ? (linkedFormIds.length > 1
+                    ? 'Submitted forms — tap to edit ($completedForms/${linkedFormIds.length})'
+                    : 'Submitted form — tap to edit')
+                : (linkedFormIds.length > 1
+                    ? 'Fill required forms ($completedForms/${linkedFormIds.length})'
+                    : 'Fill required form'),
             isComplete: dynamicFormComplete,
           ),
         ]
@@ -612,21 +624,12 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
         ];
 
   return [
-    EmployeeRequiredFormItem(
-      id: 'before_photo',
-      title: 'Upload before & after photo',
-      isComplete: hasBeforePhoto,
-    ),
     ...formItems,
     EmployeeRequiredFormItem(
-      id: 'material_used',
-      title: 'Add material used',
-      isComplete: hasMaterialUsed,
-    ),
-    EmployeeRequiredFormItem(
-      id: 'signature',
-      title: 'Add site/customer signature',
-      isComplete: hasCustomerSignature,
+      id: 'qr_scan',
+      title: 'Scan QR code',
+      isComplete: hasQrScan,
+      isOptional: true,
     ),
   ];
 }
@@ -643,8 +646,11 @@ class EmployeeRequiredFormChecklist extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final completed = items.where((item) => item.isComplete).length;
-    final total = items.length;
+    final requiredItems =
+        items.where((item) => !item.isOptional).toList(growable: false);
+    final completed =
+        requiredItems.where((item) => item.isComplete).length;
+    final total = requiredItems.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -738,7 +744,9 @@ class _RequiredFormTaskCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
-              complete ? 'Complete' : 'Pending',
+              complete
+                  ? 'Complete'
+                  : (item.isOptional ? 'Optional' : 'Pending'),
               style: AppFonts.labelSmall(
                 color: complete
                     ? const Color(0xFF00A86B)

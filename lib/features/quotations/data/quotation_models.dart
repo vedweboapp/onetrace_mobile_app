@@ -396,6 +396,15 @@ class QuotationDetailModel {
     return const [];
   }
 
+  /// Scope & pricing tree from `GET /quotations/{id}/` (`quote_sections`).
+  List<dynamic> get quoteSectionsRaw {
+    final sections = raw['quote_sections'];
+    if (sections is List) return sections;
+    return const [];
+  }
+
+  bool get hasQuoteSections => quoteSectionsRaw.isNotEmpty;
+
   String get primaryContact {
     final s = _displayContactObject(raw['primary_customer_contact']);
     if (s.isNotEmpty) return s;

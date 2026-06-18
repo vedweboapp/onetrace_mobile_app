@@ -137,21 +137,29 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
 
   String _lineTitle(QuotationPlotLine line) {
     if (line.quantityMultiplier != null && line.quantityMultiplier! > 0) {
-      return '${line.label} (x${line.quantityMultiplier})';
+      return 'Quotation Map (x${line.quantityMultiplier})';
     }
-    return line.label;
+    return 'Quotation Map';
   }
 
   @override
   Widget build(BuildContext context) {
-    assert(
-      blockExpandedList.length == plotGroups.length,
-      'blockExpandedList and plotGroups must have the same length',
-    );
+    final expandedFlags = blockExpandedList.length == plotGroups.length
+        ? blockExpandedList
+        : List<bool>.filled(plotGroups.length, true);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _label('Block Name'),
+        const SizedBox(height: 8),
+        AppTextField(
+          controller: blockNameController,
+          hintText: 'Block name',
+          textInputAction: TextInputAction.next,
+          enabled: !submitting,
+        ),
+        const SizedBox(height: 16),
         _label('Section Name'),
         const SizedBox(height: 8),
         Row(
@@ -188,6 +196,24 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
+        if (plotGroups.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Text(
+              'No plots with pins found for this project. Add pins on the project drawing levels first.',
+              style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          )
+        else
         for (var i = 0; i < plotGroups.length; i++) ...[
           if (i > 0) const SizedBox(height: 12),
           Builder(
@@ -199,8 +225,7 @@ class QuotationBlockSectionsPanel extends StatelessWidget {
               return _BlockCard(
                 blockNameController: blockNameController,
                 headerTitleOverride: g.name.trim().isEmpty ? null : g.name.trim(),
-                hidePlotGroupHeaders: true,
-                expanded: blockExpandedList[i],
+                expanded: expandedFlags[i],
                 onExpandedChanged: (v) => onBlockExpandedAt(i, v),
                 plotGroups: [g],
                 submitting: submitting,
@@ -235,7 +260,6 @@ class _BlockCard extends StatelessWidget {
   const _BlockCard({
     required this.blockNameController,
     this.headerTitleOverride,
-    this.hidePlotGroupHeaders = false,
     required this.expanded,
     required this.onExpandedChanged,
     required this.plotGroups,
@@ -252,8 +276,6 @@ class _BlockCard extends StatelessWidget {
   final TextEditingController blockNameController;
   /// When set, shown as the card title instead of [blockNameController] text.
   final String? headerTitleOverride;
-  /// When true, plot sub-headers (blue circle + name) are omitted — lines list starts immediately.
-  final bool hidePlotGroupHeaders;
   final bool expanded;
   final ValueChanged<bool> onExpandedChanged;
   final List<QuotationPlotGroup> plotGroups;
@@ -304,12 +326,19 @@ class _BlockCard extends StatelessWidget {
                     Expanded(
                       child: headerTitleOverride != null
                           ? Text(
-                              headerTitleOverride!.isEmpty ? 'Block Name' : headerTitleOverride!,
+                              headerTitleOverride!.isEmpty
+                                  ? (blockNameController.text.trim().isEmpty
+                                        ? 'Block Name'
+                                        : blockNameController.text.trim())
+                                  : headerTitleOverride!,
                               textAlign: TextAlign.center,
-                              style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
+                              style: AppFonts.titleMedium(
+                                color: AppColors.inkStrong,
+                              ).copyWith(
                                 fontWeight: FontWeight.w800,
                                 fontSize: 16,
-                                color: headerTitleOverride!.isEmpty
+                                color: (headerTitleOverride!.isEmpty &&
+                                        blockNameController.text.trim().isEmpty)
                                     ? AppColors.muted
                                     : AppColors.inkStrong,
                               ),
@@ -365,16 +394,23 @@ class _BlockCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (var gi = 0; gi < plotGroups.length; gi++) ...[
-                        if (!hidePlotGroupHeaders && gi > 0)
-                          Divider(height: 1, color: AppColors.borderLight.withValues(alpha: 0.7)),
-                        if (!hidePlotGroupHeaders)
-                          _PlotHeader(
-                            name: plotGroups[gi].name,
-                            canRemove: plotGroups.length > 1,
-                            submitting: submitting,
-                            onRemove: () => onRemovePlotGroup(gi),
+                        if (gi > 0)
+                          Divider(
+                            height: 1,
+                            color: AppColors.borderLight.withValues(alpha: 0.7),
                           ),
-                        for (var li = 0; li < plotGroups[gi].lines.length; li++)
+                        for (var li = 0; li < plotGroups[gi].lines.length; li++) ...[
+                          if (li > 0)
+                            Divider(
+                              height: 1,
+                              color: AppColors.borderLight.withValues(alpha: 0.5),
+                            ),
+                          _PlotHeader(
+                            name: plotGroups[gi].lines[li].label,
+                            canRemove: false,
+                            submitting: submitting,
+                            onRemove: () {},
+                          ),
                           _LineRow(
                             selected: plotGroups[gi].lines[li].selected,
                             title: lineTitle(plotGroups[gi].lines[li]),
@@ -385,6 +421,15 @@ class _BlockCard extends StatelessWidget {
                             formatMoney: formatMoney,
                             enabled: !submitting,
                             onChanged: (v) => onLineSelectionChanged(gi, li, v),
+                          ),
+                        ],
+                        if (plotGroups[gi].lines.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Text(
+                              'No plots on this level yet.',
+                              style: AppFonts.bodySmall(color: AppColors.muted),
+                            ),
                           ),
                       ],
                       _TotalsFooter(

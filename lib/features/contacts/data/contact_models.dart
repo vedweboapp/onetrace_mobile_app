@@ -55,6 +55,7 @@ class ContactModel {
     required this.state,
     required this.postalCode,
     required this.isActive,
+    this.contactType,
   });
 
   final String id;
@@ -69,6 +70,7 @@ class ContactModel {
   final String state;
   final String postalCode;
   final bool isActive;
+  final String? contactType;
 
   /// Convenience accessor used widely by the UI. Falls back to the raw
   /// client id when the API returns only an integer reference without
@@ -108,6 +110,7 @@ class ContactModel {
         'zip',
       ]),
       isActive: _readBool(json, const ['is_active', 'active']),
+      contactType: _readString(json, const ['contact_type', 'type']),
     );
   }
 
@@ -160,4 +163,30 @@ bool _readBool(Map<String, dynamic> json, List<String> keys) {
     }
   }
   return false;
+}
+
+/// API values for `contact_type` on `/contact/` create/update.
+abstract final class ContactTypeValues {
+  ContactTypeValues._();
+
+  static const client = 'client';
+  static const vendor = 'vendor';
+
+  static const options = <({String value, String label})>[
+    (value: client, label: 'Client'),
+    (value: vendor, label: 'Vendor'),
+  ];
+
+  static String labelFor(String? value) {
+    final normalized = normalize(value);
+    if (normalized == client) return 'Client';
+    if (normalized == vendor) return 'Vendor';
+    return value?.trim().isNotEmpty == true ? value!.trim() : 'Client';
+  }
+
+  static String? normalize(String? value) {
+    final t = value?.trim().toLowerCase();
+    if (t == client || t == vendor) return t;
+    return null;
+  }
 }

@@ -3,8 +3,11 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/employee_role/forms/application/technician_form_controller.dart';
 import 'package:red5/employee_role/forms/data/technician_form_repository.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
+import 'package:red5/employee_role/jobs/data/job_form_models.dart';
+import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_detail_widgets.dart';
 import 'package:red5/employee_role/projects/data/employee_project_repository.dart';
 
@@ -16,6 +19,7 @@ final employeeJobDetailControllerProvider =
       return EmployeeJobDetailController(
         ref.read(employeeJobRepositoryProvider),
         ref.read(employeeProjectRepositoryProvider),
+        ref.read(jobFormSubmissionRepositoryProvider),
         ref,
       );
     });
@@ -34,10 +38,12 @@ final class EmployeeJobDetailState {
     this.afterPhotoBytes,
     this.afterPhotoName,
     this.customerSignatureCaptured = false,
+    this.qrCodeScanned = false,
     this.formIds = const [],
     this.selectedFormId,
     this.completedFormIds = const {},
     this.formTitles = const {},
+    this.formSubmissionIds = const {},
   });
 
   final EmployeeJobDetail? job;
@@ -50,6 +56,7 @@ final class EmployeeJobDetailState {
   final Uint8List? afterPhotoBytes;
   final String? afterPhotoName;
   final bool customerSignatureCaptured;
+  final bool qrCodeScanned;
 
   bool get hasJobPhotos =>
       beforePhotoBytes != null && afterPhotoBytes != null;
@@ -57,6 +64,7 @@ final class EmployeeJobDetailState {
   final int? selectedFormId;
   final Set<int> completedFormIds;
   final Map<int, String> formTitles;
+  final Map<int, int> formSubmissionIds;
 
   bool get hasMultipleForms => formIds.length > 1;
 
@@ -77,10 +85,12 @@ final class EmployeeJobDetailState {
     Uint8List? afterPhotoBytes,
     String? afterPhotoName,
     bool? customerSignatureCaptured,
+    bool? qrCodeScanned,
     List<int>? formIds,
     int? selectedFormId,
     Set<int>? completedFormIds,
     Map<int, String>? formTitles,
+    Map<int, int>? formSubmissionIds,
   }) {
     return EmployeeJobDetailState(
       job: job ?? this.job,
@@ -94,11 +104,20 @@ final class EmployeeJobDetailState {
       afterPhotoName: afterPhotoName ?? this.afterPhotoName,
       customerSignatureCaptured:
           customerSignatureCaptured ?? this.customerSignatureCaptured,
+      qrCodeScanned: qrCodeScanned ?? this.qrCodeScanned,
       formIds: formIds ?? this.formIds,
       selectedFormId: selectedFormId ?? this.selectedFormId,
       completedFormIds: completedFormIds ?? this.completedFormIds,
       formTitles: formTitles ?? this.formTitles,
+      formSubmissionIds: formSubmissionIds ?? this.formSubmissionIds,
     );
+  }
+
+  bool get isJobCompleted {
+    final job = this.job;
+    if (job == null) return false;
+    final status = job.currentStatus.trim().toUpperCase();
+    return status.contains('COMPLETE');
   }
 }
 
@@ -107,20 +126,31 @@ final class EmployeeJobDetailController
   EmployeeJobDetailController(
     this._repository,
     this._projectRepository,
+    this._submissionRepository,
     this._ref,
   ) : super(const EmployeeJobDetailState());
 
   final EmployeeJobRepository _repository;
   final EmployeeProjectRepository _projectRepository;
+  final JobFormSubmissionRepository _submissionRepository;
   final Ref _ref;
 
   Future<void> load({int? jobId}) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final job = await _repository.fetchJobDetail(jobId: jobId);
-      var formIds = List<int>.from(job.linkedFormIds);
+      var formAssignments = List<JobFormAssignment>.from(job.formAssignments);
+      if (formAssignments.isNotEmpty) {
+        await _submissionRepository.cacheJobFormLinks(
+          jobId: job.id,
+          assignments: formAssignments,
+        );
+      }
+      var formIds = formAssignments.isNotEmpty
+          ? formAssignments.map((assignment) => assignment.formId).toList()
+          : List<int>.from(job.linkedFormIds);
 
-      if (formIds.isEmpty && job.projectId != null) {
+      if (formIds.isEmpty && formAssignments.isEmpty && job.projectId != null) {
         try {
           final project = await _projectRepository.fetchProjectDetail(
             projectId: job.projectId,
@@ -134,25 +164,183 @@ final class EmployeeJobDetailController
       }
 
       formIds = formIds.toSet().toList(growable: false);
+      var formTitles = <int, String>{};
+      var formSubmissionIds = <int, int>{
+        for (final assignment in job.formAssignments)
+          if (assignment.submissionId != null && assignment.submissionId! > 0)
+            assignment.formId: assignment.submissionId!,
+      };
+      var linkedForms = const <JobLinkedFormSummary>[];
+
+      try {
+        linkedForms =
+            await _submissionRepository.fetchLinkedFormsRemote(job.id);
+        if (linkedForms.isNotEmpty) {
+          formIds = {
+            ...formIds,
+            ...linkedForms.map((form) => form.formId),
+          }.toList(growable: false);
+
+          for (final linked in linkedForms) {
+            formTitles[linked.formId] = linked.name;
+            final submissionId = linked.submissionId;
+            if (submissionId != null && submissionId > 0) {
+              formSubmissionIds[linked.formId] = submissionId;
+            }
+          }
+          formAssignments = JobFormAssignment.mergeByFormId(
+            formAssignments,
+            JobFormAssignment.fromLinkedForms(linkedForms),
+          );
+        }
+      } catch (_) {
+        // Linked forms are best-effort when job detail omits them.
+      }
+
+      await _submissionRepository.refreshJobFormLinksFromApi(job.id);
+
+      final refreshedAssignments =
+          await _submissionRepository.cachedAssignmentsForJob(job.id);
+      if (refreshedAssignments.isNotEmpty) {
+        formAssignments = JobFormAssignment.mergeByFormId(
+          formAssignments,
+          refreshedAssignments,
+        );
+      }
+
+      formIds = {
+        ...formIds,
+        ...formAssignments.map((assignment) => assignment.formId),
+      }.toList(growable: false);
+
+      for (final assignment in formAssignments) {
+        final submissionId = assignment.submissionId;
+        if (submissionId != null && submissionId > 0) {
+          formSubmissionIds[assignment.formId] = submissionId;
+        }
+      }
+
+      final enrichedJobWithLinks = job.copyWith(
+        formIds: formIds,
+        formAssignments: formAssignments,
+      );
 
       state = state.copyWith(
-        job: job,
+        job: enrichedJobWithLinks,
         isLoading: false,
         clearError: true,
         formIds: formIds,
         selectedFormId: null,
         completedFormIds: const {},
-        formTitles: const {},
+        formTitles: formTitles,
+        formSubmissionIds: formSubmissionIds,
       );
 
       if (formIds.isNotEmpty) {
-        await _preloadFormTitles(formIds);
+        await Future.wait([
+          _preloadFormTitles(formIds),
+          _loadCompletedForms(
+            job.id,
+            formIds,
+            enrichedJobWithLinks.formAssignments,
+          ),
+          _loadSubmissionIds(job.id, formIds),
+        ]);
       }
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Unable to load job details.',
       );
+    }
+  }
+
+  Future<void> _loadCompletedForms(
+    int jobId,
+    List<int> formIds,
+    List<JobFormAssignment> assignments,
+  ) async {
+    try {
+      final completed = await _submissionRepository.completedFormIdsForJob(
+        jobId: jobId,
+        formIds: formIds,
+        assignments: assignments,
+      );
+      if (completed.isEmpty) return;
+      state = state.copyWith(
+        completedFormIds: {...state.completedFormIds, ...completed},
+      );
+    } catch (_) {
+      // Best-effort: local cache still drives completion when offline.
+    }
+  }
+
+  Future<void> refreshCompletedForms() async {
+    final job = state.job;
+    if (job == null || state.formIds.isEmpty) return;
+    await Future.wait([
+      _loadCompletedForms(job.id, state.formIds, job.formAssignments),
+      _loadSubmissionIds(job.id, state.formIds),
+    ]);
+  }
+
+  int? jobFormIdFor(int formTemplateId) {
+    final job = state.job;
+    if (job == null) return null;
+    return job.jobFormIdFor(formTemplateId);
+  }
+
+  int? submissionIdFor(int formTemplateId) => state.formSubmissionIds[formTemplateId];
+
+  bool get isJobCompleted {
+    final job = state.job;
+    if (job == null) return false;
+    if (state.isJobCompleted) return true;
+    return _ref.read(employeeJobSessionProvider.notifier).isJobCompleted(job.id);
+  }
+
+  Future<void> _loadSubmissionIds(int jobId, List<int> formIds) async {
+    final ids = Map<int, int>.from(state.formSubmissionIds);
+
+    try {
+      final submitted =
+          await _submissionRepository.fetchSubmittedFormsRemote(jobId);
+      for (final row in submitted) {
+        final formId = row.formId;
+        final submissionId = row.resolvedSubmissionId;
+        if (formId == null ||
+            !formIds.contains(formId) ||
+            submissionId == null ||
+            submissionId <= 0) {
+          continue;
+        }
+        ids[formId] = submissionId;
+      }
+    } catch (_) {
+      // Best-effort: per-form resolution still runs below.
+    }
+
+    await Future.wait(
+      formIds.map((formId) async {
+        if (ids.containsKey(formId)) return;
+        try {
+          final submissionId = await _submissionRepository.resolveSubmissionId(
+            jobId: jobId,
+            formTemplateId: formId,
+          );
+          if (submissionId != null && submissionId > 0) {
+            ids[formId] = submissionId;
+          }
+        } catch (_) {
+          // Best-effort: updates still resolve on submit.
+        }
+      }),
+    );
+    if (ids.length != state.formSubmissionIds.length ||
+        ids.entries.any(
+          (entry) => state.formSubmissionIds[entry.key] != entry.value,
+        )) {
+      state = state.copyWith(formSubmissionIds: ids);
     }
   }
 
@@ -187,10 +375,21 @@ final class EmployeeJobDetailController
     }
   }
 
+  void markQrCodeScanned() {
+    state = state.copyWith(qrCodeScanned: true);
+  }
+
   void markFormComplete(int formId) {
     if (!state.formIds.contains(formId)) return;
     final updated = Set<int>.from(state.completedFormIds)..add(formId);
     state = state.copyWith(completedFormIds: updated);
+  }
+
+  void setSubmissionId({required int formId, required int submissionId}) {
+    if (!state.formIds.contains(formId) || submissionId <= 0) return;
+    final ids = Map<int, int>.from(state.formSubmissionIds)
+      ..[formId] = submissionId;
+    state = state.copyWith(formSubmissionIds: ids);
   }
 
   void markSelectedFormComplete() {
@@ -206,12 +405,13 @@ final class EmployeeJobDetailController
       job: job,
       formIds: state.formIds,
       completedFormIds: state.completedFormIds,
-      hasBeforePhoto: state.hasJobPhotos,
-      hasMaterialUsed: state.materialUsed.trim().isNotEmpty,
-      hasCustomerSignature: state.customerSignatureCaptured,
+      hasQrScan: state.qrCodeScanned,
       dynamicFormComplete: dynamicFormComplete,
+      isJobCompleted: isJobCompleted,
     );
-    return items.every((item) => item.isComplete);
+    return items
+        .where((item) => !item.isOptional)
+        .every((item) => item.isComplete);
   }
 
   void selectTab(EmployeeJobDetailTab tab) {
@@ -239,6 +439,7 @@ final class EmployeeJobDetailController
         ],
         formId: job.formId,
         formIds: job.formIds,
+        formAssignments: job.formAssignments,
         projectId: job.projectId,
       ),
     );

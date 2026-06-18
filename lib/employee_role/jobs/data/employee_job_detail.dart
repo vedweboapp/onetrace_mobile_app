@@ -1,3 +1,5 @@
+import 'package:red5/employee_role/jobs/data/job_form_models.dart';
+
 final class EmployeeJobDetail {
   const EmployeeJobDetail({
     required this.id,
@@ -13,6 +15,7 @@ final class EmployeeJobDetail {
     required this.safetyChecklist,
     this.formId,
     this.formIds = const [],
+    this.formAssignments = const [],
     this.projectId,
   });
 
@@ -29,12 +32,46 @@ final class EmployeeJobDetail {
   final List<EmployeeSafetyChecklistItem> safetyChecklist;
   final int? formId;
   final List<int> formIds;
+  final List<JobFormAssignment> formAssignments;
   final int? projectId;
 
   List<int> get linkedFormIds {
+    if (formAssignments.isNotEmpty) {
+      return formAssignments.map((a) => a.formId).toList(growable: false);
+    }
     if (formIds.isNotEmpty) return formIds;
     if (formId != null) return [formId!];
     return const [];
+  }
+
+  int? jobFormIdFor(int formTemplateId) {
+    for (final assignment in formAssignments) {
+      if (assignment.formId == formTemplateId) return assignment.jobFormId;
+    }
+    return null;
+  }
+
+  EmployeeJobDetail copyWith({
+    List<int>? formIds,
+    List<JobFormAssignment>? formAssignments,
+  }) {
+    return EmployeeJobDetail(
+      id: id,
+      title: title,
+      currentStatus: currentStatus,
+      project: project,
+      client: client,
+      siteContact: siteContact,
+      block: block,
+      plot: plot,
+      description: description,
+      items: items,
+      safetyChecklist: safetyChecklist,
+      formId: formId,
+      formIds: formIds ?? this.formIds,
+      formAssignments: formAssignments ?? this.formAssignments,
+      projectId: projectId,
+    );
   }
 }
 
@@ -63,6 +100,8 @@ final class EmployeeJobSummary {
     required this.schedule,
     required this.primaryActionLabel,
     this.startDate,
+    this.siteName,
+    this.projectName,
   });
 
   final int id;
@@ -73,6 +112,8 @@ final class EmployeeJobSummary {
   final String schedule;
   final String primaryActionLabel;
   final DateTime? startDate;
+  final String? siteName;
+  final String? projectName;
 }
 
 enum EmployeeJobStatus {
@@ -103,11 +144,13 @@ final class EmployeeRequiredFormItem {
     required this.id,
     required this.title,
     required this.isComplete,
+    this.isOptional = false,
   });
 
   final String id;
   final String title;
   final bool isComplete;
+  final bool isOptional;
 }
 
 final class EmployeeSafetyChecklistItem {

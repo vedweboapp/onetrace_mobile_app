@@ -61,6 +61,7 @@ final class ContactsApiClient {
 
   Future<ContactModel> createContact({
     required String contactName,
+    required String contactType,
     required String clientId,
     required String email,
     required String phone,
@@ -75,6 +76,7 @@ final class ContactsApiClient {
       AppApiUrls.contacts,
       data: _contactPayload(
         contactName: contactName,
+        contactType: contactType,
         clientId: clientId,
         email: email,
         phone: phone,
@@ -94,6 +96,7 @@ final class ContactsApiClient {
   Future<ContactModel> updateContact({
     required String id,
     required String contactName,
+    required String contactType,
     required String clientId,
     required String email,
     required String phone,
@@ -108,6 +111,7 @@ final class ContactsApiClient {
       AppApiUrls.contactById(id),
       data: _contactPayload(
         contactName: contactName,
+        contactType: contactType,
         clientId: clientId,
         email: email,
         phone: phone,
@@ -125,6 +129,7 @@ final class ContactsApiClient {
 
   static Map<String, dynamic> _contactPayload({
     required String contactName,
+    required String contactType,
     required String clientId,
     required String email,
     required String phone,
@@ -138,6 +143,8 @@ final class ContactsApiClient {
     return <String, dynamic>{
       'contact_name': contactName,
       'name': contactName,
+      'contact_type': ContactTypeValues.normalize(contactType) ??
+          contactType.trim().toLowerCase(),
       'client': _clientJsonValue(clientId),
       'email': email,
       'phone': phone,

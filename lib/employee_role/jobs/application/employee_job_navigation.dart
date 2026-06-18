@@ -13,16 +13,17 @@ void openEmployeeJob(
 }) {
   final container = ProviderScope.containerOf(context);
   final session = container.read(employeeJobSessionProvider.notifier);
+  final displayJob = session.withLocalProgress(job);
   final needsSafety = session.needsSafetyVerification(
-    jobId: job.id,
-    status: job.status,
+    jobId: displayJob.id,
+    status: displayJob.status,
   );
 
   final path = needsSafety
       ? EmployeeJobSafetyVerificationPage.path
       : EmployeeJobDetailsPage.path;
 
-  context.push(path, extra: <String, Object?>{'jobId': job.id});
+  context.push(path, extra: <String, Object?>{'jobId': displayJob.id});
 }
 
 EmployeeJobSummary employeeJobSummaryFromProjectItem(

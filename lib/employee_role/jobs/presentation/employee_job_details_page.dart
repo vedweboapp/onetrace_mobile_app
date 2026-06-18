@@ -11,7 +11,12 @@ import 'package:red5/employee_role/jobs/presentation/employee_job_form_page.dart
 import 'package:red5/employee_role/jobs/presentation/employee_job_safety_verification_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_detail_widgets.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_form_picker_sheet.dart';
-import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_photo_capture_sheet.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
+import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
+import 'package:red5/employee_role/jobs/application/employee_qr_scan_flow.dart';
+import 'package:red5/employee_role/jobs/application/job_form_submission_sync_listener.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
 
 class EmployeeJobDetailsPage extends ConsumerStatefulWidget {
@@ -30,15 +35,38 @@ class EmployeeJobDetailsPage extends ConsumerStatefulWidget {
 class _EmployeeJobDetailsPageState
     extends ConsumerState<EmployeeJobDetailsPage> {
   bool _safetyRedirectChecked = false;
+  bool _timerSynced = false;
+  bool _isSubmittingForms = false;
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      ref
+    Future.microtask(() async {
+      await ref
           .read(employeeJobDetailControllerProvider.notifier)
           .load(jobId: widget.jobId);
+      _syncJobTimerWithLoadedJob();
     });
+  }
+
+  void _syncJobTimerWithLoadedJob() {
+    if (_timerSynced) return;
+    final jobId = widget.jobId;
+    if (jobId == null) return;
+
+    final job = ref.read(employeeJobDetailControllerProvider).job;
+    final session = ref.read(employeeJobSessionProvider.notifier);
+
+    _timerSynced = true;
+
+    if (job != null && _statusFromLabel(job.currentStatus) == EmployeeJobStatus.completed) {
+      session.completeJob(jobId);
+      return;
+    }
+
+    if (session.isJobStarted(jobId)) {
+      session.ensureJobSessionHydrated(jobId);
+    }
   }
 
   void _redirectToSafetyIfNeeded(EmployeeJobDetailState state) {
@@ -71,91 +99,25 @@ class _EmployeeJobDetailsPageState
     return EmployeeJobStatus.upcoming;
   }
 
-  Future<void> _openPhotoCaptureSheet() async {
-    final state = ref.read(employeeJobDetailControllerProvider);
-    final result = await showEmployeeJobPhotoCaptureSheet(
-      context: context,
-      beforeBytes: state.beforePhotoBytes,
-      beforeName: state.beforePhotoName,
-      afterBytes: state.afterPhotoBytes,
-      afterName: state.afterPhotoName,
+  Future<void> _scanQrCode() async {
+    final jobId = ref.read(employeeJobDetailControllerProvider).job?.id ??
+        widget.jobId;
+    final success = await runEmployeeQrScanFlow(
+      context,
+      ref,
+      jobId: jobId,
+      navigateOnOpenJob: false,
     );
-    if (!mounted || result == null) return;
-    if (result.beforeBytes == null || result.afterBytes == null) return;
-
-    ref.read(employeeJobDetailControllerProvider.notifier).setJobPhotos(
-          beforeBytes: result.beforeBytes!,
-          beforeName: result.beforeName ?? 'before-photo.jpg',
-          afterBytes: result.afterBytes!,
-          afterName: result.afterName ?? 'after-photo.jpg',
-        );
-  }
-
-  Future<void> _openMaterialSheet() async {
-    final controller = ref.read(employeeJobDetailControllerProvider.notifier);
-    final current = ref.read(employeeJobDetailControllerProvider).materialUsed;
-
-    final value = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) => _MaterialUsedSheet(initialValue: current),
-    );
-
-    if (value != null && mounted) {
-      controller.updateMaterialUsed(value);
-    }
-  }
-
-  Future<void> _openSignatureSheet() async {
-    final captured = ref
-        .read(employeeJobDetailControllerProvider)
-        .customerSignatureCaptured;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: EmployeeJobSignatureCapture(
-              captured: captured,
-              onCapture: () {
-                ref
-                    .read(employeeJobDetailControllerProvider.notifier)
-                    .setCustomerSignatureCaptured(true);
-                Navigator.of(context).pop();
-              },
-              onClear: () {
-                ref
-                    .read(employeeJobDetailControllerProvider.notifier)
-                    .setCustomerSignatureCaptured(false);
-                Navigator.of(context).pop();
-              },
-            ),
-          ),
-        );
-      },
-    );
+    if (!mounted || !success) return;
+    ref.read(employeeJobDetailControllerProvider.notifier).markQrCodeScanned();
   }
 
   void _onRequiredFormItemTap(String itemId) {
     switch (itemId) {
-      case 'before_photo':
-        _openPhotoCaptureSheet();
-      case 'material_used':
-        _openMaterialSheet();
-      case 'signature':
-        _openSignatureSheet();
       case 'linked_forms':
         _openFormPicker();
+      case 'qr_scan':
+        _scanQrCode();
       default:
         break;
     }
@@ -163,9 +125,15 @@ class _EmployeeJobDetailsPageState
 
   Future<void> _openFormPicker() async {
     final state = ref.read(employeeJobDetailControllerProvider);
+    final controller = ref.read(employeeJobDetailControllerProvider.notifier);
+    final isCompletedJob = controller.isJobCompleted;
     final selected = await showEmployeeJobFormPickerSheet(
       context: context,
       selectedFormId: state.selectedFormId,
+      allowCompletedSelection: true,
+      subtitle: isCompletedJob
+          ? 'Tap a submitted form to review or update it.'
+          : 'Tap a form to fill it in or update a submitted one.',
       forms: [
         for (final formId in state.formIds)
           EmployeeJobFormOption(
@@ -176,13 +144,31 @@ class _EmployeeJobDetailsPageState
       ],
     );
     if (selected == null || !mounted) return;
-    context.push(
+    final activeJobId = state.job?.id ?? widget.jobId;
+    var jobFormId = controller.jobFormIdFor(selected);
+    if ((jobFormId == null || jobFormId <= 0) && activeJobId != null) {
+      jobFormId = await ref
+          .read(jobFormSubmissionRepositoryProvider)
+          .resolveJobFormId(
+            jobId: activeJobId,
+            formTemplateId: selected,
+            assignments: state.job?.formAssignments ?? const [],
+          );
+    }
+    final submissionId = controller.submissionIdFor(selected);
+    final submitted = await context.push<bool>(
       EmployeeJobFormPage.path,
       extra: <String, Object?>{
         'formId': selected,
-        'jobId': widget.jobId,
+        'jobId': activeJobId,
+        if (jobFormId != null && jobFormId > 0) 'jobFormId': jobFormId,
+        if (submissionId != null) 'submissionId': submissionId,
       },
     );
+    if (!mounted || submitted != true) return;
+    await ref
+        .read(employeeJobDetailControllerProvider.notifier)
+        .refreshCompletedForms();
   }
 
   @override
@@ -190,6 +176,7 @@ class _EmployeeJobDetailsPageState
     final state = ref.watch(employeeJobDetailControllerProvider);
     final controller = ref.read(employeeJobDetailControllerProvider.notifier);
     final session = ref.watch(employeeJobSessionProvider);
+    final sessionController = ref.read(employeeJobSessionProvider.notifier);
     final job = state.job;
 
     _redirectToSafetyIfNeeded(state);
@@ -208,17 +195,17 @@ class _EmployeeJobDetailsPageState
             job: job,
             formIds: state.formIds,
             completedFormIds: state.completedFormIds,
-            hasBeforePhoto: state.hasJobPhotos,
-            hasMaterialUsed: state.materialUsed.trim().isNotEmpty,
-            hasCustomerSignature: state.customerSignatureCaptured,
+            hasQrScan: state.qrCodeScanned,
             dynamicFormComplete: dynamicFormComplete,
+            isJobCompleted: controller.isJobCompleted,
           );
 
     final timerElapsed = widget.jobId == null
         ? Duration.zero
         : session.elapsedFor(widget.jobId!);
 
-    return Scaffold(
+    return JobFormSubmissionSyncListener(
+      child: Scaffold(
       backgroundColor: AppColors.white,
       appBar: AppBar(
         backgroundColor: AppColors.white,
@@ -242,6 +229,14 @@ class _EmployeeJobDetailsPageState
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w900),
         ),
+        actions: [
+          if (widget.jobId != null)
+            IconButton(
+              tooltip: 'Scan QR code',
+              onPressed: _scanQrCode,
+              icon: const Icon(Icons.qr_code_scanner_rounded, size: 22),
+            ),
+        ],
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
           child: Divider(height: 1, color: AppColors.borderLight),
@@ -262,13 +257,16 @@ class _EmployeeJobDetailsPageState
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                     children: [
-                      if (ref
-                          .read(employeeJobSessionProvider.notifier)
-                          .isJobStarted(job.id)) ...[
+                        if (sessionController.isJobStarted(job.id)) ...[
                         EmployeeJobTimerBanner(elapsed: timerElapsed),
                         const SizedBox(height: 16),
                       ],
-                      EmployeeJobStatusCard(status: job.currentStatus),
+                      EmployeeJobStatusCard(
+                        status: sessionController.resolveStatusLabel(
+                          jobId: job.id,
+                          apiStatusLabel: job.currentStatus,
+                        ),
+                      ),
                       const SizedBox(height: 24),
                       EmployeeJobInfoSection(job: job),
                       const SizedBox(height: 28),
@@ -284,15 +282,6 @@ class _EmployeeJobDetailsPageState
                           items: requiredItems,
                           onItemTap: _onRequiredFormItemTap,
                         ),
-                        if (state.hasJobPhotos) ...[
-                          const SizedBox(height: 24),
-                          EmployeeJobPhotosPreview(
-                            beforeBytes: state.beforePhotoBytes!,
-                            afterBytes: state.afterPhotoBytes!,
-                            onEdit: _openPhotoCaptureSheet,
-                          ),
-                          const SizedBox(height: 20),
-                        ],
                         if (state.formIds.isEmpty) ...[
                           const SizedBox(height: 26),
                           EmployeeSafetyChecklist(
@@ -305,112 +294,73 @@ class _EmployeeJobDetailsPageState
                     ],
                   ),
                 ),
-                _SubmitBar(
-                  enabled: canSubmit,
-                  onSubmit: canSubmit
-                      ? () {
-                          context.push(
-                            EmployeeJobConfirmationPage.path,
-                            extra: <String, Object?>{
-                              'jobId': job.id,
-                              'jobTitle': job.title,
-                            },
-                          );
-                        }
-                      : null,
-                ),
+                if (!controller.isJobCompleted)
+                  _SubmitBar(
+                    enabled: canSubmit && !_isSubmittingForms,
+                    isLoading: _isSubmittingForms,
+                    onSubmit: canSubmit
+                        ? () async {
+                            if (!context.mounted || _isSubmittingForms) {
+                              return;
+                            }
+                            setState(() => _isSubmittingForms = true);
+                            try {
+                              JobCompletionDebugLog.banner(
+                                'Submit Form — POST submit-form from SQLite | jobId=${job.id}',
+                              );
+                              await ref
+                                  .read(jobFormSubmissionRepositoryProvider)
+                                  .syncPendingSubmissionsForJob(
+                                    jobId: job.id,
+                                    assignments:
+                                        job.formAssignments,
+                                  );
+                              if (!context.mounted) return;
+                              await context.push(
+                                EmployeeJobConfirmationPage.path,
+                                extra: <String, Object?>{
+                                  'jobId': job.id,
+                                  'jobTitle': job.title,
+                                },
+                              );
+                            } catch (error) {
+                              if (!context.mounted) return;
+                              context.showTopSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    ApiResponseMessage.fromAnyError(
+                                      error,
+                                      genericFallback:
+                                          'Could not submit forms. Please try again.',
+                                    ),
+                                  ),
+                                ),
+                              );
+                            } finally {
+                              if (mounted) {
+                                setState(() => _isSubmittingForms = false);
+                              }
+                            }
+                          }
+                        : null,
+                  ),
               ],
             ),
-    );
-  }
-}
-
-class _MaterialUsedSheet extends StatefulWidget {
-  const _MaterialUsedSheet({required this.initialValue});
-
-  final String initialValue;
-
-  @override
-  State<_MaterialUsedSheet> createState() => _MaterialUsedSheetState();
-}
-
-class _MaterialUsedSheetState extends State<_MaterialUsedSheet> {
-  late final TextEditingController _textController;
-
-  @override
-  void initState() {
-    super.initState();
-    _textController = TextEditingController(text: widget.initialValue);
-  }
-
-  @override
-  void dispose() {
-    _textController.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    Navigator.of(context).pop(_textController.text.trim());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-
-    return Padding(
-      padding: EdgeInsets.fromLTRB(20, 16, 20, 16 + bottomInset),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Material Used',
-              style: AppFonts.titleLarge(
-                color: AppColors.inkStrong,
-              ).copyWith(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _textController,
-              minLines: 3,
-              maxLines: 5,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _save(),
-              decoration: InputDecoration(
-                hintText: 'Enter material used',
-                filled: true,
-                fillColor: AppColors.surfaceHigh,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppColors.borderLight),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                onPressed: _save,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.inkStrong,
-                  foregroundColor: AppColors.white,
-                ),
-                child: const Text('Save'),
-              ),
-            ),
-          ],
-        ),
-      ),
+    ),
     );
   }
 }
 
 class _SubmitBar extends StatelessWidget {
-  const _SubmitBar({required this.enabled, required this.onSubmit});
+  const _SubmitBar({
+    required this.enabled,
+    required this.onSubmit,
+    this.isLoading = false,
+  });
 
   final bool enabled;
-  final VoidCallback? onSubmit;
+  final bool isLoading;
+  final Future<void> Function()? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -439,7 +389,7 @@ class _SubmitBar extends StatelessWidget {
                 width: double.infinity,
                 height: 52,
                 child: FilledButton(
-                  onPressed: onSubmit,
+                  onPressed: enabled && !isLoading ? onSubmit : null,
                   style: FilledButton.styleFrom(
                     backgroundColor: AppColors.inkStrong,
                     disabledBackgroundColor: const Color(0xFFB8B8BE),
@@ -449,12 +399,21 @@ class _SubmitBar extends StatelessWidget {
                       borderRadius: BorderRadius.circular(9),
                     ),
                   ),
-                  child: Text(
-                    'Submit Form',
-                    style: AppFonts.titleSmall(
-                      color: AppColors.white,
-                    ).copyWith(fontWeight: FontWeight.w900),
-                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.white,
+                          ),
+                        )
+                      : Text(
+                          'Submit Form',
+                          style: AppFonts.titleSmall(
+                            color: AppColors.white,
+                          ).copyWith(fontWeight: FontWeight.w900),
+                        ),
                 ),
               ),
             ],

@@ -34,6 +34,9 @@ import 'package:red5/features/vendors/presentation/views/vendors_list_page.dart'
 import 'package:red5/features/dashboard/presentation/views/reports_list_page.dart';
 import 'package:red5/features/material_requests/presentation/views/material_requests_list_page.dart';
 import 'package:red5/features/dispatch/presentation/views/dispatches_list_page.dart';
+import 'package:red5/features/dashboard/presentation/views/jobs_list_page.dart';
+import 'package:red5/features/dashboard/presentation/views/add_job_page.dart';
+import 'package:red5/features/dashboard/presentation/jobs_list_refresh.dart';
 import 'package:red5/features/dashboard/presentation/views/quotations_list_page.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
 import 'package:red5/features/dashboard/presentation/invoice_list_refresh.dart';
@@ -321,7 +324,17 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       if (created != null) {
         ref.read(quotationListRefreshTickProvider.notifier).state++;
       }
-    } else {
+      return;
+    }
+    if (_selectedIndex == 9) {
+      final created = await context.push<bool?>(AddJobPage.standalonePath);
+      if (!mounted) return;
+      if (created == true) {
+        ref.read(jobsListRefreshTickProvider.notifier).state++;
+      }
+      return;
+    }
+    if (_selectedIndex == 3) {
       GoRouter.of(context).push(CreateProjectPage.path);
     }
   }
@@ -1116,7 +1129,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
           const ItemsPage(),
           const CompositeItemPage(),
           const QuotationsListPage(),
-          _buildProjectsBody(),
+          const JobsListPage(),
           const InvoicesListPage(),
           const PurchaseOrdersListPage(),
           const BillsListPage(),

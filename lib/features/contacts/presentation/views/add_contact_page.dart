@@ -45,6 +45,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
   final _postalCode = TextEditingController();
 
   String _country = 'United States';
+  String _contactType = ContactTypeValues.client;
   bool _isSubmitting = false;
 
   final List<ClientModel> _clients = <ClientModel>[];
@@ -81,6 +82,8 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
       if (country.isNotEmpty) {
         _country = _countries.contains(country) ? country : _countries.first;
       }
+      final type = ContactTypeValues.normalize(existing.contactType);
+      if (type != null) _contactType = type;
     } else {
       final preset = widget.presetClientId?.trim();
       if (preset != null && preset.isNotEmpty) {
@@ -266,6 +269,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
       final saved = existing == null
           ? await api.createContact(
               contactName: _contactName.text.trim(),
+              contactType: _contactType,
               clientId: clientId,
               email: _email.text.trim(),
               phone: PhoneNumberUtils.formatFull(_phoneCountry, _phone.text),
@@ -279,6 +283,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
           : await api.updateContact(
               id: existing.id,
               contactName: _contactName.text.trim(),
+              contactType: _contactType,
               clientId: clientId,
               email: _email.text.trim(),
               phone: PhoneNumberUtils.formatFull(_phoneCountry, _phone.text),
@@ -416,6 +421,29 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
                       controller: _contactName,
                       hintText: 'e.g. Apex Structural Group',
                       validator: _requiredField('Contact Name'),
+                    ),
+                    const SizedBox(height: 14),
+                    _label('Contact Type', required: true),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: _contactType,
+                      items: ContactTypeValues.options
+                          .map(
+                            (option) => DropdownMenuItem<String>(
+                              value: option.value,
+                              child: Text(option.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: _isSubmitting
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+                              setState(() => _contactType = value);
+                            },
+                      validator: (value) =>
+                          (value ?? '').trim().isEmpty ? 'Required' : null,
+                      decoration: _dropdownDecoration(),
                     ),
                     const SizedBox(height: 14),
                     _label('Client', required: true),

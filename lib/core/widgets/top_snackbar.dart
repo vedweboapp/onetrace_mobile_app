@@ -95,7 +95,8 @@ void tryShowSuccessTopPopup({
 }
 
 extension TopSnackbarX on BuildContext {
-  /// Universal top toast: invite-style card, slide + fade in, auto-dismiss and close control.
+  /// Universal top toast: invite-style card, slide + fade in, auto-dismiss,
+  /// close control, and swipe up/left/right to dismiss.
   void showAppTopToast({
     required String title,
     String? subtitle,
@@ -463,6 +464,9 @@ class _TopToastAnimatedShell extends StatefulWidget {
 
 class _TopToastAnimatedShellState extends State<_TopToastAnimatedShell>
     with SingleTickerProviderStateMixin {
+  static const _dismissDistance = 56.0;
+  static const _dismissVelocity = 420.0;
+
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 320),
@@ -485,11 +489,18 @@ class _TopToastAnimatedShellState extends State<_TopToastAnimatedShell>
   ));
 
   Timer? _autoHide;
+  Offset _dragOffset = Offset.zero;
+  bool _isDismissing = false;
 
   @override
   void initState() {
     super.initState();
     _controller.forward();
+    _scheduleAutoHide();
+  }
+
+  void _scheduleAutoHide() {
+    _autoHide?.cancel();
     _autoHide = Timer(widget.displayDuration, _dismissAnimated);
   }
 
@@ -501,6 +512,8 @@ class _TopToastAnimatedShellState extends State<_TopToastAnimatedShell>
   }
 
   Future<void> _dismissAnimated() async {
+    if (_isDismissing) return;
+    _isDismissing = true;
     _autoHide?.cancel();
     _autoHide = null;
     if (!mounted) return;
@@ -509,13 +522,73 @@ class _TopToastAnimatedShellState extends State<_TopToastAnimatedShell>
     widget.onRemoved();
   }
 
+  void _onPanStart(DragStartDetails details) {
+    _autoHide?.cancel();
+    _autoHide = null;
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_isDismissing) return;
+    setState(() {
+      var next = _dragOffset + details.delta;
+      // Slight resistance when dragging down (toast sits at top).
+      if (next.dy > 0) {
+        next = Offset(next.dx, next.dy * 0.35);
+      }
+      _dragOffset = next;
+    });
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    if (_isDismissing) return;
+    final velocity = details.velocity.pixelsPerSecond;
+    final horizontal = _dragOffset.dx.abs();
+    final upward = -_dragOffset.dy;
+    final shouldDismiss = upward >= _dismissDistance ||
+        horizontal >= _dismissDistance ||
+        velocity.dy <= -_dismissVelocity ||
+        velocity.dx.abs() >= _dismissVelocity;
+
+    if (shouldDismiss) {
+      unawaited(_dismissAnimated());
+      return;
+    }
+
+    setState(() => _dragOffset = Offset.zero);
+    _scheduleAutoHide();
+  }
+
+  void _onPanCancel() {
+    if (_isDismissing) return;
+    setState(() => _dragOffset = Offset.zero);
+    _scheduleAutoHide();
+  }
+
+  double get _dragFade {
+    final distance = math.max(_dragOffset.dy.abs(), _dragOffset.dx.abs());
+    return (1 - (distance / 140)).clamp(0.55, 1.0);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fade,
-      child: SlideTransition(
-        position: _slide,
-        child: widget.builder(_dismissAnimated),
+    return GestureDetector(
+      onPanStart: _onPanStart,
+      onPanUpdate: _onPanUpdate,
+      onPanEnd: _onPanEnd,
+      onPanCancel: _onPanCancel,
+      behavior: HitTestBehavior.opaque,
+      child: Transform.translate(
+        offset: _dragOffset,
+        child: Opacity(
+          opacity: _dragFade,
+          child: FadeTransition(
+            opacity: _fade,
+            child: SlideTransition(
+              position: _slide,
+              child: widget.builder(_dismissAnimated),
+            ),
+          ),
+        ),
       ),
     );
   }

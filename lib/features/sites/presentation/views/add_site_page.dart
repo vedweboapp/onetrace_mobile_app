@@ -6,6 +6,8 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/clients/data/client_models.dart';
+import 'package:red5/features/clients/data/clients_api_client.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
 
@@ -27,7 +29,6 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
   final _formKey = GlobalKey<FormState>();
 
   final _siteName = TextEditingController();
-  final _clientName = TextEditingController();
   final _address1 = TextEditingController();
   final _address2 = TextEditingController();
   final _city = TextEditingController();
@@ -36,6 +37,11 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
 
   String _country = 'United States';
   bool _isSubmitting = false;
+
+  final List<ClientModel> _clients = <ClientModel>[];
+  bool _clientsLoading = true;
+  String? _clientsError;
+  String? _selectedClientId;
 
   bool get _isEditing => widget.existing != null;
 
@@ -53,7 +59,9 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
     final existing = widget.existing;
     if (existing != null) {
       _siteName.text = existing.siteName;
-      _clientName.text = existing.clientName;
+      if (existing.clientId != null) {
+        _selectedClientId = existing.clientId!.toString();
+      }
       _address1.text = existing.addressLine1;
       _address2.text = existing.addressLine2;
       _city.text = existing.city;
@@ -64,12 +72,99 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
         _country = _countries.contains(country) ? country : _countries.first;
       }
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadClients());
+  }
+
+  Future<void> _loadClients() async {
+    setState(() {
+      _clientsLoading = true;
+      _clientsError = null;
+    });
+    try {
+      final api = ref.read(clientsApiClientProvider);
+      final all = <ClientModel>[];
+      var page = 1;
+      var totalPages = 1;
+      do {
+        final result = await api.fetchClientsPage(page: page);
+        all.addAll(result.items);
+        totalPages = result.totalPages;
+        page++;
+      } while (page <= totalPages && page <= 50);
+
+      if (!mounted) return;
+      setState(() {
+        _clients
+          ..clear()
+          ..addAll(all);
+        _clientsLoading = false;
+        _clientsError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _clientsLoading = false;
+        _clientsError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load clients',
+        );
+      });
+    }
+  }
+
+  List<DropdownMenuItem<String>> _clientDropdownItems() {
+    final existing = widget.existing;
+    final items = <DropdownMenuItem<String>>[];
+    final seen = <String>{};
+
+    if (existing != null) {
+      final id = existing.clientId?.toString().trim() ?? '';
+      if (id.isNotEmpty && !_clients.any((c) => c.id == id)) {
+        items.add(
+          DropdownMenuItem<String>(
+            value: id,
+            child: Text(
+              existing.clientName.trim().isEmpty
+                  ? 'Client #$id'
+                  : existing.clientName,
+            ),
+          ),
+        );
+        seen.add(id);
+      }
+    }
+
+    for (final c in _clients) {
+      if (seen.contains(c.id)) continue;
+      items.add(
+        DropdownMenuItem<String>(
+          value: c.id,
+          child: Text(c.name.trim().isEmpty ? 'Client #${c.id}' : c.name),
+        ),
+      );
+      seen.add(c.id);
+    }
+    return items;
+  }
+
+  String? _clientDropdownValidator(String? value) {
+    if ((value ?? '').trim().isEmpty) return 'Select a client';
+    return null;
+  }
+
+  String? _effectiveClientDropdownValue() {
+    final id = _selectedClientId?.trim();
+    if (id == null || id.isEmpty) return null;
+    final allowed = _clientDropdownItems()
+        .map((e) => e.value)
+        .whereType<String>()
+        .toSet();
+    return allowed.contains(id) ? id : null;
   }
 
   @override
   void dispose() {
     _siteName.dispose();
-    _clientName.dispose();
     _address1.dispose();
     _address2.dispose();
     _city.dispose();
@@ -94,6 +189,10 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
   Future<void> _submit() async {
     if (_isSubmitting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final clientId = _selectedClientId?.trim();
+    if (clientId == null || clientId.isEmpty) return;
+
     setState(() => _isSubmitting = true);
     try {
       final api = ref.read(sitesApiClientProvider);
@@ -101,7 +200,7 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
       final saved = existing == null
           ? await api.createSite(
               siteName: _siteName.text.trim(),
-              clientName: _clientName.text.trim(),
+              clientId: clientId,
               addressLine1: _address1.text.trim(),
               addressLine2: _address2.text.trim(),
               country: _country.trim(),
@@ -112,7 +211,7 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
           : await api.updateSite(
               id: existing.id,
               siteName: _siteName.text.trim(),
-              clientName: _clientName.text.trim(),
+              clientId: clientId,
               addressLine1: _address1.text.trim(),
               addressLine2: _address2.text.trim(),
               country: _country.trim(),
@@ -249,13 +348,58 @@ class _AddSitePageState extends ConsumerState<AddSitePage> {
                       validator: _requiredField('Site Name'),
                     ),
                     const SizedBox(height: 14),
-                    _label('Client Name', required: true),
+                    _label('Client', required: true),
                     const SizedBox(height: 8),
-                    AppTextField(
-                      controller: _clientName,
-                      hintText: 'e.g. Apex Structural Group',
-                      validator: _requiredField('Client Name'),
-                    ),
+                    if (_clientsLoading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.4),
+                          ),
+                        ),
+                      )
+                    else if (_clientsError != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _clientsError!,
+                            style: AppFonts.bodySmall(
+                              color: const Color(0xFFE53935),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _isSubmitting ? null : _loadClients,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      )
+                    else if (_clientDropdownItems().isEmpty)
+                      Text(
+                        'No clients found. Create a client first.',
+                        style: AppFonts.bodySmall(
+                          color: const Color(0xFF8A8A8A),
+                        ),
+                      )
+                    else
+                      DropdownButtonFormField<String>(
+                        key: ValueKey<String>(
+                          '${_selectedClientId ?? ''}|${_clients.length}',
+                        ),
+                        initialValue: _effectiveClientDropdownValue(),
+                        items: _clientDropdownItems(),
+                        onChanged: _isSubmitting
+                            ? null
+                            : (value) => setState(
+                                () => _selectedClientId = value,
+                              ),
+                        validator: _clientDropdownValidator,
+                        decoration: _dropdownDecoration(),
+                        hint: const Text('Select client'),
+                      ),
                     _sectionLabel('Address'),
                     _label('Address Line 1'),
                     const SizedBox(height: 8),

@@ -53,7 +53,10 @@ final class SitesApiClient {
   }
 
   /// Loads every page from `GET /site/` (optionally filtered by [clientId]).
-  Future<List<SiteModel>> fetchAllSites({int? clientId, int pageSize = 50}) async {
+  Future<List<SiteModel>> fetchAllSites({
+    int? clientId,
+    int pageSize = 50,
+  }) async {
     final out = <SiteModel>[];
     final seen = <String>{};
     var page = 1;
@@ -78,14 +81,16 @@ final class SitesApiClient {
 
   /// `GET /site/{id}/` — [site_read]
   Future<SiteModel> fetchSiteDetail(String id) async {
-    final response = await _dio.get<Map<String, dynamic>>(AppApiUrls.siteById(id));
+    final response = await _dio.get<Map<String, dynamic>>(
+      AppApiUrls.siteById(id),
+    );
     final root = response.data ?? const <String, dynamic>{};
     return SiteModel.fromJson(readApiEntityBody(root));
   }
 
   Future<SiteModel> createSite({
     required String siteName,
-    required String clientName,
+    required String clientId,
     required String addressLine1,
     required String addressLine2,
     required String country,
@@ -97,7 +102,7 @@ final class SitesApiClient {
       AppApiUrls.sites,
       data: _sitePayload(
         siteName: siteName,
-        clientName: clientName,
+        clientId: clientId,
         addressLine1: addressLine1,
         addressLine2: addressLine2,
         country: country,
@@ -114,7 +119,7 @@ final class SitesApiClient {
   Future<SiteModel> updateSite({
     required String id,
     required String siteName,
-    required String clientName,
+    required String clientId,
     required String addressLine1,
     required String addressLine2,
     required String country,
@@ -126,7 +131,7 @@ final class SitesApiClient {
       AppApiUrls.siteById(id),
       data: _sitePayload(
         siteName: siteName,
-        clientName: clientName,
+        clientId: clientId,
         addressLine1: addressLine1,
         addressLine2: addressLine2,
         country: country,
@@ -141,7 +146,7 @@ final class SitesApiClient {
 
   static Map<String, dynamic> _sitePayload({
     required String siteName,
-    required String clientName,
+    required String clientId,
     required String addressLine1,
     required String addressLine2,
     required String country,
@@ -152,7 +157,7 @@ final class SitesApiClient {
     return <String, dynamic>{
       'site_name': siteName,
       'name': siteName,
-      'client_name': clientName,
+      'client': _clientJsonValue(clientId),
       'address_line_1': addressLine1,
       'address_line_2': addressLine2,
       'country': country,
@@ -161,6 +166,13 @@ final class SitesApiClient {
       'pincode': postalCode,
       'postal_code': postalCode,
     };
+  }
+
+  /// Backend expects a `client` FK; send int when the id is numeric, else raw string.
+  static Object _clientJsonValue(String clientId) {
+    final t = clientId.trim();
+    final asInt = int.tryParse(t);
+    return asInt ?? t;
   }
 }
 

@@ -1,37 +1,29 @@
 import 'package:flutter/material.dart';
 
-class VendorListItem {
-  const VendorListItem({
-    required this.id,
-    required this.name,
-    required this.contactPerson,
-    required this.phone,
-    required this.isActive,
-  });
-
-  final String id;
-  final String name;
-  final String contactPerson;
-  final String phone;
-  final bool isActive;
-}
-
-class VendorAddress {
-  const VendorAddress({
+class VendorAddressModel {
+  const VendorAddressModel({
+    this.id,
     required this.addressLine1,
     required this.addressLine2,
     required this.city,
     required this.state,
-    required this.postalCode,
     required this.country,
+    required this.pincode,
+    this.latitude,
+    this.longitude,
+    this.isPrimary = false,
   });
 
+  final int? id;
   final String addressLine1;
   final String addressLine2;
   final String city;
   final String state;
-  final String postalCode;
   final String country;
+  final String pincode;
+  final String? latitude;
+  final String? longitude;
+  final bool isPrimary;
 
   String get street {
     final a = addressLine1.trim();
@@ -41,198 +33,170 @@ class VendorAddress {
     if (b.isEmpty) return a;
     return '$a, $b';
   }
+
+  String get fullLine {
+    final parts = <String>[
+      street,
+      city.trim(),
+      state.trim(),
+      pincode.trim(),
+      country.trim(),
+    ].where((p) => p.isNotEmpty && p != '—').toList();
+    return parts.isEmpty ? '—' : parts.join(', ');
+  }
+
+  factory VendorAddressModel.fromJson(Map<String, dynamic> json) {
+    return VendorAddressModel(
+      id: _readInt(json['id']),
+      addressLine1: _readString(json, const ['address_line_1']) ?? '',
+      addressLine2: _readString(json, const ['address_line_2']) ?? '',
+      city: _readString(json, const ['city']) ?? '',
+      state: _readString(json, const ['state']) ?? '',
+      country: _readString(json, const ['country']) ?? '',
+      pincode: _readString(json, const ['pincode', 'postal_code']) ?? '',
+      latitude: _readString(json, const ['latitude']),
+      longitude: _readString(json, const ['longitude']),
+      isPrimary: _readBool(json['is_primary']) ?? false,
+    );
+  }
+
+  Map<String, dynamic> toCreateJson() {
+    return <String, dynamic>{
+      'address_line_1': addressLine1.trim(),
+      if (addressLine2.trim().isNotEmpty) 'address_line_2': addressLine2.trim(),
+      'city': city.trim(),
+      'state': state.trim(),
+      'country': country.trim(),
+      'pincode': pincode.trim(),
+      if (latitude != null && latitude!.trim().isNotEmpty)
+        'latitude': latitude!.trim(),
+      if (longitude != null && longitude!.trim().isNotEmpty)
+        'longitude': longitude!.trim(),
+      'is_primary': isPrimary,
+    };
+  }
 }
 
-class VendorContactEntry {
-  const VendorContactEntry({
-    required this.id,
-    required this.name,
-    required this.email,
-    required this.phone,
-    required this.addressLine,
-  });
-
-  final String id;
-  final String name;
-  final String email;
-  final String phone;
-  final String addressLine;
-}
-
-class VendorProjectEntry {
-  const VendorProjectEntry({
-    required this.id,
-    required this.name,
-    required this.siteName,
-    required this.status,
-  });
-
-  final String id;
-  final String name;
-  final String siteName;
-  final String status;
-}
-
-class VendorDetail {
-  const VendorDetail({
+class VendorModel {
+  const VendorModel({
     required this.id,
     required this.name,
     required this.isActive,
-    required this.contactPerson,
-    required this.email,
-    required this.phone,
-    required this.address,
-    required this.contacts,
-    required this.projects,
+    this.email,
+    this.phone,
+    this.typeId,
+    this.typeName,
+    this.addresses = const [],
   });
 
   final String id;
   final String name;
   final bool isActive;
-  final String contactPerson;
-  final String email;
-  final String phone;
-  final VendorAddress address;
-  final List<VendorContactEntry> contacts;
-  final List<VendorProjectEntry> projects;
-}
+  final String? email;
+  final String? phone;
+  final int? typeId;
+  final String? typeName;
+  final List<VendorAddressModel> addresses;
 
-/// Static preview data until vendor API exists.
-abstract final class VendorMockData {
-  VendorMockData._();
+  String get displayContact => email?.trim().isNotEmpty == true
+      ? email!.trim()
+      : (phone?.trim().isNotEmpty == true ? phone!.trim() : '—');
 
-  static const _address = VendorAddress(
-    addressLine1: '4500 Industrial Parkway, Suite 200',
-    addressLine2: '',
-    city: 'Chicago',
-    state: 'IL',
-    postalCode: '60601',
-    country: 'United States',
-  );
+  String get displayPhone =>
+      phone?.trim().isNotEmpty == true ? phone!.trim() : '—';
 
-  static final VendorDetail primary = VendorDetail(
-    id: '1',
-    name: 'Apex Structural Group',
-    isActive: true,
-    contactPerson: 'Jonathan Miller',
-    email: 'j.miller@apexstructural.com',
-    phone: '+1 (555) 124-8902',
-    address: _address,
-    contacts: const [
-      VendorContactEntry(
-        id: 'c1',
-        name: 'Jonathan Miller',
-        email: 'j.miller@apexstructural.com',
-        phone: '+1 (555) 124-8902',
-        addressLine: '4500 Industrial Parkway, Suite 200, Chicago, IL 60601',
-      ),
-      VendorContactEntry(
-        id: 'c2',
-        name: 'a.richards@apexstructural.com',
-        email: 'a.richards@apexstructural.com',
-        phone: '+1 (555) 982-4410',
-        addressLine: '4500 Industrial Parkway, Suite 200, Chicago, IL 60601',
-      ),
-    ],
-    projects: const [
-      VendorProjectEntry(
-        id: 'p1',
-        name: 'PRJ-2024-001',
-        siteName: 'Metropolis Tower',
-        status: 'Active',
-      ),
-      VendorProjectEntry(
-        id: 'p2',
-        name: 'PRJ-2024-014',
-        siteName: 'Northwind Plaza',
-        status: 'Planning',
-      ),
-    ],
-  );
-
-  static VendorDetail detailForId(String rawId) {
-    final id = rawId.trim();
-    if (id == '1' || id.toLowerCase() == 'apex-structural-group') {
-      return primary;
+  VendorAddressModel? get primaryAddress {
+    for (final address in addresses) {
+      if (address.isPrimary) return address;
     }
-    VendorListItem? listMatch;
-    for (final v in listItems) {
-      if (v.id == id) {
-        listMatch = v;
-        break;
-      }
-    }
-    if (listMatch != null) {
-      return VendorDetail(
-        id: listMatch.id,
-        name: listMatch.name,
-        isActive: listMatch.isActive,
-        contactPerson: listMatch.contactPerson,
-        email: '${listMatch.contactPerson.split(' ').first.toLowerCase()}@vendor.com',
-        phone: listMatch.phone,
-        address: _address,
-        contacts: [
-          VendorContactEntry(
-            id: 'c-${listMatch.id}',
-            name: listMatch.contactPerson,
-            email: '${listMatch.contactPerson.split(' ').first.toLowerCase()}@vendor.com',
-            phone: listMatch.phone,
-            addressLine: '4500 Industrial Parkway, Suite 200, Chicago, IL 60601',
-          ),
-        ],
-        projects: primary.projects,
-      );
-    }
-    return VendorDetail(
-      id: id,
-      name: 'Vendor $id',
-      isActive: true,
-      contactPerson: 'Contact',
-      email: 'contact@vendor.com',
-      phone: '—',
-      address: _address,
-      contacts: const [],
-      projects: const [],
-    );
+    return addresses.isEmpty ? null : addresses.first;
   }
 
-  static final List<VendorListItem> listItems = [
-    const VendorListItem(
-      id: '1',
-      name: 'Apex Structural Group',
-      contactPerson: 'Jonathan Miller',
-      phone: '+1 (555) 124-8902',
-      isActive: true,
-    ),
-    const VendorListItem(
-      id: '2',
-      name: 'BuildPro Supply Co',
-      contactPerson: 'Sarah Chen',
-      phone: '+1 (555) 882-3301',
-      isActive: true,
-    ),
-    const VendorListItem(
-      id: '3',
-      name: 'Northwind Materials',
-      contactPerson: 'David Brooks',
-      phone: '+1 (555) 441-2290',
-      isActive: false,
-    ),
-    const VendorListItem(
-      id: '4',
-      name: 'Metropolis Urban Dev',
-      contactPerson: 'Emily Watson',
-      phone: '+1 (555) 903-1188',
-      isActive: true,
-    ),
-    const VendorListItem(
-      id: '5',
-      name: 'Riverview Developments',
-      contactPerson: 'Mark Thompson',
-      phone: '+1 (555) 667-4402',
-      isActive: false,
-    ),
-  ];
+  factory VendorModel.fromJson(Map<String, dynamic> json) {
+    final id = '${json['id'] ?? ''}'.trim();
+    final name = (json['name'] ?? '').toString().trim();
+    final email = (json['email'] ?? '').toString().trim();
+    final phone = (json['phone'] ?? '').toString().trim();
+
+    int? typeId;
+    String? typeName;
+    final type = json['type'];
+    if (type is int) {
+      typeId = type;
+    } else if (type is Map) {
+      typeId = _readInt(type['id']);
+      final n = type['name']?.toString().trim();
+      if (n != null && n.isNotEmpty) typeName = n;
+    }
+
+    final addressesRaw = json['addresses'];
+    final addresses = addressesRaw is List
+        ? addressesRaw
+            .whereType<Map>()
+            .map((row) => VendorAddressModel.fromJson(
+                  Map<String, dynamic>.from(row),
+                ))
+            .toList(growable: false)
+        : const <VendorAddressModel>[];
+
+    return VendorModel(
+      id: id.isEmpty ? '0' : id,
+      name: name.isEmpty ? 'Vendor' : name,
+      isActive: _readBool(json['is_active']) ?? true,
+      email: email.isEmpty ? null : email,
+      phone: phone.isEmpty ? null : phone,
+      typeId: typeId,
+      typeName: typeName,
+      addresses: addresses,
+    );
+  }
+}
+
+class VendorTypeOption {
+  const VendorTypeOption({
+    required this.id,
+    required this.name,
+    this.code,
+  });
+
+  final int id;
+  final String name;
+  final String? code;
+
+  factory VendorTypeOption.fromJson(Map<String, dynamic> json) {
+    final id = _readInt(json['id']) ?? 0;
+    final name = _readString(json, const [
+          'name',
+          'vendor_type',
+          'type_name',
+          'title',
+          'label',
+        ]) ??
+        'Type $id';
+    final code = _readString(json, const ['code', 'slug', 'type']);
+    return VendorTypeOption(id: id, name: name, code: code);
+  }
+}
+
+/// Builds `POST /vendors/` bodies matching the backend contract.
+abstract final class VendorWritePayload {
+  const VendorWritePayload._();
+
+  static Map<String, dynamic> build({
+    required String name,
+    required String email,
+    String? phone,
+    required int type,
+    required List<VendorAddressModel> addresses,
+  }) {
+    return <String, dynamic>{
+      'name': name.trim(),
+      'email': email.trim(),
+      if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+      'type': type,
+      'addresses': addresses.map((a) => a.toCreateJson()).toList(growable: false),
+    };
+  }
 }
 
 Color vendorStatusBg(bool active) =>
@@ -240,3 +204,28 @@ Color vendorStatusBg(bool active) =>
 
 Color vendorStatusFg(bool active) =>
     active ? const Color(0xFF137333) : const Color(0xFF6B6B70);
+
+String? _readString(Map<String, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final value = map[key];
+    if (value == null) continue;
+    final text = value.toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  return null;
+}
+
+int? _readInt(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse('${value ?? ''}'.trim());
+}
+
+bool? _readBool(dynamic value) {
+  if (value is bool) return value;
+  if (value == null) return null;
+  final text = value.toString().trim().toLowerCase();
+  if (text == 'true' || text == '1') return true;
+  if (text == 'false' || text == '0') return false;
+  return null;
+}

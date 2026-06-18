@@ -1,42 +1,49 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/vendors/data/vendor_models.dart';
+import 'package:red5/features/vendors/data/vendors_api_client.dart';
 
-class AddVendorPage extends StatefulWidget {
+class AddVendorPage extends ConsumerStatefulWidget {
   const AddVendorPage({super.key});
 
   static const path = '/vendors/add';
   static const name = 'add-vendor';
 
   @override
-  State<AddVendorPage> createState() => _AddVendorPageState();
+  ConsumerState<AddVendorPage> createState() => _AddVendorPageState();
 }
 
-class _AddVendorPageState extends State<AddVendorPage> {
+class _AddVendorPageState extends ConsumerState<AddVendorPage> {
   static const _pageBg = Color(0xFFF7F7F8);
   static const _cardBg = AppColors.white;
   static const _labelGrey = Color(0xFF6B7280);
 
   final _formKey = GlobalKey<FormState>();
   final _vendorName = TextEditingController();
-  final _contactPerson = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
   final _address1 = TextEditingController();
   final _address2 = TextEditingController();
   final _city = TextEditingController();
   final _state = TextEditingController();
-  final _postalCode = TextEditingController();
+  final _pincode = TextEditingController();
 
-  String _country = 'United States';
+  String _country = 'India';
   bool _submitting = false;
+  bool _typesLoading = true;
+  String? _typesError;
+  List<VendorTypeOption> _vendorTypes = const [];
+  VendorTypeOption? _selectedType;
 
   static const _countries = [
-    'United States',
     'India',
+    'United States',
     'United Kingdom',
     'Canada',
     'Australia',
@@ -47,17 +54,48 @@ class _AddVendorPageState extends State<AddVendorPage> {
   ).copyWith(fontSize: 15, fontWeight: FontWeight.w600);
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadVendorTypes());
+  }
+
+  Future<void> _loadVendorTypes() async {
+    setState(() {
+      _typesLoading = true;
+      _typesError = null;
+    });
+    try {
+      final types = await ref.read(vendorsApiClientProvider).fetchVendorTypes();
+      if (!mounted) return;
+      setState(() {
+        _vendorTypes = types;
+        _selectedType = types.isEmpty ? null : types.first;
+        _typesLoading = false;
+        _typesError = types.isEmpty ? 'No vendor types available' : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _typesLoading = false;
+        _typesError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load vendor types',
+        );
+      });
+    }
+  }
+
+  @override
   void dispose() {
     for (final c in [
       _vendorName,
-      _contactPerson,
       _email,
       _phone,
       _address1,
       _address2,
       _city,
       _state,
-      _postalCode,
+      _pincode,
     ]) {
       c.dispose();
     }
@@ -67,16 +105,51 @@ class _AddVendorPageState extends State<AddVendorPage> {
   Future<void> _create() async {
     if (_submitting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_selectedType == null) {
+      context.showAppTopToast(
+        title: 'Vendor type is required',
+        type: AppTopToastType.error,
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    context.showAppTopToast(
-      title: 'Vendor created',
-      subtitle: _vendorName.text.trim(),
-      type: AppTopToastType.success,
-    );
-    context.pop(true);
+    try {
+      final payload = VendorWritePayload.build(
+        name: _vendorName.text,
+        email: _email.text,
+        phone: _phone.text,
+        type: _selectedType!.id,
+        addresses: [
+          VendorAddressModel(
+            addressLine1: _address1.text,
+            addressLine2: _address2.text,
+            city: _city.text,
+            state: _state.text,
+            country: _country,
+            pincode: _pincode.text,
+            isPrimary: true,
+          ),
+        ],
+      );
+      await ref.read(vendorsApiClientProvider).createVendor(payload);
+      if (!mounted) return;
+      context.showAppTopToast(
+        title: 'Vendor created',
+        subtitle: _vendorName.text.trim(),
+        type: AppTopToastType.success,
+      );
+      context.pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      context.showAppTopToast(
+        title: 'Could not create vendor',
+        subtitle: ApiResponseMessage.fromAnyError(e),
+        type: AppTopToastType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   Widget _sectionHeading(String text) {
@@ -159,6 +232,22 @@ class _AddVendorPageState extends State<AddVendorPage> {
     );
   }
 
+  InputDecoration _dropdownDecoration() {
+    return InputDecoration(
+      filled: true,
+      fillColor: AppColors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.textFieldBorder),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.textFieldBorder),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
@@ -190,7 +279,7 @@ class _AddVendorPageState extends State<AddVendorPage> {
           width: double.infinity,
           height: 50,
           child: FilledButton(
-            onPressed: _submitting ? null : _create,
+            onPressed: _submitting || _typesLoading ? null : _create,
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF111111),
               foregroundColor: AppColors.white,
@@ -199,7 +288,7 @@ class _AddVendorPageState extends State<AddVendorPage> {
               ),
             ),
             child: Text(
-              'Create',
+              _submitting ? 'Creating...' : 'Create',
               style: AppFonts.titleMedium(color: AppColors.white).copyWith(
                 fontWeight: FontWeight.w700,
                 fontSize: 16,
@@ -231,6 +320,51 @@ class _AddVendorPageState extends State<AddVendorPage> {
                     validator: (v) =>
                         v == null || v.trim().isEmpty ? 'Required' : null,
                   ),
+                  _requiredLabel('Vendor Type'),
+                  if (_typesLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 14),
+                      child: LinearProgressIndicator(minHeight: 2),
+                    )
+                  else if (_typesError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _typesError!,
+                            style: AppFonts.bodySmall(
+                              color: const Color(0xFFDC2626),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _loadVendorTypes,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: DropdownButtonFormField<VendorTypeOption>(
+                        value: _selectedType,
+                        items: _vendorTypes
+                            .map(
+                              (type) => DropdownMenuItem(
+                                value: type,
+                                child: Text(type.name, style: _dropdownValueStyle),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) =>
+                            setState(() => _selectedType = value),
+                        isExpanded: true,
+                        decoration: _dropdownDecoration(),
+                        validator: (v) => v == null ? 'Required' : null,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -245,9 +379,7 @@ class _AddVendorPageState extends State<AddVendorPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _sectionHeading('PRIMARY CONTACT'),
-                  _optionalLabel('Contact Person'),
-                  _textField(_contactPerson, hint: 'Contact person'),
+                  _sectionHeading('CONTACT'),
                   _requiredLabel('Email'),
                   _textField(
                     _email,
@@ -298,24 +430,7 @@ class _AddVendorPageState extends State<AddVendorPage> {
                         if (v != null) setState(() => _country = v);
                       },
                       isExpanded: true,
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: AppColors.white,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 14,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: AppColors.textFieldBorder),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: AppColors.textFieldBorder),
-                        ),
-                      ),
+                      decoration: _dropdownDecoration(),
                     ),
                   ),
                   _halfRow(
@@ -334,10 +449,11 @@ class _AddVendorPageState extends State<AddVendorPage> {
                       ],
                     ),
                   ),
-                  _requiredLabel('Postal Code'),
+                  _requiredLabel('Pincode'),
                   _textField(
-                    _postalCode,
-                    hint: 'Postal code',
+                    _pincode,
+                    hint: 'Pincode',
+                    keyboardType: TextInputType.number,
                     validator: (v) =>
                         v == null || v.trim().isEmpty ? 'Required' : null,
                   ),

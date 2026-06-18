@@ -4,6 +4,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/forms_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/job_status_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_widgets.dart';
@@ -116,6 +117,12 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
                   title: 'Tags',
                   moduleLabel: 'Quotation',
                   onTap: () => context.push(TagsSettingsPage.path),
+                ),
+                SystemMetadataRow(
+                  icon: Icons.description_outlined,
+                  title: 'Forms',
+                  moduleLabel: 'Job',
+                  onTap: () => context.push(FormsSettingsPage.path),
                 ),
               ],
             ),

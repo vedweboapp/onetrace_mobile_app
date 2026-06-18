@@ -52,9 +52,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
 
   List<QuotationPlotGroup> _plotGroups = [];
 
-  /// True after levels load and at least one plot has pins (UI block cards shown).
-  bool _showProjectPlotPanels = false;
-
   /// Expanded state for each block card (same order as [_plotGroups]).
   List<bool> _blockExpandedList = [];
 
@@ -185,14 +182,17 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
       final results = await Future.wait<dynamic>([
         quoteProjectApi.fetchProjectSites(projectId: id),
         contactsApi.fetchContactsPage(page: 1),
-        quoteProjectApi.fetchProjectLevels(projectId: id),
+        quoteProjectApi.fetchProjectLevelsForQuotation(projectId: id),
       ]);
       if (!mounted || seq != _projectDepsSeq || _project?.id != id) return;
       final levels = results[2] as List<ProjectLevelItem>;
       final newGroups = _plotGroupsFromLevels(levels);
-      final hasPinnedPlots = newGroups.isNotEmpty;
-      final summary = hasPinnedPlots ? _levelSummaryFromLevels(levels) : null;
-      final singleBlockName = hasPinnedPlots && levels.length == 1
+      final hasLevels = levels.isNotEmpty;
+      final hasPinnedPlots = newGroups.any(
+        (g) => g.lines.any((l) => (l.quantityMultiplier ?? 0) > 0),
+      );
+      final summary = hasLevels ? _levelSummaryFromLevels(levels) : null;
+      final singleBlockName = hasLevels && levels.length == 1
           ? levels.first.name
           : null;
       setState(() {
@@ -203,17 +203,25 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
         _secondaryContact = null;
         _siteContactPerson = null;
         _plotGroups = newGroups;
-        _showProjectPlotPanels = hasPinnedPlots;
-        _blockExpandedList = hasPinnedPlots
+        _blockExpandedList = hasLevels
             ? List<bool>.filled(newGroups.length, true)
             : <bool>[];
         _loadedLevelSummary = summary;
         if (singleBlockName != null) {
           _blockName.text = singleBlockName;
-        } else {
+        } else if (!hasLevels) {
           _blockName.clear();
         }
       });
+      if (!hasPinnedPlots && hasLevels && mounted) {
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text(
+              'Levels loaded but no pins found yet. Add pins on the project drawings, then re-select the project.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       if (seq == _projectDepsSeq && _project?.id == id) {
@@ -225,7 +233,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           _secondaryContact = null;
           _siteContactPerson = null;
           _plotGroups = [];
-          _showProjectPlotPanels = false;
           _blockExpandedList = [];
           _loadedLevelSummary = null;
           _blockName.clear();
@@ -254,6 +261,75 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     return pins.length;
   }
 
+  static double _quotationPlotAmountFromPins(List<QuotationDesignPin> pins) {
+    var sum = 0.0;
+    for (final p in pins) {
+      if (p.compositeItemId == null) continue;
+      sum += p.lineTotal;
+    }
+    return sum;
+  }
+
+  static List<QuotationCompositeChildPin> _compositeChildrenFromRaw(
+    dynamic raw,
+  ) {
+    if (raw is! List) return const [];
+    final out = <QuotationCompositeChildPin>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final m = Map<String, dynamic>.from(
+        entry.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final nested = m['item'] ?? m['child_item'] ?? m['product'];
+      var childId = m['child_item_id'] ?? m['item_id'] ?? m['product_id'];
+      var childName = m['child_item_name'] ?? m['item_name'] ?? m['name'];
+      if (nested is Map) {
+        final nestedMap = Map<String, dynamic>.from(
+          nested.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        childId ??= nestedMap['id'];
+        final nestedName = nestedMap['name'] ?? nestedMap['item_name'];
+        if (childName == null && nestedName != null) {
+          childName = nestedName;
+        }
+      }
+      final qtyRaw = m['quantity'] ?? m['qty'];
+      final qty = qtyRaw is int
+          ? qtyRaw
+          : (qtyRaw is num ? qtyRaw.toInt() : int.tryParse('${qtyRaw ?? ''}'));
+      final parsedId = childId is int
+          ? childId
+          : (childId is num
+              ? childId.toInt()
+              : int.tryParse('${childId ?? ''}'));
+      final name = '${childName ?? ''}'.trim();
+      out.add(
+        QuotationCompositeChildPin(
+          childItemId: parsedId,
+          childItemName: name.isEmpty ? 'Component' : name,
+          quantity: (qty ?? 1) < 1 ? 1 : (qty ?? 1),
+        ),
+      );
+    }
+    return out;
+  }
+
+  static List<QuotationCompositeChildPin> _compositeChildrenFromItem(
+    Map<String, dynamic>? item,
+  ) {
+    if (item == null) return const [];
+    for (final key in const [
+      'composite_items',
+      'components',
+      'child_items',
+      'items',
+    ]) {
+      final parsed = _compositeChildrenFromRaw(item[key]);
+      if (parsed.isNotEmpty) return parsed;
+    }
+    return const [];
+  }
+
   static List<QuotationDesignPin> _quotationDesignPinsFromPlot(
     Map<String, dynamic> plot,
   ) {
@@ -263,20 +339,42 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     for (final raw in pins) {
       if (raw is! Map) continue;
       final m = Map<String, dynamic>.from(raw);
-      final id = '${m['id'] ?? ''}'.trim();
+      final id = '${m['id'] ?? m['pin_id'] ?? ''}'.trim();
 
       Map<String, dynamic>? item;
-      final idetail = m['item_detail'];
-      if (idetail is Map) item = Map<String, dynamic>.from(idetail);
+      for (final key in const ['item_detail', 'item', 'composite_item']) {
+        final rawItem = m[key];
+        if (rawItem is Map) {
+          item = Map<String, dynamic>.from(
+            rawItem.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          break;
+        }
+      }
 
       Map<String, dynamic>? status;
-      final sd = m['status_detail'];
-      if (sd is Map) status = Map<String, dynamic>.from(sd);
+      final sd = m['status_detail'] ?? m['status'];
+      if (sd is Map) {
+        status = Map<String, dynamic>.from(
+          sd.map((k, v) => MapEntry(k.toString(), v)),
+        );
+      }
 
       var name = 'Item';
       if (item != null) {
         final n = item['name']?.toString().trim();
         if (n != null && n.isNotEmpty && n != 'null') name = n;
+      }
+      if (name == 'Item') {
+        for (final key in const ['item_name', 'product_name', 'name']) {
+          final v = m[key];
+          if (v == null || v is Map || v is List) continue;
+          final t = v.toString().trim();
+          if (t.isNotEmpty && t != 'null') {
+            name = t;
+            break;
+          }
+        }
       }
 
       String? sku;
@@ -306,6 +404,14 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
       double? selling;
       if (item != null) {
         final sp = item['selling_price'];
+        if (sp is num) {
+          selling = sp.toDouble();
+        } else if (sp != null) {
+          selling = double.tryParse('$sp');
+        }
+      }
+      if (selling == null) {
+        final sp = m['selling_price'];
         if (sp is num) {
           selling = sp.toDouble();
         } else if (sp != null) {
@@ -345,6 +451,24 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           compositeItemId = int.tryParse('${top ?? ''}');
         }
       }
+      if (compositeItemId == null && item == null) {
+        final itemFk = m['item'];
+        if (itemFk is int) {
+          compositeItemId = itemFk;
+        } else if (itemFk is num) {
+          compositeItemId = itemFk.toInt();
+        }
+      }
+
+      final compositeFromPin = _compositeChildrenFromRaw(m['composite_items']);
+      final compositeFromItem = _compositeChildrenFromItem(item);
+      final compositeItems = compositeFromPin.isNotEmpty
+          ? compositeFromPin
+          : compositeFromItem;
+      final isComposite =
+          m['is_composite'] == true ||
+          (item?['is_composite'] == true) ||
+          compositeItems.isNotEmpty;
 
       out.add(
         QuotationDesignPin(
@@ -357,6 +481,8 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           statusTextHex: statusFg,
           sellingPrice: selling,
           compositeItemId: compositeItemId,
+          isComposite: isComposite,
+          compositeItems: compositeItems,
         ),
       );
     }
@@ -395,19 +521,19 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
         );
       for (final plot in plotList) {
         final n = _quotationPinCountFromPlot(plot);
-        if (n <= 0) continue;
-        final plotIdStr = '${plot['id'] ?? ''}'.trim();
+        final plotIdStr = '${plot['id'] ?? plot['plot_id'] ?? ''}'.trim();
+        final designPins = _quotationDesignPinsFromPlot(plot);
         lines.add(
           QuotationPlotLine(
             label: _quotationPlotLabelFrom(plot),
-            quantityMultiplier: n,
-            amount: 0,
+            quantityMultiplier: n > 0 ? n : null,
+            amount: _quotationPlotAmountFromPins(designPins),
             plotId: plotIdStr.isEmpty ? null : plotIdStr,
-            designPins: _quotationDesignPinsFromPlot(plot),
+            designPins: designPins,
+            selected: n > 0,
           ),
         );
       }
-      if (lines.isEmpty) continue;
       groups.add(
         QuotationPlotGroup(
           name: level.name,
@@ -415,9 +541,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           lines: lines,
         ),
       );
-    }
-    if (groups.isEmpty) {
-      return [];
     }
     return groups;
   }
@@ -478,15 +601,23 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           final sp = (p.sellingPrice ?? 0).toDouble();
           final pinsTotal = (qty * sp).round();
           plotTotal += pinsTotal;
-          pins.add(<String, dynamic>{
+          final pinId = int.tryParse(p.id.trim());
+          final pinPayload = <String, dynamic>{
             'pins_order': pinsOrder++,
-            'pin_id': null,
+            'pin_id': pinId,
             'composite_item_id': cid,
             'name': p.itemName,
             'quantity': qty,
             'selling_price': p.sellingPrice ?? 0,
             'pins_total': pinsTotal,
-          });
+            'is_composite': p.isComposite,
+          };
+          if (p.isComposite && p.compositeItems.isNotEmpty) {
+            pinPayload['composite_items'] = p.compositeItems
+                .map((c) => c.toPayloadMap())
+                .toList(growable: false);
+          }
+          pins.add(pinPayload);
         }
         if (pins.isEmpty) continue;
 
@@ -505,7 +636,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
       sections.add(<String, dynamic>{
         'section_order': sectionOrder++,
         'level_id': levelId,
-        'name': g.name,
+        'name': _quoteSectionNameForGroup(g),
         'plots': plots,
         'section_total': sectionTotal,
       });
@@ -513,9 +644,17 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     return sections;
   }
 
+  String _quoteSectionNameForGroup(QuotationPlotGroup group) {
+    final block = _blockName.text.trim();
+    if (block.isNotEmpty && _plotGroups.length == 1) return block;
+    final levelName = group.name.trim();
+    if (levelName.isNotEmpty) return levelName;
+    return block.isEmpty ? 'Section' : block;
+  }
+
   void _addPlotSection() {
     if (_submitting) return;
-    if (!_showProjectPlotPanels) return;
+    if (_project == null) return;
     final name = _sectionName.text.trim();
     if (name.isEmpty) return;
     setState(() {
@@ -540,9 +679,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
         for (var i = 0; i < _blockExpandedList.length; i++)
           if (i != index) _blockExpandedList[i],
       ];
-      if (_plotGroups.isEmpty) {
-        _showProjectPlotPanels = false;
-      }
     });
   }
 
@@ -1046,6 +1182,72 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     }
   }
 
+  Widget _buildProjectScopeSection() {
+    if (_project == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _sectionLabel('Project'),
+          const SizedBox(height: 6),
+          Text(
+            'Select a project to load drawing levels, plots, and pins for quotation.',
+            style: AppFonts.bodySmall(
+              color: AppColors.muted,
+            ).copyWith(fontSize: 12, height: 1.35),
+          ),
+        ],
+      );
+    }
+    if (_loadingProjectDeps) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _sectionLabel('Project'),
+          const SizedBox(height: 12),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionLabel('Project'),
+        if (_loadedLevelSummary != null && _loadedLevelSummary!.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Levels: $_loadedLevelSummary',
+            style: AppFonts.bodySmall(
+              color: AppColors.muted,
+            ).copyWith(fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+        ],
+        QuotationBlockSectionsPanel(
+          blockNameController: _blockName,
+          sectionNameController: _sectionName,
+          plotGroups: _plotGroups,
+          blockExpandedList: _blockExpandedList.length == _plotGroups.length
+              ? _blockExpandedList
+              : List<bool>.filled(_plotGroups.length, true),
+          onBlockExpandedAt: _setBlockExpandedAt,
+          onAddSection: _addPlotSection,
+          onLineSelectionChanged: _setLineSelected,
+          onRemovePlotGroup: _removePlotGroup,
+          submitting: _submitting,
+        ),
+      ],
+    );
+  }
+
   Widget _sectionLabel(String text) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 16, 2, 10),
@@ -1182,7 +1384,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                                       _siteContactPerson = null;
                                       _loadedLevelSummary = null;
                                       _plotGroups = [];
-                                      _showProjectPlotPanels = false;
                                       _blockExpandedList = [];
                                       _blockName.clear();
                                     });
@@ -1205,12 +1406,14 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                               _loadedLevelSummary!.isNotEmpty) ...[
                             const SizedBox(height: 6),
                             Text(
-                              'Blocks: $_loadedLevelSummary',
+                              'Levels: $_loadedLevelSummary',
                               style: AppFonts.bodySmall(
                                 color: AppColors.muted,
                               ).copyWith(fontSize: 12),
                             ),
                           ],
+                          const SizedBox(height: 14),
+                          _buildProjectScopeSection(),
                           const SizedBox(height: 14),
                           _label('Client Name', required: true),
                           const SizedBox(height: 8),
@@ -1474,55 +1677,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                               editorFocusNode: _descriptionFocus,
                             ),
                           ),
-                          _sectionLabel('Project'),
-                          if (_project == null) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              'Select a project. Block cards load from its drawing levels and appear only when at least one plot has pins.',
-                              style: AppFonts.bodySmall(
-                                color: AppColors.muted,
-                              ).copyWith(fontSize: 12, height: 1.35),
-                            ),
-                          ] else if (_loadingProjectDeps) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              'Loading levels and sites…',
-                              style: AppFonts.bodySmall(
-                                color: AppColors.muted,
-                              ).copyWith(fontSize: 12),
-                            ),
-                          ] else if (!_showProjectPlotPanels) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              'No plots with pins in the loaded levels for this project. When levels include pinned plots, each level becomes its own block card below.',
-                              style: AppFonts.bodySmall(
-                                color: AppColors.muted,
-                              ).copyWith(fontSize: 12, height: 1.35),
-                            ),
-                          ] else ...[
-                            if (_plotGroups.length > 1) ...[
-                              _label('Block name (quotation)'),
-                              const SizedBox(height: 8),
-                              AppTextField(
-                                controller: _blockName,
-                                hintText:
-                                    'Optional — defaults to level names below',
-                                textInputAction: TextInputAction.next,
-                              ),
-                              const SizedBox(height: 14),
-                            ],
-                            QuotationBlockSectionsPanel(
-                              blockNameController: _blockName,
-                              sectionNameController: _sectionName,
-                              plotGroups: _plotGroups,
-                              blockExpandedList: _blockExpandedList,
-                              onBlockExpandedAt: _setBlockExpandedAt,
-                              onAddSection: _addPlotSection,
-                              onLineSelectionChanged: _setLineSelected,
-                              onRemovePlotGroup: _removePlotGroup,
-                              submitting: _submitting,
-                            ),
-                          ],
                         ],
                       ),
                     ),

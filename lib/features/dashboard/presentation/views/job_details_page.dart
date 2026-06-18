@@ -7,15 +7,32 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
+import 'package:red5/features/dashboard/presentation/views/add_job_page.dart';
+import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+String? _absoluteJobDrawingUrl(String drawingFileFromApi) {
+  final raw = drawingFileFromApi.trim();
+  if (raw.isEmpty) return null;
+  final parsed = Uri.tryParse(raw);
+  if (parsed != null &&
+      parsed.hasScheme &&
+      (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+    return raw;
+  }
+  return Uri.parse(
+    AppApiUrls.baseUrl,
+  ).resolve(raw.startsWith('/') ? raw : '/$raw').toString();
+}
 
 class JobDetailsPage extends ConsumerStatefulWidget {
   const JobDetailsPage({
@@ -69,11 +86,16 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
   bool _groundingVerified = false;
   bool _panelDelivered = true;
   bool _materialInspected = false;
+  bool _isLoadingDrawings = false;
+  String? _drawingsError;
+  final List<_JobDrawingItem> _drawings = <_JobDrawingItem>[];
+  String? _beforePhotoUrl;
+  String? _afterPhotoUrl;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     Future.microtask(_loadJobDetails);
   }
 
@@ -140,7 +162,10 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
           _scannedQrValue = job.qrCode.toString();
         }
         _commentsController.text = (job.comments ?? '').trim();
+        _hydrateProgressFromJob(job);
+        _readPhotoUrls(job);
       });
+      unawaited(_loadLinkedDrawings(job));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -163,6 +188,154 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
       default:
         return const Color(0xFF9CA3AF);
     }
+  }
+
+  void _hydrateProgressFromJob(JobRead job) {
+    final formProgress = job.jobMeta['form_progress'];
+    if (formProgress is Map) {
+      final map = Map<String, dynamic>.from(
+        formProgress.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      _ppeConfirmed = map['ppe_confirmed'] == true;
+      _powerIsolated = map['power_isolated'] == true;
+      _groundingVerified = map['grounding_verified'] == true;
+    }
+    final materialProgress = job.jobMeta['material_progress'];
+    if (materialProgress is Map) {
+      final map = Map<String, dynamic>.from(
+        materialProgress.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      if (map.containsKey('panel_delivered')) {
+        _panelDelivered = map['panel_delivered'] == true;
+      }
+      _materialInspected = map['material_inspected'] == true;
+    }
+  }
+
+  void _readPhotoUrls(JobRead job) {
+    String? readUrl(dynamic value) {
+      if (value is! String) return null;
+      final text = value.trim();
+      return text.isEmpty ? null : text;
+    }
+
+    final meta = job.jobMeta;
+    final raw = job.raw;
+    _beforePhotoUrl =
+        readUrl(meta['before_photo']) ??
+        readUrl(meta['before_photo_url']) ??
+        readUrl(raw['before_photo']) ??
+        readUrl(raw['before_photo_url']);
+    _afterPhotoUrl =
+        readUrl(meta['after_photo']) ??
+        readUrl(meta['after_photo_url']) ??
+        readUrl(raw['after_photo']) ??
+        readUrl(raw['after_photo_url']);
+
+    final photos = meta['photos'] ?? raw['photos'];
+    if (photos is Map) {
+      final map = Map<String, dynamic>.from(
+        photos.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      _beforePhotoUrl ??=
+          readUrl(map['before']) ??
+          readUrl(map['before_photo']) ??
+          readUrl(map['before_url']);
+      _afterPhotoUrl ??=
+          readUrl(map['after']) ??
+          readUrl(map['after_photo']) ??
+          readUrl(map['after_url']);
+    }
+  }
+
+  String get _resolvedProjectId {
+    final fromWidget = widget.projectId.trim();
+    if (fromWidget.isNotEmpty) return fromWidget;
+    final fromJob = _job?.project?.toString().trim();
+    if (fromJob != null && fromJob.isNotEmpty) return fromJob;
+    return '';
+  }
+
+  Future<void> _loadLinkedDrawings(JobRead job) async {
+    final projectId = _resolvedProjectId;
+    if (projectId.isEmpty) return;
+    setState(() {
+      _isLoadingDrawings = true;
+      _drawingsError = null;
+    });
+    try {
+      final levels = await ref
+          .read(quoteProjectApiClientProvider)
+          .fetchProjectLevels(projectId: projectId);
+      if (!mounted) return;
+      final pinLabel = (job.pinName ?? job.plotName ?? '').trim().toLowerCase();
+      final next = levels.asMap().entries.map((entry) {
+        final index = entry.key;
+        final level = entry.value;
+        final title = level.name.trim().isEmpty
+            ? 'Drawing ${index + 1}'
+            : level.name.trim();
+        final code = level.id.trim().isEmpty
+            ? 'L${(index + 1).toString().padLeft(3, '0')}'
+            : level.id.trim();
+        final pinCount = level.plots.length;
+        final linkedToJob = pinLabel.isNotEmpty &&
+            level.plots.any((plot) {
+              final plotMap = Map<String, dynamic>.from(
+                plot.map((k, v) => MapEntry(k.toString(), v)),
+              );
+              for (final key in const ['name', 'pin_name', 'label', 'title']) {
+                final value = plotMap[key]?.toString().trim().toLowerCase();
+                if (value != null && value.isNotEmpty && value == pinLabel) {
+                  return true;
+                }
+              }
+              return false;
+            });
+        return _JobDrawingItem(
+          code: code,
+          title: title,
+          subtitle: pinCount > 0
+              ? '$pinCount pin${pinCount == 1 ? '' : 's'} on drawing'
+              : 'Project drawing',
+          updatedLabel: linkedToJob ? 'Linked to this job' : 'Available on project',
+          remoteDrawingUrl: _absoluteJobDrawingUrl(level.drawingFile),
+          levelName: title,
+          projectId: projectId,
+          levelId: level.id.trim().isEmpty ? null : level.id.trim(),
+          isLinked: linkedToJob,
+        );
+      }).toList();
+      setState(() {
+        _drawings
+          ..clear()
+          ..addAll(next);
+        _isLoadingDrawings = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingDrawings = false;
+        _drawingsError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Could not load linked drawings',
+        );
+      });
+    }
+  }
+
+  Future<void> _openDrawing(_JobDrawingItem item) async {
+    await DrawingCanvasPage.push(
+      context,
+      DrawingCanvasArgs(
+        title: item.title,
+        remoteDrawingUrl: item.remoteDrawingUrl,
+        levelName: item.levelName,
+        projectName: widget.projectName,
+        projectId: item.projectId,
+        levelId: item.levelId,
+      ),
+    );
   }
 
   Future<void> _scanQrCode() async {
@@ -198,6 +371,7 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
       setState(() {
         _job = updated;
         _isUpdatingJob = false;
+        _readPhotoUrls(updated);
       });
     } catch (_) {
       if (mounted) setState(() => _isUpdatingJob = false);
@@ -219,6 +393,31 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
   double get _mapLatitude => widget.latitude ?? 40.712776;
 
   double get _mapLongitude => widget.longitude ?? -74.005974;
+
+  Future<void> _openEditJob() async {
+    final job = _job;
+    if (job == null) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Job details are still loading.')),
+      );
+      return;
+    }
+    final projectId = widget.projectId.trim().isNotEmpty
+        ? widget.projectId.trim()
+        : (job.project?.toString() ?? '');
+    if (projectId.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Project is missing for this job.')),
+      );
+      return;
+    }
+    final updated = await context.push<bool>(
+      AddJobPage.pathForEdit(projectId, job.id.toString()),
+    );
+    if (updated == true && mounted) {
+      await _loadJobDetails();
+    }
+  }
 
   void _handleBack() {
     if (Navigator.of(context).canPop()) {
@@ -489,102 +688,127 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
     );
   }
 
-  Widget _linkedDrawingCard() {
-    return _card(
-      child: Row(
-        children: [
-          const Icon(Icons.folder_rounded, color: AppColors.inkStrong),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'E305 - Power Layout',
-                  style: AppFonts.titleSmall(
-                    color: AppColors.inkStrong,
-                  ).copyWith(fontWeight: FontWeight.w800),
+  Widget _linkedDrawingCard(_JobDrawingItem item) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: item.remoteDrawingUrl == null ? null : () => _openDrawing(item),
+        child: _card(
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: item.isLinked
+                      ? const Color(0xFFE8F5EE)
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  'Last updated 5 days ago',
-                  style: AppFonts.bodySmall(color: AppColors.muted),
+                child: Icon(
+                  Icons.folder_rounded,
+                  color: item.isLinked
+                      ? const Color(0xFF10B981)
+                      : AppColors.inkStrong,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: AppFonts.titleSmall(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      item.subtitle,
+                      style: AppFonts.bodySmall(color: AppColors.muted),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      item.updatedLabel,
+                      style: AppFonts.labelSmall(
+                        color: item.isLinked
+                            ? const Color(0xFF10B981)
+                            : AppColors.muted,
+                      ).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+            ],
           ),
-          const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _photosRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _photoSlot(
-            label: 'BEFORE PROCESS',
-            child: const Icon(
-              Icons.electrical_services_rounded,
-              color: AppColors.accentRed,
-              size: 34,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _photoSlot(
-            label: 'AFTER PROCESS',
-            child: const Icon(
-              Icons.camera_alt_rounded,
-              color: AppColors.muted,
-              size: 22,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _photoSlot(
-            label: '',
-            child: const Icon(Icons.add, color: AppColors.muted),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _photoSlot(
-            label: '',
-            child: const Icon(Icons.add, color: AppColors.muted),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _photoSlot({required String label, required Widget child}) {
+  Widget _jobPhotoCard({
+    required String label,
+    required String? photoUrl,
+    required IconData placeholderIcon,
+  }) {
+    final url = photoUrl?.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          height: 16,
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppFonts.labelSmall(
-              color: AppColors.muted,
-            ).copyWith(fontSize: 9, fontWeight: FontWeight.w800),
-          ),
+        Text(
+          label,
+          style: AppFonts.labelSmall(
+            color: AppColors.muted,
+          ).copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.4),
         ),
-        const SizedBox(height: 5),
-        Container(
-          height: 76,
-          decoration: BoxDecoration(
-            color: AppColors.surfaceHigh,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.borderLight),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: double.infinity,
+            height: 180,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceHigh,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: url == null || url.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(placeholderIcon, color: AppColors.muted, size: 28),
+                        const SizedBox(height: 8),
+                        Text(
+                          'No photo uploaded',
+                          style: AppFonts.bodySmall(color: AppColors.muted),
+                        ),
+                      ],
+                    ),
+                  )
+                : Image.network(
+                    url,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: 180,
+                    errorBuilder: (_, _, _) => Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(placeholderIcon, color: AppColors.muted, size: 28),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Could not load photo',
+                            style: AppFonts.bodySmall(color: AppColors.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
           ),
-          child: Center(child: child),
         ),
       ],
     );
@@ -835,12 +1059,26 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
             ],
           ),
         ),
-        _sectionTitle('FORMS'),
-        _formsCard(),
-        _sectionTitle('LINKED DRAWINGS'),
-        _linkedDrawingCard(),
-        _sectionTitle('JOB PHOTOS'),
-        _photosRow(),
+        const SizedBox(height: 12),
+        _materialStatusCard(
+          title: _itemName,
+          section: _sectionName,
+          quantity: '$_quantity units',
+          unitPrice: _formatMoney(_unitPrice),
+          total: _formatMoney(_total),
+          delivered: _panelDelivered,
+          onChanged: (value) => setState(() => _panelDelivered = value),
+        ),
+        const SizedBox(height: 12),
+        _materialStatusCard(
+          title: 'Copper Wire 12 AWG',
+          section: 'Electrical wiring',
+          quantity: '4 rolls',
+          unitPrice: r'$ 240.00',
+          total: r'$ 960.00',
+          delivered: _materialInspected,
+          onChanged: (value) => setState(() => _materialInspected = value),
+        ),
         _sectionTitle('COMMENTS'),
         _commentsCard(),
         const SizedBox(height: 18),
@@ -889,6 +1127,7 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
       setState(() {
         _job = updated;
         _isUpdatingJob = false;
+        _readPhotoUrls(updated);
       });
       context.showTopSnackBar(
         const SnackBar(content: Text('Job updated successfully.')),
@@ -909,7 +1148,7 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
     }
   }
 
-  Widget _formTab() {
+  Widget _safetyChecklistTab() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 96),
       children: [
@@ -927,6 +1166,9 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
           ).copyWith(height: 1.35),
         ),
         const SizedBox(height: 16),
+        _sectionTitle('FORMS'),
+        _formsCard(),
+        const SizedBox(height: 6),
         _checklistTile(
           title: 'PPE and safety barricade confirmed',
           subtitle: 'Area is marked and assigned worker is equipped.',
@@ -992,54 +1234,134 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
     );
   }
 
-  Widget _materialTab() {
+  Widget _drawingsTab() {
+    final linked = _drawings.where((d) => d.isLinked).toList();
+    final others = _drawings.where((d) => !d.isLinked).toList();
+    final visible = linked.isNotEmpty ? [...linked, ...others] : _drawings;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 96),
       children: [
         Text(
-          'Materials',
+          'Linked Drawings',
           style: AppFonts.headlineSmall(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w800, fontSize: 24),
         ),
         const SizedBox(height: 6),
         Text(
-          'Track materials assigned to $_jobTitle.',
-          style: AppFonts.bodyMedium(color: AppColors.muted),
+          'Project drawings associated with $_jobTitle.',
+          style: AppFonts.bodyMedium(
+            color: AppColors.muted,
+          ).copyWith(height: 1.35),
         ),
-        const SizedBox(height: 16),
-        _materialStatusCard(
-          title: _itemName,
-          section: _sectionName,
-          quantity: '$_quantity units',
-          unitPrice: _formatMoney(_unitPrice),
-          total: _formatMoney(_total),
-          delivered: _panelDelivered,
-          onChanged: (value) => setState(() => _panelDelivered = value),
-        ),
-        const SizedBox(height: 12),
-        _materialStatusCard(
-          title: 'Copper Wire 12 AWG',
-          section: 'Electrical wiring',
-          quantity: '4 rolls',
-          unitPrice: r'$ 240.00',
-          total: r'$ 960.00',
-          delivered: _materialInspected,
-          onChanged: (value) => setState(() => _materialInspected = value),
-        ),
-        const SizedBox(height: 16),
-        _card(
-          padding: EdgeInsets.zero,
-          child: Column(
-            children: [
-              _summaryRow('Material subtotal', _formatMoney(_total + 960)),
-              const Divider(height: 1, color: AppColors.borderLight),
-              _summaryRow('Tax / extra charges', r'$ 0.00'),
-              const Divider(height: 1, color: AppColors.borderLight),
-              _summaryRow('Total', _formatMoney(_total + 960), strong: true),
-            ],
+        if (_isLoadingDrawings)
+          const Padding(
+            padding: EdgeInsets.only(top: 16),
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              color: AppColors.inkStrong,
+            ),
           ),
+        if (_drawingsError != null)
+          Container(
+            margin: const EdgeInsets.only(top: 16),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFBEDEE),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF2D3D6)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _drawingsError!,
+                    style: AppFonts.bodySmall(color: AppColors.error),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final job = _job;
+                    if (job != null) unawaited(_loadLinkedDrawings(job));
+                  },
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        if (!_isLoadingDrawings && visible.isEmpty && _drawingsError == null)
+          Padding(
+            padding: const EdgeInsets.only(top: 24),
+            child: _card(
+              child: Column(
+                children: [
+                  const Icon(Icons.folder_off_outlined, color: AppColors.muted),
+                  const SizedBox(height: 10),
+                  Text(
+                    'No drawings found for this project.',
+                    textAlign: TextAlign.center,
+                    style: AppFonts.bodyMedium(color: AppColors.muted),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...visible.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _linkedDrawingCard(item),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _photosTab() {
+    final hasBefore = (_beforePhotoUrl ?? '').trim().isNotEmpty;
+    final hasAfter = (_afterPhotoUrl ?? '').trim().isNotEmpty;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 96),
+      children: [
+        Text(
+          'Job Photos',
+          style: AppFonts.headlineSmall(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w800, fontSize: 24),
         ),
+        const SizedBox(height: 6),
+        Text(
+          'Before and after photos captured by the assigned worker.',
+          style: AppFonts.bodyMedium(
+            color: AppColors.muted,
+          ).copyWith(height: 1.35),
+        ),
+        const SizedBox(height: 18),
+        _jobPhotoCard(
+          label: 'BEFORE PHOTO',
+          photoUrl: _beforePhotoUrl,
+          placeholderIcon: Icons.photo_camera_outlined,
+        ),
+        const SizedBox(height: 18),
+        _jobPhotoCard(
+          label: 'AFTER PHOTO',
+          photoUrl: _afterPhotoUrl,
+          placeholderIcon: Icons.photo_outlined,
+        ),
+        if (!hasBefore && !hasAfter)
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: _card(
+              child: Text(
+                'Photos will appear here once the operative uploads before and after images from the job site.',
+                style: AppFonts.bodySmall(
+                  color: AppColors.muted,
+                ).copyWith(height: 1.4),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -1182,35 +1504,6 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
     );
   }
 
-  Widget _summaryRow(String label, String value, {bool strong = false}) {
-    return Padding(
-      padding: const EdgeInsets.all(14),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style:
-                (strong
-                        ? AppFonts.titleMedium(color: AppColors.inkStrong)
-                        : AppFonts.bodyMedium(color: AppColors.muted))
-                    .copyWith(
-                      fontWeight: strong ? FontWeight.w900 : FontWeight.w600,
-                    ),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style:
-                (strong
-                        ? AppFonts.titleMedium(color: AppColors.inkStrong)
-                        : AppFonts.bodyMedium(color: AppColors.inkStrong))
-                    .copyWith(fontWeight: FontWeight.w900),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _initials(String value) {
     final parts = value.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty || parts.first.isEmpty) return 'W';
@@ -1245,11 +1538,7 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
               radius: 17,
               backgroundColor: AppColors.surface,
               child: IconButton(
-                onPressed: () {
-                  context.showTopSnackBar(
-                    const SnackBar(content: Text('Edit job coming soon.')),
-                  );
-                },
+                onPressed: _isLoadingJob ? null : _openEditJob,
                 padding: EdgeInsets.zero,
                 icon: const Icon(
                   Icons.edit_outlined,
@@ -1280,8 +1569,9 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
               ).copyWith(fontWeight: FontWeight.w600),
               tabs: const [
                 Tab(text: 'Overview'),
-                Tab(text: 'Form'),
-                Tab(text: 'Material'),
+                Tab(text: 'Safety Checklist'),
+                Tab(text: 'Drawings'),
+                Tab(text: 'Photos'),
               ],
             ),
           ),
@@ -1291,7 +1581,12 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
         children: [
           TabBarView(
             controller: _tabController,
-            children: [_overviewTab(), _formTab(), _materialTab()],
+            children: [
+              _overviewTab(),
+              _safetyChecklistTab(),
+              _drawingsTab(),
+              _photosTab(),
+            ],
           ),
           Positioned(
             left: 16,
@@ -1406,6 +1701,30 @@ class _VisibleMapTiles extends StatelessWidget {
         (0.5 - math.log((1 + sinLat) / (1 - sinLat)) / (4 * math.pi)) * scale;
     return Offset(x, y);
   }
+}
+
+class _JobDrawingItem {
+  const _JobDrawingItem({
+    required this.code,
+    required this.title,
+    required this.subtitle,
+    required this.updatedLabel,
+    this.remoteDrawingUrl,
+    this.levelName,
+    this.projectId,
+    this.levelId,
+    this.isLinked = false,
+  });
+
+  final String code;
+  final String title;
+  final String subtitle;
+  final String updatedLabel;
+  final String? remoteDrawingUrl;
+  final String? levelName;
+  final String? projectId;
+  final String? levelId;
+  final bool isLinked;
 }
 
 class _JobQrScannerPage extends StatefulWidget {

@@ -51,6 +51,17 @@ abstract final class AppApiUrls {
   /// `GET` [clients_read] · `PUT` [clients_update] · `PATCH` [clients_partial_update] · `DELETE` [clients_delete]
   static String clientsById(String id) => '$_v1/clients/$id/';
 
+  // ─── Vendors ─────────────────────────────────────────────────────────────
+
+  /// `GET` vendors list · `POST` vendor create
+  static const String vendors = '$_v1/vendors/';
+
+  /// `GET` vendor detail · `PUT` · `PATCH` · `DELETE`
+  static String vendorsById(String id) => '$_v1/vendors/$id/';
+
+  /// `GET` [vendor-type_list] — vendor type dropdowns for create vendor.
+  static const String vendorTypes = '$_v1/vendor-type/';
+
   // ─── Contacts ─────────────────────────────────────────────────────────────
 
   /// `GET` [contact_list] · `POST` [contact_create]
@@ -132,8 +143,28 @@ abstract final class AppApiUrls {
   /// `GET` [jobs_read] · `PUT` [jobs_update] · `PATCH` [jobs_partial_update] · `DELETE` [jobs_delete]
   static String jobById(String id) => '$_v1/jobs/$id/';
 
+  /// `POST` submit a filled form for a job.
+  static String jobSubmitForm(int jobId) => '$_v1/jobs/$jobId/submit-form/';
+
+  /// `GET` all submitted forms for a job.
+  static String jobSubmittedForms(int jobId) => '$_v1/jobs/$jobId/submitted-forms/';
+
+  /// `GET` one submission record for a job ([submissionId], not job or form id).
+  static String jobSubmittedFormById(int jobId, int submissionId) =>
+      '$_v1/jobs/$jobId/submitted-forms/$submissionId/';
+
+  /// `PUT` update an existing submission for a job.
+  static String jobSubmittedFormUpdate(int jobId, int submissionId) =>
+      '$_v1/jobs/$jobId/submitted-forms/$submissionId/update/';
+
+  /// `POST` record a QR scan against a job.
+  static String jobScanQr(int jobId) => '$_v1/jobs/$jobId/scan-qr/';
+
   /// `GET` job status metadata (dropdowns).
   static const String jobStatuses = '$_v1/job-status/';
+
+  /// `GET` project type metadata (dropdowns).
+  static const String projectTypes = '$_v1/project-type/';
 
   // ─── Site ──────────────────────────────────────────────────────────────────
 
@@ -173,6 +204,10 @@ abstract final class AppApiUrls {
   /// `GET` [qr_codes_read] · `PUT` [qr_codes_update] · `PATCH` [qr_codes_partial_update] · `DELETE` [qr_codes_delete]
   static String qrCodeById(int id) => '$_v1/qr-codes/$id/';
 
+  /// `GET` public job details for a QR code value (e.g. `QR-10001`).
+  static String qrCodeDetailsByCode(String qrCode) =>
+      '$_v1/qr-codes/${Uri.encodeComponent(qrCode)}/details/';
+
   /// `GET` [project_level_list] · `POST` [project_level_create]
   static String projectLevels(String projectId) =>
       '$_v1/project/$projectId/level/';
@@ -191,4 +226,9 @@ abstract final class AppApiUrls {
 
   /// `GET` [user-profile_read] · `PUT` [user-profile_update] · `PATCH` [user-profile_partial_update]
   static String userProfileById(String id) => '$_v1/user-profile/$id/';
+
+  // ─── Integrations (Zoho Inventory) ───────────────────────────────────────
+
+  /// Start Zoho Inventory OAuth — returns `authorization_url` and `connection_id`.
+  static const String zohoConnect = '$_v1/integrations/zoho/connect/';
 }

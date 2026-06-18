@@ -18,6 +18,8 @@ Future<int?> showEmployeeJobFormPickerSheet({
   required BuildContext context,
   required List<EmployeeJobFormOption> forms,
   int? selectedFormId,
+  String? subtitle,
+  bool allowCompletedSelection = false,
 }) {
   return showModalBottomSheet<int>(
     context: context,
@@ -53,7 +55,8 @@ Future<int?> showEmployeeJobFormPickerSheet({
               ),
               const SizedBox(height: 6),
               Text(
-                'Complete every linked form before submitting.',
+                subtitle ??
+                    'Complete every linked form before submitting.',
                 style: AppFonts.bodyMedium(color: AppColors.muted),
               ),
               const SizedBox(height: 18),
@@ -114,7 +117,11 @@ Future<int?> showEmployeeJobFormPickerSheet({
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              form.isComplete ? 'Complete' : 'Pending',
+                              form.isComplete
+                                  ? (allowCompletedSelection
+                                      ? 'Submitted'
+                                      : 'Complete')
+                                  : 'Pending',
                               style: AppFonts.labelSmall(
                                 color: form.isComplete
                                     ? const Color(0xFF00A86B)

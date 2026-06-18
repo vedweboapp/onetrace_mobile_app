@@ -56,12 +56,9 @@ class ProjectJobListItem {
   });
 
   factory ProjectJobListItem.fromApi(JobRead job) {
-    final statusText = job.displayStatus.toLowerCase();
-    final status = statusText.contains('complete')
+    final status = job.completedAt != null
         ? ProjectJobStatus.completed
-        : (statusText.contains('pending')
-              ? ProjectJobStatus.pending
-              : ProjectJobStatus.inProgress);
+        : _statusFromLabel(job.displayStatus);
     final worker = job.displayWorker;
     return ProjectJobListItem(
       id: job.id.toString(),
@@ -108,6 +105,13 @@ class ProjectJobListItem {
         locationLabel.toLowerCase().contains(s) ||
         status.label.toLowerCase().contains(s);
   }
+}
+
+ProjectJobStatus _statusFromLabel(String label) {
+  final statusText = label.toLowerCase();
+  if (statusText.contains('complete')) return ProjectJobStatus.completed;
+  if (statusText.contains('pending')) return ProjectJobStatus.pending;
+  return ProjectJobStatus.inProgress;
 }
 
 String _initialsFor(String value) {

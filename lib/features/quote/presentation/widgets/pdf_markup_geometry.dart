@@ -28,6 +28,7 @@ class PinEntry {
     this.status = 'To Do',
     this.variation = 'No',
     this.droppedAt,
+    this.attachmentNames = const <String>[],
   });
 
   final double nx;
@@ -54,6 +55,7 @@ class PinEntry {
   final String status;
   final String variation;
   final DateTime? droppedAt;
+  final List<String> attachmentNames;
 
   factory PinEntry.fromAnnotation(
     PdfAnnotationPoint point, {
@@ -67,6 +69,7 @@ class PinEntry {
     String status = 'To Do',
     String variation = 'No',
     DateTime? droppedAt,
+    List<String> attachmentNames = const <String>[],
   }) {
     return PinEntry(
       nx: point.fractionX,
@@ -83,6 +86,7 @@ class PinEntry {
       status: status,
       variation: variation,
       droppedAt: droppedAt,
+      attachmentNames: attachmentNames,
     );
   }
 
@@ -101,6 +105,7 @@ class PinEntry {
     String? status,
     String? variation,
     DateTime? droppedAt,
+    List<String>? attachmentNames,
   }) {
     return PinEntry(
       nx: nx ?? this.nx,
@@ -117,6 +122,7 @@ class PinEntry {
       status: status ?? this.status,
       variation: variation ?? this.variation,
       droppedAt: droppedAt ?? this.droppedAt,
+      attachmentNames: attachmentNames ?? this.attachmentNames,
     );
   }
 
@@ -139,6 +145,7 @@ class PinEntry {
     if (status != 'To Do') 'status': status,
     if (variation != 'No') 'variation': variation,
     if (droppedAt != null) 'droppedAt': droppedAt!.toUtc().toIso8601String(),
+    if (attachmentNames.isNotEmpty) 'attachmentNames': attachmentNames,
   };
 
   static PinEntry? fromJson(dynamic e) {
@@ -185,9 +192,26 @@ class PinEntry {
             ? m['variation'] as String
             : 'No',
         droppedAt: dropped,
+        attachmentNames: _readAttachmentNames(m),
       );
     }
     return null;
+  }
+
+  static List<String> _readAttachmentNames(Map<String, dynamic> m) {
+    final raw = m['attachmentNames'] ?? m['attachments'];
+    if (raw is! List) return const <String>[];
+    final out = <String>[];
+    for (final entry in raw) {
+      if (entry is Map) {
+        final name = entry['name']?.toString().trim() ?? '';
+        if (name.isNotEmpty) out.add(name);
+      } else {
+        final text = entry.toString().trim();
+        if (text.isNotEmpty) out.add(text);
+      }
+    }
+    return out;
   }
 
   PdfPageCoordinate get pageCoordinate =>

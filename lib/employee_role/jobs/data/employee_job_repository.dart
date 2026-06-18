@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:intl/intl.dart';
@@ -5,6 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:red5/core/di/injection.dart';
 
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
+import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 
 import 'package:red5/features/dashboard/data/job_models.dart';
 
@@ -37,7 +40,17 @@ final class EmployeeJobRepository {
   Future<List<EmployeeJobSummary>> fetchJobs() async {
 
     final rows = await _jobsApi.fetchAllJobs();
-
+    if (kDebugMode) {
+      JobCompletionDebugLog.info('Parsed ${rows.length} job(s) from GET /jobs/');
+      for (final job in rows) {
+        final assignments = JobFormAssignment.listFromJobRaw(job.raw);
+        if (assignments.isEmpty) continue;
+        JobCompletionDebugLog.info(
+          'job ${job.id} forms: '
+          '${assignments.map((a) => 'template=${a.formId}→job_form=${a.jobFormId}').join(', ')}',
+        );
+      }
+    }
     return rows.map(_mapSummary).toList(growable: false);
 
   }
@@ -65,23 +78,16 @@ final class EmployeeJobRepository {
     final status = _mapStatus(job);
 
     return EmployeeJobSummary(
-
       id: job.id,
-
       title: job.title,
-
       status: status,
-
       earning: _formatEarning(job),
-
       location: _formatLocation(job),
-
       schedule: _formatSchedule(job),
-
       primaryActionLabel: _primaryActionLabel(status),
-
       startDate: job.startDate?.toLocal(),
-
+      siteName: _readSiteName(job),
+      projectName: _readProjectName(job),
     );
 
   }
@@ -95,6 +101,11 @@ final class EmployeeJobRepository {
     final checklist = _checklistFromFormProgress(formProgress);
 
     final items = _itemsFromJob(job);
+
+    final formAssignments = JobFormAssignment.listFromJobRaw(job.raw);
+    final formIds = formAssignments.isNotEmpty
+        ? formAssignments.map((a) => a.formId).toList(growable: false)
+        : _formIdsFromJob(job);
 
     return EmployeeJobDetail(
 
@@ -130,7 +141,9 @@ final class EmployeeJobRepository {
 
       formId: _primaryFormId(job),
 
-      formIds: _formIdsFromJob(job),
+      formIds: formIds,
+
+      formAssignments: formAssignments,
 
       projectId: job.project,
 
@@ -363,9 +376,21 @@ final class EmployeeJobRepository {
 
 
 
-  String _formatLocation(JobRead job) {
+  static String? _readSiteName(JobRead job) {
+    final site = job.siteName?.trim();
+    if (site != null && site.isNotEmpty) return site;
+    final location = job.displayLocation.trim();
+    return location.isEmpty ? null : location;
+  }
 
-    final site = job.siteName ?? job.displayLocation;
+  static String? _readProjectName(JobRead job) {
+    final project = job.projectName?.trim();
+    if (project == null || project.isEmpty) return null;
+    return project;
+  }
+
+  String _formatLocation(JobRead job) {
+    final site = _readSiteName(job) ?? job.displayLocation;
 
     final project = job.projectName?.trim();
 
@@ -478,6 +503,66 @@ final class EmployeeJobRepository {
       EmployeeJobStatus.pending => 'Start Job',
       EmployeeJobStatus.completed => 'View Details',
     };
+  }
+
+  /// Persists operative job completion to the API so admin views stay in sync.
+  Future<JobRead> markJobCompleted(int jobId) async {
+    JobCompletionDebugLog.api(
+      label: 'Fetch job before complete',
+      method: 'GET',
+      url: '/api/v1/jobs/$jobId/',
+    );
+    final job = await _jobsApi.fetchJobById(jobId.toString());
+    if (job.completedAt != null) {
+      JobCompletionDebugLog.info('Job $jobId already completed — skipping PUT');
+      return job;
+    }
+
+    int? completedStatusId = job.jobStatus;
+    try {
+      final statuses = await _jobsApi.fetchJobStatusOptions();
+      for (final status in statuses) {
+        final name = status.name.trim().toLowerCase();
+        if (name.contains('complete') && !name.contains('incomplete')) {
+          completedStatusId = status.id;
+          break;
+        }
+      }
+      JobCompletionDebugLog.info('Resolved completed job_status id=$completedStatusId');
+    } catch (_) {
+      JobCompletionDebugLog.info('job_status lookup failed — using completed_at only');
+    }
+
+    final payload = job.toWritePayload()
+      ..['completed_at'] = DateTime.now().toUtc().toIso8601String()
+      ..['form'] = job.form;
+    if (completedStatusId != null) {
+      payload['job_status'] = completedStatusId;
+    }
+
+    JobCompletionDebugLog.api(
+      label: 'Mark job completed',
+      method: 'PUT',
+      url: '/api/v1/jobs/$jobId/',
+      request: payload,
+    );
+
+    final updated = await _jobsApi.updateJob(jobId: jobId.toString(), payload: payload);
+
+    JobCompletionDebugLog.api(
+      label: 'Mark job completed',
+      method: 'PUT',
+      url: '/api/v1/jobs/$jobId/',
+      response: <String, dynamic>{
+        'id': updated.id,
+        'title': updated.title,
+        'completed_at': updated.completedAt?.toUtc().toIso8601String(),
+        'display_status': updated.displayStatus,
+        'job_status': updated.jobStatus,
+      },
+    );
+
+    return updated;
   }
 
 }

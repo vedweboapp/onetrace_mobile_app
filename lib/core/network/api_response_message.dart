@@ -106,7 +106,9 @@ abstract final class ApiResponseMessage {
     if (payload == null) return null;
     if (payload is String) {
       final t = payload.trim();
-      return t.isEmpty ? null : t;
+      if (t.isEmpty) return null;
+      if (_looksLikeHtml(t)) return _messageFromHtml(t);
+      return t;
     }
     if (payload is Map) {
       final payloadMap = Map<String, dynamic>.from(
@@ -249,6 +251,28 @@ abstract final class ApiResponseMessage {
     for (final c in candidates) {
       final t = c?.trim();
       if (t != null && t.isNotEmpty) return t;
+    }
+    return null;
+  }
+
+  static bool _looksLikeHtml(String value) {
+    final lower = value.toLowerCase();
+    return lower.startsWith('<!doctype html') ||
+        lower.startsWith('<html') ||
+        (lower.contains('<head>') && lower.contains('<body'));
+  }
+
+  static String? _messageFromHtml(String html) {
+    final titleMatch = RegExp(
+      r'<title[^>]*>([^<]+)</title>',
+      caseSensitive: false,
+    ).firstMatch(html);
+    final title = titleMatch?.group(1)?.trim();
+    if (title != null && title.isNotEmpty) {
+      if (title.toLowerCase().contains('not found')) {
+        return AppStrings.apiErrorNotFound;
+      }
+      return title;
     }
     return null;
   }

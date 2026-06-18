@@ -23,10 +23,13 @@ import 'package:red5/features/dashboard/data/crm_quotes_api_client.dart';
 import 'package:red5/features/dashboard/data/organization_settings_api_client.dart';
 import 'package:red5/features/dashboard/data/qr_codes_api_client.dart';
 import 'package:red5/features/forms/data/forms_api_client.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_forms_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
 import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/features/dashboard/data/zoho_integration_api_client.dart';
+import 'package:red5/features/vendors/data/vendors_api_client.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -103,6 +106,42 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return ClientsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<VendorsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return VendorsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<ZohoIntegrationApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return ZohoIntegrationApiClient(dio: dio);
   });
 
   sl.registerLazySingleton<SitesApiClient>(() {
@@ -213,6 +252,24 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     return InvoicesApiClient(dio: dio);
   });
 
+  sl.registerLazySingleton<EmployeeJobFormsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 60),
+        sendTimeout: const Duration(seconds: 60),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return EmployeeJobFormsApiClient(dio: dio);
+  });
+
   sl.registerLazySingleton<QuoteProjectApiClient>(() {
     final storage = sl<LocalStorage>();
     final dio = Dio(
@@ -297,7 +354,15 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
       ),
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
-    return QrCodesApiClient(dio: dio);
+    final publicDio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        headers: const {Headers.acceptHeader: Headers.jsonContentType},
+      ),
+    );
+    return QrCodesApiClient(dio: dio, publicDio: publicDio);
   });
 
   sl.registerLazySingleton<UserProfileApiClient>(() {

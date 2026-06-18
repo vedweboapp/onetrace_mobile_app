@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/employee_role/forms/data/cached_technician_form.dart';
 import 'package:red5/employee_role/forms/data/technician_form_repository.dart';
 
@@ -89,10 +90,15 @@ final class TechnicianFormController extends StateNotifier<TechnicianFormState> 
         errorMessage: error.message,
         syncStatus: TechnicianFormSyncStatus.offlineCached,
       );
-    } catch (_) {
+    } catch (error) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: 'Unable to load form.',
+        errorMessage: error is TechnicianFormLoadException
+            ? error.message
+            : ApiResponseMessage.fromAnyError(
+                error,
+                genericFallback: 'Unable to load form.',
+              ),
       );
     }
   }

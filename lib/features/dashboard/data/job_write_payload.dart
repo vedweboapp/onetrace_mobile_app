@@ -15,6 +15,7 @@ abstract final class JobWritePayload {
     int? site,
     int? form,
     int? qrCode,
+    String? jobSource,
     Map<String, dynamic>? jobMeta,
     Map<String, dynamic>? jobMetaOverride,
   }) {
@@ -34,6 +35,8 @@ abstract final class JobWritePayload {
       if (site != null) 'site': site,
       if (form != null) 'form': form,
       if (qrCode != null) 'qr_code': qrCode,
+      if (jobSource != null && jobSource.trim().isNotEmpty)
+        'job_source': jobSource.trim(),
       'job_meta': meta,
     };
   }

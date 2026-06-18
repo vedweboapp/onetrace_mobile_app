@@ -1,16 +1,89 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/employee_role/employee_home/employee_home_page.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
+import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
+import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 
-class EmployeeJobConfirmationPage extends StatelessWidget {
-  const EmployeeJobConfirmationPage({super.key, this.jobTitle});
+class EmployeeJobConfirmationPage extends ConsumerStatefulWidget {
+  const EmployeeJobConfirmationPage({super.key, this.jobId, this.jobTitle});
 
   static const path = '/employee-role/jobs/confirmation';
   static const name = 'employee-job-confirmation';
 
+  final int? jobId;
   final String? jobTitle;
+
+  @override
+  ConsumerState<EmployeeJobConfirmationPage> createState() =>
+      _EmployeeJobConfirmationPageState();
+}
+
+class _EmployeeJobConfirmationPageState
+    extends ConsumerState<EmployeeJobConfirmationPage> {
+  bool _isCompleting = false;
+
+  Future<void> _completeJob() async {
+    final activeJobId = widget.jobId;
+    if (activeJobId == null || _isCompleting) return;
+
+    setState(() => _isCompleting = true);
+    try {
+      JobCompletionDebugLog.banner('Complete job started | jobId=$activeJobId');
+
+      JobCompletionDebugLog.step('Step 1/2 — Reload job (GET /jobs/$activeJobId/)');
+      await ref
+          .read(employeeJobDetailControllerProvider.notifier)
+          .load(jobId: activeJobId);
+      final job = ref.read(employeeJobDetailControllerProvider).job;
+      JobCompletionDebugLog.info(
+        'formAssignments: ${job?.formAssignments.map((a) => 'form=${a.formId}→job_form=${a.jobFormId}').join(', ') ?? 'none'}',
+      );
+
+      JobCompletionDebugLog.step('Step 2/2 — Mark job completed (PUT /jobs/$activeJobId/)');
+      final completedJob =
+          await ref.read(employeeJobRepositoryProvider).markJobCompleted(activeJobId);
+      JobCompletionDebugLog.info(
+        'completed_at=${completedJob.completedAt?.toIso8601String() ?? 'n/a'} | status=${completedJob.displayStatus}',
+      );
+
+      JobCompletionDebugLog.info('Refresh local job list');
+      ref.read(employeeJobSessionProvider.notifier).completeJob(activeJobId);
+      await ref.read(employeeJobsControllerProvider.notifier).load();
+      await ref
+          .read(employeeJobDetailControllerProvider.notifier)
+          .load(jobId: activeJobId);
+
+      JobCompletionDebugLog.banner('Complete job finished successfully');
+      if (!mounted) return;
+      TechnicianHomePage.go(context, tab: EmployeeShellTab.jobs);
+    } catch (e) {
+      if (!mounted) return;
+      JobCompletionDebugLog.api(
+        label: 'Complete job FAILED',
+        method: '—',
+        url: 'jobId=$activeJobId',
+        error: e,
+      );
+      setState(() => _isCompleting = false);
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: 'Could not complete job. Please try again.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +140,10 @@ class EmployeeJobConfirmationPage extends StatelessWidget {
               ],
             ),
           ),
-          _CompleteJobBar(onPressed: () => context.go(EmployeeJobsPage.path)),
+          _CompleteJobBar(
+            isLoading: _isCompleting,
+            onPressed: _isCompleting ? null : _completeJob,
+          ),
         ],
       ),
     );
@@ -305,9 +381,10 @@ class _VerifiedByRow extends StatelessWidget {
 }
 
 class _CompleteJobBar extends StatelessWidget {
-  const _CompleteJobBar({required this.onPressed});
+  const _CompleteJobBar({required this.onPressed, this.isLoading = false});
 
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -328,24 +405,34 @@ class _CompleteJobBar extends StatelessWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.inkStrong,
                 foregroundColor: AppColors.white,
+                disabledBackgroundColor: const Color(0xFFB8B8BE),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(11),
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Complete Job',
-                    style: AppFonts.titleSmall(
-                      color: AppColors.white,
-                    ).copyWith(fontWeight: FontWeight.w900),
-                  ),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.check_circle_rounded, size: 17),
-                ],
-              ),
+              child: isLoading
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.white,
+                      ),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Complete Job',
+                          style: AppFonts.titleSmall(
+                            color: AppColors.white,
+                          ).copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.check_circle_rounded, size: 17),
+                      ],
+                    ),
             ),
           ),
         ),

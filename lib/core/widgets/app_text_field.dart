@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 
@@ -32,6 +33,7 @@ class AppTextField extends StatelessWidget {
     this.borderRadius = 10,
     this.dense = false,
     this.scrollPadding,
+    this.inputFormatters,
   });
 
   final TextEditingController controller;
@@ -59,6 +61,7 @@ class AppTextField extends StatelessWidget {
   final bool dense;
   /// Extra space used when scrolling the field into view above the keyboard.
   final EdgeInsets? scrollPadding;
+  final List<TextInputFormatter>? inputFormatters;
 
   static const double defaultBorderRadius = 10;
 
@@ -137,6 +140,7 @@ class AppTextField extends StatelessWidget {
       return TextFormField(
         controller: controller,
         keyboardType: keyboardType,
+        inputFormatters: inputFormatters,
         obscureText: obscureText,
         validator: validator,
         autofocus: autofocus,
@@ -159,6 +163,7 @@ class AppTextField extends StatelessWidget {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       obscureText: obscureText,
       autofocus: autofocus,
       textInputAction: textInputAction,

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -358,6 +359,12 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               }
               final pins = next.pins
                   .map((pin) {
+                    if (_usePdfViewport) {
+                      if (pin.pdfPoint != null) {
+                        return pin.copyWith(offset: _pinAnchorScene(pin));
+                      }
+                      return pin;
+                    }
                     if (pin.contentNormX == null || pin.contentNormY == null) {
                       return pin;
                     }
@@ -424,11 +431,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     Offset anchor, {
     required double pinSize,
     required double pointerH,
-    double abbreviationBand = 0,
   }) {
     final viewport = _viewportCanvasSize();
     if (viewport == null) return true;
-    final top = anchor.dy - pinSize - pointerH - abbreviationBand;
+    final top = anchor.dy - pinSize - pointerH;
     if (top < 0 || anchor.dy > viewport.height + 2) return false;
     if (anchor.dx < -pinSize || anchor.dx > viewport.width + pinSize) {
       return false;
@@ -846,6 +852,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   Rect _currentContentRectInScene() {
+    if (_usePdfViewport) {
+      final size = _canvasSceneSizeForNormalization();
+      return Rect.fromLTWH(0, 0, size.width, size.height);
+    }
     return _contentRectForSceneSize(_canvasSceneSizeForNormalization());
   }
 
@@ -1049,7 +1059,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   /// Only applies to **PDF** levels. Raster screenshots/images use plain 0–100%
   /// of the image (same as the website canvas) — no portrait↔landscape swap.
   bool get _shouldApplyLandscapeRotation {
-    if (!_isPdfFile) return false;
+    if (!_isPdfFile || _usePdfViewport) return false;
     final ratio = _activeContentAspectRatio;
     if (ratio == null || !ratio.isFinite || ratio <= 0) return false;
     return ratio < 1.0;
@@ -1155,9 +1165,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   void _applyPinScenePosition(_PinHit hit, Offset scene) {
     if (hit.regionIndex < 0 || hit.regionIndex >= _regions.length) return;
     final region = _regions[hit.regionIndex];
+    final bounds = _regionSceneRect(region);
     final clamped = Offset(
-      scene.dx.clamp(region.rect.left, region.rect.right),
-      scene.dy.clamp(region.rect.top, region.rect.bottom),
+      scene.dx.clamp(bounds.left, bounds.right),
+      scene.dy.clamp(bounds.top, bounds.bottom),
     );
     if (!_regionContainsPoint(region, clamped)) return;
     if (hit.pinIndex < 0 || hit.pinIndex >= region.pins.length) return;
@@ -1663,14 +1674,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       final region = _regions[targetIndex!];
       final engine = _pdfEngine;
       final pdfPoint = engine?.viewportToAnnotation(p);
-      final anchor = pdfPoint != null
-          ? (engine!.annotationToViewport(pdfPoint) ?? p)
-          : p;
-      final contentNorm = _normalizeScenePoint(anchor);
+      final contentNorm = _normalizeScenePoint(p);
       final nextPins = List<_CanvasPin>.from(region.pins)
         ..add(
           _CanvasPin(
-            offset: anchor,
+            offset: p,
             contentNormX: contentNorm.dx,
             contentNormY: contentNorm.dy,
             pdfPoint: pdfPoint,
@@ -1741,11 +1749,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.white,
-      isDismissible: true,
-      enableDrag: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
+      isDismissible: true,
+      enableDrag: true,
       builder: (ctx) => _PinDetailBottomSheet(
         pinNumber: pinIndex + 1,
         pin: currentPin,
@@ -1753,6 +1761,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         onCreatePinStatus: _createPinStatus,
         onEditPinStatus: _editPinStatus,
         onDeletePinStatus: _deletePinStatus,
+        levelId: _levelId,
+        levelLabel: _levelController.text.trim(),
       ),
     );
     unfocusPrimary();
@@ -1801,6 +1811,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _selectedPinRegionIndex = regionIndex;
       _selectedPinIndex = liveIndex;
     });
+    await _submitLevelPlots(popOnSuccess: false);
   }
 
   int _resolveLivePinIndex({
@@ -2156,15 +2167,17 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             final x = _toDouble(p['x_coordinate']);
             final y = _toDouble(p['y_coordinate']);
             if (x == null || y == null) continue;
-            final statusId = p['status'] is int
-                ? p['status'] as int
-                : int.tryParse('${p['status'] ?? ''}');
+            final statusId = _readPinStatusId(p);
             final serverPinId = readApiIntFromMap(p, const ['id', 'pin_id']);
             final pageRaw = p['page'] ?? plot['page'];
             final page = pageRaw is int
                 ? pageRaw
                 : (pageRaw is num ? pageRaw.toInt() : 1);
             final portraitNorm = _apiPortraitNormFromRaw(x, y);
+            final pinOffset = _canvasPinOffsetFromApi(x, y, page: page);
+            final pinContentNorm = _usePdfViewport
+                ? _normalizeScenePoint(pinOffset)
+                : portraitNorm;
             final engine = _pdfEngine;
             final pdfPoint =
                 engine?.annotationFromApiPercent(
@@ -2207,21 +2220,30 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                     ) ??
                     _readNestedAbbreviation(p['composite_item']) ??
                     '');
-            final productName =
-                p['item_name']?.toString().trim().isNotEmpty == true
-                ? p['item_name'].toString().trim()
-                : (p['product_name']?.toString().trim().isNotEmpty == true
-                      ? p['product_name'].toString().trim()
-                      : '');
+            final productName = _readPinProductName(p);
+            final formName = _readPinFormName(p);
+            final formId = _readPinFormId(p);
+            final attachmentNames = _readPinAttachments(p);
+            final description = _readStringFromPinMap(
+              p,
+              const ['description', 'remarks', 'notes'],
+            );
+            final statusName =
+                _readPinStatusName(p) ?? _statusNameById(statusId);
+            final blockName = _readPinBlockName(p, _blockController.text.trim());
+            final levelName = _readPinLevelName(p, _levelController.text.trim());
+            final zoneName = _readPinPlotName(p, name);
+            final variation = _readPinVariation(p);
+            final droppedAt = _readPinDroppedAt(p) ?? DateTime.now();
             pins.add(
               _CanvasPin(
-                offset: _canvasPinOffsetFromApi(x, y, page: page),
-                contentNormX: portraitNorm.dx,
-                contentNormY: portraitNorm.dy,
+                offset: pinOffset,
+                contentNormX: pinContentNorm.dx,
+                contentNormY: pinContentNorm.dy,
                 pdfPoint: pdfPoint,
                 productName: productName,
                 abbreviation: abbreviation,
-                status: _statusNameById(statusId),
+                status: statusName,
                 statusId: statusId,
                 groupId:
                     (p['group'] is int
@@ -2234,12 +2256,15 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                         ? p['quantity'] as int
                         : int.tryParse('${p['quantity'] ?? ''}')) ??
                     1,
-                blockName: _blockController.text.trim(),
-                levelName: _levelController.text.trim(),
-                zoneName: name,
-                variation: (p['variation'] == true) ? 'Yes' : 'No',
-                droppedAt: DateTime.now(),
-                description: '',
+                blockName: blockName,
+                levelName: levelName,
+                zoneName: zoneName,
+                variation: variation,
+                droppedAt: droppedAt,
+                description: description,
+                formName: formName,
+                formId: formId,
+                attachmentNames: attachmentNames,
                 serverPinId: serverPinId,
               ),
             );
@@ -2539,9 +2564,26 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           if (pin.compositeItemId != null) 'item': pin.compositeItemId,
           if (pin.compositeItemId != null)
             'composite_item': pin.compositeItemId,
+          if (pin.productName.trim().isNotEmpty) ...{
+            'item_name': pin.productName.trim(),
+            'product_name': pin.productName.trim(),
+          },
+          if (pin.blockName.trim().isNotEmpty)
+            'block_name': pin.blockName.trim(),
+          if (pin.levelName.trim().isNotEmpty)
+            'level_name': pin.levelName.trim(),
+          if (pin.zoneName.trim().isNotEmpty) 'plot_name': pin.zoneName.trim(),
+          if (pin.formId != null) 'form_id': pin.formId,
+          if (pin.formName.trim().isNotEmpty) 'form_name': pin.formName.trim(),
           'quantity': pin.quantity < 1 ? 1 : pin.quantity,
           if (pin.variation.trim().isNotEmpty)
             'variation': pin.variation.toLowerCase() == 'yes',
+          'description': pin.description.trim(),
+          'dropped_at': pin.droppedAt.toUtc().toIso8601String(),
+          'attachments': [
+            for (final name in pin.attachmentNames)
+              <String, dynamic>{'name': name},
+          ],
         });
       }
       final normalizedCoordinates = _plotCoordinatesPayloadForApi(region);
@@ -2612,7 +2654,13 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     setState(() => _isSubmitting = true);
     try {
       final built = _buildLevelPlotsPayload();
-      final bool clearedAll = clearAllOnServer || built.isEmpty;
+      if (!clearAllOnServer && built.isEmpty) {
+        if (!mounted) return;
+        setState(() => _isSubmitting = false);
+        _showTopToast('Add a named plot area before saving pins.');
+        return;
+      }
+      final bool clearedAll = clearAllOnServer;
       final List<Map<String, dynamic>> plotsForApi = clearedAll
           ? await _fetchServerClearPlotsPayload(
               projectId: projectId,
@@ -2743,12 +2791,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 final pinSize = _pinSizeForScreen(context);
                 final pointerH = _pinPointerHeightForScreen(context);
                 final abbr = _pinDisplayAbbreviation(pin);
-                final abbrBand = abbr.isNotEmpty ? 22.0 : 0.0;
                 if (!_shouldPaintPinAt(
                   anchor,
                   pinSize: pinSize,
                   pointerH: pointerH,
-                  abbreviationBand: abbrBand,
                 )) {
                   return const SizedBox.shrink();
                 }
@@ -2761,7 +2807,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 );
                 return Positioned(
                   left: anchor.dx - pinSize / 2,
-                  top: anchor.dy - pinSize - pointerH - abbrBand,
+                  top: anchor.dy - pinSize - pointerH,
                   child: interactive
                       ? GestureDetector(
                           behavior: HitTestBehavior.opaque,
@@ -2786,12 +2832,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               final pinSize = _pinSizeForScreen(context);
               final pointerH = _pinPointerHeightForScreen(context);
               final abbr = _pinDisplayAbbreviation(pin);
-              final abbrBand = abbr.isNotEmpty ? 22.0 : 0.0;
               if (!_shouldPaintPinAt(
                 anchor,
                 pinSize: pinSize,
                 pointerH: pointerH,
-                abbreviationBand: abbrBand,
               )) {
                 return const SizedBox.shrink();
               }
@@ -2804,7 +2848,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               );
               return Positioned(
                 left: anchor.dx - pinSize / 2,
-                top: anchor.dy - pinSize - pointerH - abbrBand,
+                top: anchor.dy - pinSize - pointerH,
                 child: interactive
                     ? GestureDetector(
                         behavior: HitTestBehavior.opaque,
@@ -3741,6 +3785,135 @@ class PinView extends StatelessWidget {
   }
 }
 
+String _readStringFromPinMap(Map<String, dynamic> map, List<String> keys) {
+  for (final key in keys) {
+    final raw = map[key];
+    if (raw == null) continue;
+    final text = raw.toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+Map<String, dynamic>? _asStringKeyedMap(dynamic value) {
+  if (value is! Map) return null;
+  return Map<String, dynamic>.from(
+    value.map((k, v) => MapEntry(k.toString(), v)),
+  );
+}
+
+String _readPinProductName(Map<String, dynamic> p) {
+  final direct = _readStringFromPinMap(
+    p,
+    const ['item_name', 'product_name', 'name', 'title'],
+  );
+  if (direct.isNotEmpty) return direct;
+  for (final key in const ['item', 'composite_item']) {
+    final nested = _asStringKeyedMap(p[key]);
+    if (nested == null) continue;
+    final name = _readStringFromPinMap(
+      nested,
+      const ['item_name', 'name', 'title', 'product_name'],
+    );
+    if (name.isNotEmpty) return name;
+  }
+  return '';
+}
+
+String _readPinBlockName(Map<String, dynamic> p, String fallback) {
+  final fromPin = _readStringFromPinMap(p, const ['block_name', 'block']);
+  return fromPin.isNotEmpty ? fromPin : fallback;
+}
+
+String _readPinLevelName(Map<String, dynamic> p, String fallback) {
+  final fromPin = _readStringFromPinMap(
+    p,
+    const ['level_name', 'level', 'level_label'],
+  );
+  return fromPin.isNotEmpty ? fromPin : fallback;
+}
+
+String _readPinPlotName(Map<String, dynamic> p, String plotFallback) {
+  final fromPin = _readStringFromPinMap(
+    p,
+    const ['plot_name', 'zone', 'zone_name', 'plot'],
+  );
+  return fromPin.isNotEmpty ? fromPin : plotFallback;
+}
+
+int? _readPinStatusId(Map<String, dynamic> p) {
+  final raw = p['status'];
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  final nested = _asStringKeyedMap(raw);
+  if (nested != null) {
+    final id = nested['id'] ?? nested['status_id'];
+    if (id is int) return id;
+    if (id is num) return id.toInt();
+    return int.tryParse('${id ?? ''}');
+  }
+  if (raw is String) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    return int.tryParse(trimmed);
+  }
+  return int.tryParse('${raw ?? ''}');
+}
+
+String? _readPinStatusName(Map<String, dynamic> p) {
+  final nested = _asStringKeyedMap(p['status']);
+  if (nested != null) {
+    final name = _readStringFromPinMap(
+      nested,
+      const ['status_name', 'name', 'title', 'label'],
+    );
+    if (name.isNotEmpty) return name;
+  }
+  final direct = _readStringFromPinMap(
+    p,
+    const ['status_name', 'status_label'],
+  );
+  return direct.isEmpty ? null : direct;
+}
+
+String _readPinVariation(Map<String, dynamic> p) {
+  final raw = p['variation'];
+  if (raw is bool) return raw ? 'Yes' : 'No';
+  if (raw is num) return raw != 0 ? 'Yes' : 'No';
+  if (raw is String) {
+    final normalized = raw.trim().toLowerCase();
+    if (normalized == 'yes' ||
+        normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'y') {
+      return 'Yes';
+    }
+    if (normalized == 'no' ||
+        normalized == 'false' ||
+        normalized == '0' ||
+        normalized == 'n') {
+      return 'No';
+    }
+  }
+  return 'No';
+}
+
+DateTime? _readPinDroppedAt(Map<String, dynamic> p) {
+  for (final key in const [
+    'dropped_at',
+    'created_at',
+    'droppedAt',
+    'createdAt',
+  ]) {
+    final raw = p[key];
+    if (raw is String) {
+      final parsed = DateTime.tryParse(raw);
+      if (parsed != null) return parsed.toLocal();
+    }
+  }
+  return null;
+}
+
 int? _readNestedId(dynamic value) {
   if (value is Map) {
     final map = Map<String, dynamic>.from(
@@ -3766,6 +3939,79 @@ String? _readNestedAbbreviation(dynamic value) {
     if (text.isNotEmpty) return text;
   }
   return null;
+}
+
+String _readPinFormName(Map<String, dynamic> map) {
+  for (final key in const [
+    'form_name',
+    'form_title',
+    'linked_form_name',
+  ]) {
+    final raw = map[key];
+    if (raw == null) continue;
+    final text = raw.toString().trim();
+    if (text.isNotEmpty) return text;
+  }
+  for (final key in const ['form', 'form_id', 'linked_form', 'job_form']) {
+    final nested = _asStringKeyedMap(map[key]);
+    if (nested == null) continue;
+    final name = _readStringFromPinMap(
+      nested,
+      const ['name', 'title', 'form_name', 'label'],
+    );
+    if (name.isNotEmpty) return name;
+  }
+  return '';
+}
+
+int? _readPinFormId(Map<String, dynamic> map) {
+  for (final key in const ['form_id', 'form', 'linked_form', 'job_form']) {
+    final raw = map[key];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    final nested = _asStringKeyedMap(raw);
+    if (nested != null) {
+      for (final idKey in const [
+        'id',
+        'form_id',
+        'job_form_id',
+        'project_form_id',
+      ]) {
+        final idRaw = nested[idKey];
+        if (idRaw is int) return idRaw;
+        if (idRaw is num) return idRaw.toInt();
+        final parsed = int.tryParse('${idRaw ?? ''}');
+        if (parsed != null) return parsed;
+      }
+    }
+  }
+  final direct = map['form_id'];
+  if (direct is int) return direct;
+  if (direct is num) return direct.toInt();
+  return int.tryParse('${direct ?? ''}');
+}
+
+List<String> _readPinAttachments(Map<String, dynamic> map) {
+  final raw = map['attachments'] ?? map['files'] ?? map['attachment'];
+  if (raw is! List) return const <String>[];
+  final out = <String>[];
+  for (final entry in raw) {
+    if (entry is Map) {
+      final nested = Map<String, dynamic>.from(
+        entry.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final name = nested['name']?.toString().trim() ??
+          nested['file_name']?.toString().trim() ??
+          nested['filename']?.toString().trim() ??
+          nested['url']?.toString().trim() ??
+          '';
+      if (name.isNotEmpty) out.add(name);
+    } else {
+      final text = entry.toString().trim();
+      if (text.isNotEmpty) out.add(text);
+    }
+  }
+  return out;
 }
 
 class _PinTrianglePainter extends CustomPainter {
@@ -4048,6 +4294,9 @@ class _CanvasPin {
     required this.variation,
     required this.droppedAt,
     required this.description,
+    this.formName = '',
+    this.formId,
+    this.attachmentNames = const <String>[],
     this.serverPinId,
     this.contentNormX,
     this.contentNormY,
@@ -4075,6 +4324,9 @@ class _CanvasPin {
   final String variation;
   final DateTime droppedAt;
   final String description;
+  final String formName;
+  final int? formId;
+  final List<String> attachmentNames;
   final int? serverPinId;
 
   _CanvasPin copyWith({
@@ -4093,6 +4345,9 @@ class _CanvasPin {
     String? variation,
     DateTime? droppedAt,
     String? description,
+    String? formName,
+    int? formId,
+    List<String>? attachmentNames,
     int? serverPinId,
     double? contentNormX,
     double? contentNormY,
@@ -4115,6 +4370,9 @@ class _CanvasPin {
       variation: variation ?? this.variation,
       droppedAt: droppedAt ?? this.droppedAt,
       description: description ?? this.description,
+      formName: formName ?? this.formName,
+      formId: formId ?? this.formId,
+      attachmentNames: attachmentNames ?? this.attachmentNames,
       serverPinId: serverPinId ?? this.serverPinId,
     );
   }
@@ -4142,6 +4400,8 @@ class _PinDetailBottomSheet extends StatefulWidget {
     required this.onCreatePinStatus,
     required this.onEditPinStatus,
     required this.onDeletePinStatus,
+    this.levelId,
+    this.levelLabel,
   });
 
   final int pinNumber;
@@ -4150,6 +4410,8 @@ class _PinDetailBottomSheet extends StatefulWidget {
   final Future<PinStatusItem?> Function() onCreatePinStatus;
   final Future<PinStatusItem?> Function(PinStatusItem) onEditPinStatus;
   final Future<bool> Function(PinStatusItem) onDeletePinStatus;
+  final String? levelId;
+  final String? levelLabel;
 
   @override
   State<_PinDetailBottomSheet> createState() => _PinDetailBottomSheetState();
@@ -4165,6 +4427,8 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   late String _status;
   late String _variation;
   bool _isEditing = false;
+  late List<String> _attachmentNames;
+  int? _linkedFormId;
   late List<PinStatusItem> _pinStatusCatalog;
 
   static const List<String> _fallbackStatuses = <String>[
@@ -4210,6 +4474,8 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     _variation = _variationOptions.contains(widget.pin.variation)
         ? widget.pin.variation
         : _variationOptions.first;
+    _attachmentNames = List<String>.from(widget.pin.attachmentNames);
+    _linkedFormId = widget.pin.formId;
   }
 
   @override
@@ -4255,6 +4521,34 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     _variation = _variationOptions.contains(pin.variation)
         ? pin.variation
         : _variationOptions.first;
+    _attachmentNames = List<String>.from(pin.attachmentNames);
+    _linkedFormId = pin.formId;
+  }
+
+  Future<void> _pickAttachments() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: const [
+        'pdf',
+        'png',
+        'jpg',
+        'jpeg',
+        'webp',
+        'doc',
+        'docx',
+      ],
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      for (final file in result.files) {
+        final name = file.name.trim();
+        if (name.isEmpty) continue;
+        if (!_attachmentNames.contains(name)) {
+          _attachmentNames.add(name);
+        }
+      }
+    });
   }
 
   int? _statusIdByNameLocal(String statusName) {
@@ -4459,7 +4753,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
         decoration: BoxDecoration(
           color: const Color(0xFFF3F3F4),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE3E3E5)),
+          border: Border.all(color: AppColors.borderLight),
         ),
         child: Text(
           'No statuses — tap Add status',
@@ -4500,15 +4794,15 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
       decoration: const InputDecoration(
         isDense: true,
         filled: true,
-        fillColor: Color(0xFFF3F3F4),
+        fillColor: AppColors.white,
         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
-          borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+          borderSide: BorderSide(color: AppColors.borderLight),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
-          borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+          borderSide: BorderSide(color: AppColors.borderLight),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
@@ -4563,124 +4857,446 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     );
   }
 
-  List<Widget> _buildViewModeChildren(_CanvasPin pin) {
-    final productTitle = _productController.text.trim().isEmpty
-        ? 'Pin ${widget.pinNumber}'
-        : _productController.text.trim();
-    final qty = int.tryParse(_qtyController.text.trim()) ?? pin.quantity;
-    return [
-      _sheetGrabHandle(),
-      const SizedBox(height: 16),
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: Text(
-              'Location ${widget.pinNumber}',
-              style: AppFonts.titleMedium(
-                color: AppColors.inkStrong,
-              ).copyWith(fontWeight: FontWeight.w700, fontSize: 18),
+  static const _sheetBg = AppColors.white;
+  static const _sheetCard = AppColors.surfaceHigh;
+  static const _sheetMuted = AppColors.muted;
+  static const _sheetDivider = AppColors.borderLight;
+  static const _sheetInk = AppColors.inkStrong;
+
+  TextStyle get _sheetValueStyle => AppFonts.bodySmall(
+        color: _sheetInk,
+      ).copyWith(fontSize: 13, fontWeight: FontWeight.w600);
+
+  TextStyle get _sheetLabelStyle => AppFonts.bodySmall(
+        color: _sheetMuted,
+      ).copyWith(fontSize: 13, fontWeight: FontWeight.w500);
+
+  String _displayOrDash(String value) =>
+      value.trim().isEmpty ? '—' : value.trim();
+
+  String _levelDisplayLabel() {
+    final id = (widget.levelId ?? '').trim();
+    final label = (widget.levelLabel ?? '').trim();
+    if (id.isNotEmpty) return '$id (1)';
+    if (label.isNotEmpty) return label;
+    final fromPin = widget.pin.levelName.trim();
+    return fromPin.isEmpty ? '—' : fromPin;
+  }
+
+  String _coordPercent(_CanvasPin pin, {required bool x}) {
+    final norm = x ? pin.contentNormX : pin.contentNormY;
+    if (norm != null) return '${(norm * 100).toStringAsFixed(2)}%';
+    final pt = pin.pdfPoint;
+    if (pt != null) {
+      final v = x ? pt.fractionX : pt.fractionY;
+      return '${(v * 100).toStringAsFixed(2)}%';
+    }
+    return '—';
+  }
+
+  Widget _detailRow({
+    required IconData icon,
+    required String label,
+    required Widget trailing,
+  }) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(icon, size: 20, color: _sheetMuted),
+              const SizedBox(width: 14),
+              Expanded(child: Text(label, style: _sheetLabelStyle)),
+              const SizedBox(width: 12),
+              Flexible(child: trailing),
+            ],
+          ),
+        ),
+        const Divider(height: 1, thickness: 1, color: _sheetDivider),
+      ],
+    );
+  }
+
+  Widget _detailTextValue(String value, {TextAlign align = TextAlign.right}) {
+    return Text(
+      _displayOrDash(value),
+      textAlign: align,
+      style: _sheetValueStyle,
+    );
+  }
+
+  Widget _linkedFormTrailing(
+    String formName,
+    int? formId, {
+    bool alignStart = false,
+  }) {
+    final label = formName.trim();
+    if (label.isEmpty && formId == null) {
+      return _detailTextValue('No form linked');
+    }
+    final display = label.isNotEmpty
+        ? label
+        : (formId != null ? 'Form #$formId' : 'Linked form');
+    return Align(
+      alignment: alignStart ? Alignment.centerLeft : Alignment.centerRight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.brandPrimaryContainer,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: AppColors.brandPrimary.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.assignment_outlined,
+              size: 16,
+              color: AppColors.brandPrimary,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                display,
+                style: AppFonts.labelMedium(color: AppColors.inkStrong)
+                    .copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _descriptionTrailing(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return _detailTextValue('—');
+    }
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceHigh,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: Text(
+          trimmed,
+          textAlign: TextAlign.left,
+          style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            height: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _attachmentsTrailing({required bool editing}) {
+    if (_attachmentNames.isEmpty && !editing) {
+      return _detailTextValue('No attachments');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (_attachmentNames.isNotEmpty && !editing)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE0F2FE),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '${_attachmentNames.length} file${_attachmentNames.length == 1 ? '' : 's'} attached',
+                style: AppFonts.labelSmall(color: const Color(0xFF0B6E99))
+                    .copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
           ),
-          Material(
-            color: const Color(0xFFEDEDEF),
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: () => setState(() => _isEditing = true),
-              child: const SizedBox(
-                width: 40,
-                height: 40,
-                child: Icon(
-                  Icons.edit_outlined,
-                  size: 20,
-                  color: AppColors.inkStrong,
+        if (_attachmentNames.isNotEmpty)
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            alignment: WrapAlignment.end,
+            children: [
+              for (var i = 0; i < _attachmentNames.length; i++)
+                InputChip(
+                  label: Text(
+                    _attachmentNames[i],
+                    style: AppFonts.labelSmall(color: AppColors.inkStrong)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  deleteIcon: editing
+                      ? const Icon(Icons.close_rounded, size: 16)
+                      : null,
+                  onDeleted: editing
+                      ? () => setState(() => _attachmentNames.removeAt(i))
+                      : null,
+                  backgroundColor: const Color(0xFFF3F3F4),
+                  side: const BorderSide(color: Color(0xFFE3E3E5)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
+            ],
+          ),
+        if (editing) ...[
+          if (_attachmentNames.isNotEmpty) const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _pickAttachments,
+            icon: const Icon(Icons.attach_file_rounded, size: 18),
+            label: const Text('Add file'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.inkStrong,
+              side: const BorderSide(color: Color(0xFFD9D9DC)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              visualDensity: VisualDensity.compact,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _coordinatesCard(_CanvasPin pin) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: _sheetCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _sheetDivider),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'X COORDINATE',
+                  style: _sheetCapsLabelStyle.copyWith(fontSize: 10),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _coordPercent(pin, x: true),
+                  style: AppFonts.titleSmall(color: _sheetInk).copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Y COORDINATE',
+                  style: _sheetCapsLabelStyle.copyWith(fontSize: 10),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _coordPercent(pin, x: false),
+                  style: AppFonts.titleSmall(color: _sheetInk).copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _viewStatusBadge() {
+    final item = _statusItemByNameLocal(_status);
+    final labelColor = _statusLabelColor(item);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: labelColor.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.timelapse, size: 14, color: labelColor),
+          const SizedBox(width: 6),
+          Text(
+            _status,
+            style: AppFonts.labelMedium(color: labelColor).copyWith(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildViewModeChildren(_CanvasPin pin) {
+    final productTitle = _productController.text.trim().isNotEmpty
+        ? _productController.text.trim()
+        : (pin.productName.trim().isNotEmpty
+            ? pin.productName.trim()
+            : 'Pin ${widget.pinNumber}');
+    final qty = int.tryParse(_qtyController.text.trim()) ?? pin.quantity;
+    final plotName = _zoneController.text.trim();
+    final formName = widget.pin.formName.trim();
+    final descriptionText = _descriptionController.text.trim();
+
+    return [
+      _sheetGrabHandle(),
+      const SizedBox(height: 12),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Location #${widget.pinNumber}',
+                  style: AppFonts.titleMedium(
+                    color: _sheetInk,
+                  ).copyWith(fontWeight: FontWeight.w800, fontSize: 18),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  productTitle,
+                  style: AppFonts.bodyMedium(
+                    color: _sheetMuted,
+                  ).copyWith(fontWeight: FontWeight.w500, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _isEditing = true),
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: const Text('Edit'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.inkStrong,
+              side: const BorderSide(color: Color(0xFFD9D9DC)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: () => _closePinSheet(),
+            icon: const Icon(Icons.close_rounded, size: 22),
+            color: _sheetMuted,
+            splashRadius: 22,
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      _detailRow(
+        icon: Icons.inventory_2_outlined,
+        label: 'Product Name',
+        trailing: _detailTextValue(productTitle),
+      ),
+      _detailRow(
+        icon: Icons.add_box_outlined,
+        label: 'Quantity',
+        trailing: _detailTextValue('$qty'),
+      ),
+      _detailRow(
+        icon: Icons.timelapse,
+        label: 'Status',
+        trailing: Align(
+          alignment: Alignment.centerRight,
+          child: _viewStatusBadge(),
+        ),
+      ),
+      _detailRow(
+        icon: Icons.location_on_outlined,
+        label: 'Location',
+        trailing: _detailTextValue('${widget.pinNumber}'),
+      ),
+      _detailRow(
+        icon: Icons.layers_outlined,
+        label: 'Plot',
+        trailing: _detailTextValue(plotName),
+      ),
+      _detailRow(
+        icon: Icons.grid_on_outlined,
+        label: 'Level',
+        trailing: _detailTextValue(_levelDisplayLabel()),
+      ),
+      _detailRow(
+        icon: Icons.description_outlined,
+        label: 'Description',
+        trailing: _descriptionTrailing(descriptionText),
+      ),
+      _detailRow(
+        icon: Icons.attach_file_rounded,
+        label: 'Attachments',
+        trailing: _attachmentsTrailing(editing: false),
+      ),
+      _detailRow(
+        icon: Icons.assignment_outlined,
+        label: 'Linked Form',
+        trailing: _linkedFormTrailing(formName, _linkedFormId),
+      ),
+      _detailRow(
+        icon: Icons.layers_outlined,
+        label: 'Variation',
+        trailing: Align(
+          alignment: Alignment.centerRight,
+          child: CupertinoSwitch(
+            value: _variation == 'Yes',
+            onChanged: null,
+            activeTrackColor: const Color(0xFF3B82F6),
+          ),
+        ),
       ),
       const SizedBox(height: 20),
       Text(
-        productTitle,
-        style: AppFonts.headlineSmall(
-          color: AppColors.inkStrong,
-        ).copyWith(fontWeight: FontWeight.w800, fontSize: 22, height: 1.2),
+        'LOCATION',
+        style: _sheetCapsLabelStyle,
       ),
-      const SizedBox(height: 6),
-      Text(
-        'Qty: $qty',
-        style: AppFonts.bodyMedium(
-          color: AppColors.muted,
-        ).copyWith(fontWeight: FontWeight.w500, fontSize: 15),
-      ),
-      const SizedBox(height: 16),
-      _viewStatusPill(),
-      const Padding(
-        padding: EdgeInsets.symmetric(vertical: 18),
-        child: Divider(height: 1, thickness: 1, color: Color(0xFFE3E3E5)),
-      ),
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: _viewMetaCell('BLOCK', _blockController.text.trim())),
-          const SizedBox(width: 16),
-          Expanded(child: _viewMetaCell('LEVEL', _levelController.text.trim())),
-        ],
-      ),
-      const SizedBox(height: 16),
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: _viewMetaCell('ZONE', _zoneController.text.trim())),
-          const SizedBox(width: 16),
-          Expanded(child: _viewMetaCell('VARIATION', _variation)),
-        ],
-      ),
-      const SizedBox(height: 16),
-      _viewMetaCell('DROPPED', _fmt(pin.droppedAt)),
-      const Padding(
-        padding: EdgeInsets.only(top: 4, bottom: 12),
-        child: Divider(height: 1, thickness: 1, color: Color(0xFFE3E3E5)),
-      ),
-      Text('DESCRIPTION', style: _sheetCapsLabelStyle),
-      const SizedBox(height: 8),
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF3F3F4),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          _descriptionController.text.trim().isEmpty
-              ? '—'
-              : _descriptionController.text.trim(),
-          style: AppFonts.bodyMedium(
-            color: AppColors.inkStrong,
-          ).copyWith(height: 1.45, fontWeight: FontWeight.w500),
-        ),
-      ),
-      const SizedBox(height: 24),
+      const SizedBox(height: 10),
+      _coordinatesCard(pin),
+      const SizedBox(height: 28),
       SizedBox(
         width: double.infinity,
         height: 52,
-        child: FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFF14141),
-            foregroundColor: AppColors.white,
+        child: OutlinedButton.icon(
+          onPressed: () =>
+              _closePinSheet(const _PinSheetResult(removePin: true)),
+          icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444)),
+          label: Text(
+            'Delete Pin',
+            style: AppFonts.titleMedium(
+              color: const Color(0xFFEF4444),
+            ).copyWith(fontWeight: FontWeight.w700),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.danger,
+            backgroundColor: AppColors.white,
+            side: BorderSide(color: AppColors.danger.withValues(alpha: 0.35)),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
-          ),
-          onPressed: () =>
-              _closePinSheet(const _PinSheetResult(removePin: true)),
-          child: Text(
-            'Remove This Pin',
-            style: AppFonts.titleMedium(
-              color: AppColors.white,
-            ).copyWith(fontWeight: FontWeight.w700),
           ),
         ),
       ),
@@ -4700,7 +5316,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
       keyboardType: keyboardType,
       minLines: minLines,
       maxLines: maxLines,
-      fillColor: const Color(0xFFF3F3F4),
+      fillColor: AppColors.white,
       borderRadius: 12,
     );
   }
@@ -4780,7 +5396,51 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
         ],
       ),
       _statusManageRow(),
-      const SizedBox(height: 8),
+      const SizedBox(height: 16),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sheetFieldLabel('Plot'),
+                const SizedBox(height: 6),
+                _editTextField(controller: _zoneController, hint: 'Plot name'),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _sheetFieldLabel('Location'),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceHigh,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.borderLight),
+                  ),
+                  child: Text(
+                    '${widget.pinNumber}',
+                    style: AppFonts.bodyMedium(
+                      color: AppColors.inkStrong,
+                    ).copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 16),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4815,9 +5475,25 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sheetFieldLabel('Zone'),
+                _sheetFieldLabel('Linked Form'),
                 const SizedBox(height: 6),
-                _editTextField(controller: _zoneController, hint: 'Zone'),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceHigh,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.borderLight),
+                  ),
+                  child: _linkedFormTrailing(
+                    pin.formName,
+                    _linkedFormId,
+                    alignStart: true,
+                  ),
+                ),
               ],
             ),
           ),
@@ -4849,9 +5525,9 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF3F3F4),
+          color: AppColors.surfaceHigh,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE3E3E5)),
+          border: Border.all(color: AppColors.borderLight),
         ),
         child: Text(
           _fmt(pin.droppedAt),
@@ -4869,14 +5545,26 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
         minLines: 3,
         maxLines: 6,
       ),
+      const SizedBox(height: 18),
+      _sheetFieldLabel('Attachments'),
+      const SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: _attachmentsTrailing(editing: true),
+      ),
+      const SizedBox(height: 20),
+      Text('LOCATION', style: _sheetCapsLabelStyle),
+      const SizedBox(height: 10),
+      _coordinatesCard(pin),
       const SizedBox(height: 24),
       SizedBox(
         width: double.infinity,
         height: 50,
         child: FilledButton(
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF090A0D),
+            backgroundColor: const Color(0xFF070A0E),
             foregroundColor: AppColors.white,
+            disabledBackgroundColor: AppColors.disabledButton,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
@@ -4896,6 +5584,9 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
                   zoneName: _zoneController.text.trim(),
                   variation: _variation,
                   description: _descriptionController.text.trim(),
+                  formName: pin.formName,
+                  formId: _linkedFormId,
+                  attachmentNames: List<String>.from(_attachmentNames),
                 ),
               ),
             );
@@ -4921,7 +5612,8 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
           },
           style: OutlinedButton.styleFrom(
             foregroundColor: AppColors.inkStrong,
-            side: const BorderSide(color: Color(0xFFD9D9DC)),
+            backgroundColor: AppColors.white,
+            side: const BorderSide(color: AppColors.border),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
@@ -4940,30 +5632,51 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final pin = widget.pin;
-    return PopScope(
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) unfocusPrimary();
-      },
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.88,
-            minChildSize: 0.4,
-            maxChildSize: 0.95,
-            builder: (context, scrollController) {
-              return ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-                children: _isEditing
-                    ? _buildEditModeChildren(pin)
-                    : _buildViewModeChildren(pin),
-              );
-            },
+    final lightTheme = Theme.of(context).copyWith(
+      brightness: Brightness.light,
+      canvasColor: AppColors.white,
+      scaffoldBackgroundColor: AppColors.white,
+      colorScheme: Theme.of(context).colorScheme.copyWith(
+        brightness: Brightness.light,
+        surface: AppColors.white,
+        onSurface: AppColors.inkStrong,
+      ),
+    );
+
+    return Theme(
+      data: lightTheme,
+      child: PopScope(
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) unfocusPrimary();
+        },
+        child: Material(
+          color: AppColors.white,
+          surfaceTintColor: Colors.transparent,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: DraggableScrollableSheet(
+                expand: false,
+                initialChildSize: 0.88,
+                minChildSize: 0.4,
+                maxChildSize: 0.95,
+                builder: (context, scrollController) {
+                  return ColoredBox(
+                    color: AppColors.white,
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+                      children: _isEditing
+                          ? _buildEditModeChildren(pin)
+                          : _buildViewModeChildren(pin),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),

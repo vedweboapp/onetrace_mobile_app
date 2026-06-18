@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
@@ -12,7 +14,7 @@ import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dar
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
-import 'package:red5/employee_role/projects/presentation/project_map_page.dart';
+import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 
 class EmployeeJobsPage extends ConsumerStatefulWidget {
   const EmployeeJobsPage({super.key});
@@ -68,6 +70,9 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
   Widget build(BuildContext context) {
     final state = ref.watch(employeeJobsControllerProvider);
     final controller = ref.read(employeeJobsControllerProvider.notifier);
+    ref.watch(employeeJobSessionProvider);
+    final session = ref.read(employeeJobSessionProvider.notifier);
+    final visibleJobs = state.visibleJobsFor(session);
 
     return Column(
       children: [
@@ -99,10 +104,10 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
                     message: state.errorMessage!,
                     onRetry: controller.load,
                   )
-                else if (state.visibleJobs.isEmpty)
+                else if (visibleJobs.isEmpty)
                   const _JobsEmptyState()
                 else
-                  for (final job in state.visibleJobs) ...[
+                  for (final job in visibleJobs) ...[
                     _EmployeeJobCard(job: job, onTap: () => _openDetails(job)),
                     const SizedBox(height: 14),
                   ],
@@ -203,11 +208,168 @@ class _JobsFilterTabs extends StatelessWidget {
   }
 }
 
-class _FilterFields extends StatelessWidget {
+class _FilterFields extends ConsumerWidget {
   const _FilterFields();
 
+  static final _dateLabelFormat = DateFormat('MMM d, yyyy');
+
+  String _dateRangeLabel(EmployeeJobsState state) {
+    final start = state.filterDateRangeStart;
+    final end = state.filterDateRangeEnd;
+    if (start == null || end == null) return 'All dates';
+    if (_dateOnly(start) == _dateOnly(end)) {
+      return _dateLabelFormat.format(start);
+    }
+    return '${_dateLabelFormat.format(start)} – ${_dateLabelFormat.format(end)}';
+  }
+
+  static DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  Future<void> _pickDateRange(
+    BuildContext context,
+    WidgetRef ref,
+    EmployeeJobsState state,
+    EmployeeJobsController controller,
+  ) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(
+                  'Choose date range',
+                  style: AppFonts.bodyMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w700),
+                ),
+                onTap: () => Navigator.of(context).pop('pick'),
+              ),
+              ListTile(
+                title: Text(
+                  'All dates',
+                  style: AppFonts.bodyMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w700),
+                ),
+                trailing: !state.hasDateRangeFilter
+                    ? const Icon(Icons.check_rounded, color: AppColors.inkStrong)
+                    : null,
+                onTap: () => Navigator.of(context).pop('all'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (!context.mounted || action == null) return;
+
+    if (action == 'all') {
+      controller.clearDateRange();
+      return;
+    }
+
+    final now = DateTime.now();
+    final initialStart = state.filterDateRangeStart ?? now;
+    final initialEnd = state.filterDateRangeEnd ?? now.add(const Duration(days: 7));
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 2),
+      lastDate: DateTime(now.year + 2),
+      initialDateRange: DateTimeRange(start: initialStart, end: initialEnd),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+                  primary: AppColors.inkStrong,
+                  onSurface: AppColors.inkStrong,
+                ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+    );
+    if (!context.mounted || picked == null) return;
+    controller.setDateRange(start: picked.start, end: picked.end);
+  }
+
+  Future<void> _pickOption(
+    BuildContext context, {
+    required String title,
+    required String allLabel,
+    required List<String> options,
+    required String? selected,
+    required ValueChanged<String?> onSelected,
+  }) async {
+    final picked = await showModalBottomSheet<String?>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                child: Text(
+                  title,
+                  style: AppFonts.titleSmall(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w900),
+                ),
+              ),
+              ListTile(
+                title: Text(
+                  allLabel,
+                  style: AppFonts.bodyMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
+                trailing: selected == null
+                    ? const Icon(Icons.check_rounded, color: AppColors.inkStrong)
+                    : null,
+                onTap: () => Navigator.of(context).pop<String?>(null),
+              ),
+              for (final option in options)
+                ListTile(
+                  title: Text(
+                    option,
+                    style: AppFonts.bodyMedium(
+                      color: AppColors.inkStrong,
+                    ).copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  trailing: selected == option
+                      ? const Icon(
+                          Icons.check_rounded,
+                          color: AppColors.inkStrong,
+                        )
+                      : null,
+                  onTap: () => Navigator.of(context).pop<String?>(option),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (!context.mounted || picked == selected) return;
+    onSelected(picked);
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(employeeJobsControllerProvider);
+    final controller = ref.read(employeeJobsControllerProvider.notifier);
+    final siteLabel = state.selectedSiteName ?? 'All sites';
+    final projectLabel = state.selectedProjectName ?? 'All projects';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -218,24 +380,47 @@ class _FilterFields extends StatelessWidget {
           ).copyWith(fontWeight: FontWeight.w900, letterSpacing: 0.5),
         ),
         const SizedBox(height: 7),
-        const _PillField(
+        _PillField(
           icon: Icons.calendar_today_rounded,
-          label: 'Oct 12, 2023',
+          label: _dateRangeLabel(state),
+          onTap: () => _pickDateRange(context, ref, state, controller),
         ),
         const SizedBox(height: 14),
         Row(
-          children: const [
+          children: [
             Expanded(
               child: _FilterSelect(
                 title: 'ACTIVE SITE LOCATION',
-                value: 'North Construction...',
+                value: siteLabel,
+                onTap: () {
+                  if (state.availableSiteNames.isEmpty) return;
+                  _pickOption(
+                    context,
+                    title: 'Active site location',
+                    allLabel: 'All sites',
+                    options: state.availableSiteNames,
+                    selected: state.selectedSiteName,
+                    onSelected: controller.setSiteFilter,
+                  );
+                },
               ),
             ),
-            SizedBox(width: 12),
+            const SizedBox(width: 12),
             Expanded(
               child: _FilterSelect(
                 title: 'PROJECT',
-                value: 'North Construction...',
+                value: projectLabel,
+                onTap: () {
+                  if (state.availableProjectNames.isEmpty) return;
+                  _pickOption(
+                    context,
+                    title: 'Project',
+                    allLabel: 'All projects',
+                    options: state.availableProjectNames,
+                    selected: state.selectedProjectName,
+                    onSelected: controller.setProjectFilter,
+                  );
+                },
               ),
             ),
           ],
@@ -246,42 +431,69 @@ class _FilterFields extends StatelessWidget {
 }
 
 class _PillField extends StatelessWidget {
-  const _PillField({required this.icon, required this.label});
+  const _PillField({
+    required this.icon,
+    required this.label,
+    this.onTap,
+  });
 
   final IconData icon;
   final String label;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 11),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceHigh,
+    return Material(
+      color: AppColors.surfaceHigh,
+      borderRadius: BorderRadius.circular(7),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: AppColors.borderLight),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 15, color: AppColors.muted),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: AppFonts.bodySmall(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w600),
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: AppColors.borderLight),
           ),
-        ],
+          child: Row(
+            children: [
+              Icon(icon, size: 15, color: AppColors.muted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppFonts.bodySmall(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (onTap != null)
+                const Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: AppColors.inkStrong,
+                  size: 18,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
 class _FilterSelect extends StatelessWidget {
-  const _FilterSelect({required this.title, required this.value});
+  const _FilterSelect({
+    required this.title,
+    required this.value,
+    this.onTap,
+  });
 
   final String title;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -297,32 +509,39 @@ class _FilterSelect extends StatelessWidget {
           ).copyWith(fontWeight: FontWeight.w900, letterSpacing: 0.4),
         ),
         const SizedBox(height: 7),
-        Container(
-          height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceHigh,
+        Material(
+          color: AppColors.surfaceHigh,
+          borderRadius: BorderRadius.circular(7),
+          child: InkWell(
+            onTap: onTap,
             borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: AppColors.borderLight),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppFonts.bodySmall(
+            child: Container(
+              height: 38,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: AppColors.borderLight),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppFonts.bodySmall(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
                     color: AppColors.inkStrong,
-                  ).copyWith(fontWeight: FontWeight.w600),
-                ),
+                    size: 18,
+                  ),
+                ],
               ),
-              const Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: AppColors.muted,
-                size: 18,
-              ),
-            ],
+            ),
           ),
         ),
       ],
@@ -539,9 +758,7 @@ class _EmployeeJobsBottomNav extends StatelessWidget {
           _BottomNavItem(
             icon: 'assets/images/homes.png',
             label: 'Home',
-            onTap: () {
-              if (context.canPop()) context.pop();
-            },
+            onTap: () => TechnicianHomePage.go(context),
           ),
           const _BottomNavItem(
             icon: 'assets/images/jobs.png',
@@ -551,15 +768,8 @@ class _EmployeeJobsBottomNav extends StatelessWidget {
           _BottomNavItem(
             icon: 'assets/images/files.png',
             label: 'Projects',
-            onTap: () {
-              context.push(
-                EmployeeProjectMapPage.path,
-                extra: <String, Object?>{
-                  'projectName': 'Riverside Tower',
-                  'activeSites': 3,
-                },
-              );
-            },
+            onTap: () =>
+                TechnicianHomePage.go(context, tab: EmployeeShellTab.projects),
           ),
           EmployeeSiteMenuButton(
             label: 'More',

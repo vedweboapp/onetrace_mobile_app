@@ -557,12 +557,17 @@ Map<String, dynamic> _scopeAsMap(dynamic raw) {
   return const {};
 }
 
-/// Scope & pricing tab — Project, block name, quoted item cards, summary.
-class _ScopePricingTab extends StatelessWidget {
+/// Scope & pricing tab — project, collapsible quote sections / plots / pins.
+class _ScopePricingTab extends StatefulWidget {
   const _ScopePricingTab({required this.detail});
 
   final QuotationDetailModel detail;
 
+  @override
+  State<_ScopePricingTab> createState() => _ScopePricingTabState();
+}
+
+class _ScopePricingTabState extends State<_ScopePricingTab> {
   static final NumberFormat _gbp = NumberFormat.currency(
     locale: 'en_GB',
     symbol: '£',
@@ -570,39 +575,31 @@ class _ScopePricingTab extends StatelessWidget {
 
   String _fmt(num n) => _gbp.format(n);
 
-  static String _quotedItemsHeading(String sectionName) {
-    final sec = sectionName.trim();
-    if (sec.isEmpty) return 'Quoted Items — No Block';
-    if (sec.toLowerCase() == 'no plot') return 'Quoted Items — No Block';
-    return 'Quoted Items — $sec';
-  }
+  final Set<int> _expandedSections = <int>{0};
+  final Set<String> _expandedPlots = <String>{};
+
+  String _plotKey(int sectionIndex, int plotIndex) =>
+      '$sectionIndex-$plotIndex';
 
   @override
   Widget build(BuildContext context) {
     const labelGrey = Color(0xFF9CA3AF);
-    const barBlue = Color(0xFF1976D2);
 
-    final blocks = detail.rawBlocks;
-    final parsedBlocks = <_ScopeParsedBlock>[];
-    for (final raw in blocks) {
-      final m = _scopeAsMap(raw);
-      if (m.isEmpty) continue;
-      parsedBlocks.add(_ScopeParsedBlock.fromMap(m));
-    }
+    final detail = widget.detail;
+    final quoteSections = _parseQuoteSections(detail);
+    final legacyBlocks = quoteSections.isEmpty
+        ? _parseLegacyBlocks(detail)
+        : const <_ScopeParsedBlock>[];
 
-    final blockBoxName = parsedBlocks.isEmpty
-        ? '—'
-        : (parsedBlocks.first.name.trim().isEmpty
-              ? '—'
-              : parsedBlocks.first.name.trim());
+    final hasQuoteTree = quoteSections.isNotEmpty;
+    final hasLegacy = legacyBlocks.isNotEmpty;
 
-    final allLineMaps = <Map<String, dynamic>>[];
-    for (final pb in parsedBlocks) {
-      for (final sec in pb.sections) {
-        allLineMaps.addAll(sec.lines);
-      }
-    }
-    final totals = _ScopeTotals.fromLineItems(allLineMaps);
+    final grandTotal = hasQuoteTree
+        ? quoteSections.fold<double>(
+            0,
+            (sum, s) => sum + s.sectionTotal,
+          )
+        : _ScopeTotals.fromLineItems(_legacyLineItems(legacyBlocks)).grandTotal;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
@@ -613,49 +610,65 @@ class _ScopePricingTab extends StatelessWidget {
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w800, fontSize: 18, height: 1.2),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 8),
         Text(
-          'BLOCK NAME',
+          detail.projectLabel,
+          style: AppFonts.bodyMedium(
+            color: AppColors.inkStrong,
+          ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'BLOCKS',
           style: AppFonts.labelMedium(color: labelGrey).copyWith(
             fontWeight: FontWeight.w700,
             letterSpacing: 0.55,
             fontSize: 10,
           ),
         ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF3F4F6),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          child: Text(
-            blockBoxName,
-            style: AppFonts.bodyMedium(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w600, fontSize: 16),
-          ),
-        ),
-        const SizedBox(height: 28),
-        if (parsedBlocks.isEmpty) ...[
-          _ScopeQuotedItemsTitle(
-            barColor: barBlue,
-            title: _quotedItemsHeading(''),
-          ),
-          const SizedBox(height: 12),
+        const SizedBox(height: 10),
+        if (!hasQuoteTree && !hasLegacy)
           Text(
             'No scope & pricing data for this quotation yet.',
             style: AppFonts.bodyMedium(
               color: AppColors.muted,
             ).copyWith(fontSize: 15, height: 1.45),
-          ),
+          )
+        else if (hasQuoteTree) ...[
+          for (var si = 0; si < quoteSections.length; si++) ...[
+            if (si > 0) const SizedBox(height: 12),
+            _ScopeSectionCard(
+              section: quoteSections[si],
+              expanded: _expandedSections.contains(si),
+              onExpandedChanged: (v) {
+                setState(() {
+                  if (v) {
+                    _expandedSections.add(si);
+                  } else {
+                    _expandedSections.remove(si);
+                  }
+                });
+              },
+              formatMoney: _fmt,
+              plotExpanded: (plotIndex) =>
+                  _expandedPlots.contains(_plotKey(si, plotIndex)),
+              onPlotExpandedChanged: (plotIndex, v) {
+                setState(() {
+                  final key = _plotKey(si, plotIndex);
+                  if (v) {
+                    _expandedPlots.add(key);
+                  } else {
+                    _expandedPlots.remove(key);
+                  }
+                });
+              },
+            ),
+          ],
         ] else
-          for (final pb in parsedBlocks) ...[
+          for (final pb in legacyBlocks) ...[
             for (final sec in pb.sections) ...[
               _ScopeQuotedItemsTitle(
-                barColor: barBlue,
+                barColor: const Color(0xFF1976D2),
                 title: _quotedItemsHeading(sec.name),
               ),
               const SizedBox(height: 12),
@@ -674,20 +687,640 @@ class _ScopePricingTab extends StatelessWidget {
                 ],
             ],
           ],
-        if (parsedBlocks.isNotEmpty) ...[
+        if (hasQuoteTree || hasLegacy) ...[
+          const SizedBox(height: 20),
           Divider(
             height: 1,
             thickness: 1,
             color: AppColors.borderLight.withValues(alpha: 0.9),
           ),
           const SizedBox(height: 4),
-          _ScopePricingSummary(
-            totals: totals,
-            formatMoney: _fmt,
-            linkBlue: const Color(0xFF1976D2),
-          ),
+          if (hasQuoteTree)
+            _ScopeQuoteGrandSummary(
+              grandTotal: grandTotal,
+              formatMoney: _fmt,
+            )
+          else
+            _ScopePricingSummary(
+              totals: _ScopeTotals.fromLineItems(_legacyLineItems(legacyBlocks)),
+              formatMoney: _fmt,
+              linkBlue: const Color(0xFF1976D2),
+            ),
         ],
       ],
+    );
+  }
+
+  static String _quotedItemsHeading(String sectionName) {
+    final sec = sectionName.trim();
+    if (sec.isEmpty) return 'Quoted Items — No Block';
+    if (sec.toLowerCase() == 'no plot') return 'Quoted Items — No Block';
+    return 'Quoted Items — $sec';
+  }
+
+  static List<Map<String, dynamic>> _legacyLineItems(
+    List<_ScopeParsedBlock> blocks,
+  ) {
+    final allLineMaps = <Map<String, dynamic>>[];
+    for (final pb in blocks) {
+      for (final sec in pb.sections) {
+        allLineMaps.addAll(sec.lines);
+      }
+    }
+    return allLineMaps;
+  }
+
+  static List<_ScopeParsedBlock> _parseLegacyBlocks(QuotationDetailModel detail) {
+    final parsedBlocks = <_ScopeParsedBlock>[];
+    for (final raw in detail.rawBlocks) {
+      final m = _scopeAsMap(raw);
+      if (m.isEmpty) continue;
+      parsedBlocks.add(_ScopeParsedBlock.fromMap(m));
+    }
+    return parsedBlocks;
+  }
+
+  static List<_QuoteSectionVm> _parseQuoteSections(QuotationDetailModel detail) {
+    final sections = <_QuoteSectionVm>[];
+    for (final raw in detail.quoteSectionsRaw) {
+      final m = _scopeAsMap(raw);
+      if (m.isEmpty) continue;
+      sections.add(_QuoteSectionVm.fromMap(m));
+    }
+    sections.sort((a, b) => a.sectionOrder.compareTo(b.sectionOrder));
+    return sections;
+  }
+}
+
+@immutable
+class _QuoteSectionVm {
+  const _QuoteSectionVm({
+    required this.name,
+    required this.sectionOrder,
+    required this.sectionTotal,
+    required this.plots,
+    this.levelId,
+  });
+
+  final String name;
+  final int sectionOrder;
+  final double sectionTotal;
+  final int? levelId;
+  final List<_QuotePlotVm> plots;
+
+  factory _QuoteSectionVm.fromMap(Map<String, dynamic> m) {
+    final plots = <_QuotePlotVm>[];
+    final rawPlots = m['plots'];
+    if (rawPlots is List) {
+      for (final p in rawPlots) {
+        plots.add(_QuotePlotVm.fromMap(_scopeAsMap(p)));
+      }
+    }
+    plots.sort((a, b) => a.plotOrder.compareTo(b.plotOrder));
+    return _QuoteSectionVm(
+      name: (m['name'] ?? 'Block').toString().trim().isEmpty
+          ? 'Block'
+          : (m['name'] ?? 'Block').toString().trim(),
+      sectionOrder: _scopeParseInt(m['section_order']),
+      sectionTotal: _scopeParseDouble(m['section_total']),
+      levelId: _scopeParseIntOrNull(m['level_id']),
+      plots: plots,
+    );
+  }
+}
+
+@immutable
+class _QuotePlotVm {
+  const _QuotePlotVm({
+    required this.name,
+    required this.plotOrder,
+    required this.plotTotal,
+    required this.pins,
+    this.plotId,
+  });
+
+  final String name;
+  final int plotOrder;
+  final double plotTotal;
+  final int? plotId;
+  final List<_QuotePinVm> pins;
+
+  factory _QuotePlotVm.fromMap(Map<String, dynamic> m) {
+    final pins = <_QuotePinVm>[];
+    final rawPins = m['pins'];
+    if (rawPins is List) {
+      for (final p in rawPins) {
+        pins.add(_QuotePinVm.fromMap(_scopeAsMap(p)));
+      }
+    }
+    pins.sort((a, b) => a.pinsOrder.compareTo(b.pinsOrder));
+    return _QuotePlotVm(
+      name: (m['name'] ?? 'Plot').toString().trim().isEmpty
+          ? 'Plot'
+          : (m['name'] ?? 'Plot').toString().trim(),
+      plotOrder: _scopeParseInt(m['plot_order']),
+      plotTotal: _scopeParseDouble(m['plot_total']),
+      plotId: _scopeParseIntOrNull(m['plot_id']),
+      pins: pins,
+    );
+  }
+}
+
+@immutable
+class _QuotePinVm {
+  const _QuotePinVm({
+    required this.name,
+    required this.pinsOrder,
+    required this.quantity,
+    required this.sellingPrice,
+    required this.pinsTotal,
+    required this.isComposite,
+    required this.compositeItems,
+    this.pinId,
+    this.compositeItemId,
+  });
+
+  final String name;
+  final int pinsOrder;
+  final int quantity;
+  final double sellingPrice;
+  final double pinsTotal;
+  final bool isComposite;
+  final int? pinId;
+  final int? compositeItemId;
+  final List<_QuoteCompositeItemVm> compositeItems;
+
+  factory _QuotePinVm.fromMap(Map<String, dynamic> m) {
+    final compositeItems = <_QuoteCompositeItemVm>[];
+    final rawChildren = m['composite_items'];
+    if (rawChildren is List) {
+      for (final c in rawChildren) {
+        compositeItems.add(_QuoteCompositeItemVm.fromMap(_scopeAsMap(c)));
+      }
+    }
+    return _QuotePinVm(
+      name: (m['name'] ?? 'Quoted item').toString().trim().isEmpty
+          ? 'Quoted item'
+          : (m['name'] ?? 'Quoted item').toString().trim(),
+      pinsOrder: _scopeParseInt(m['pins_order']),
+      quantity: _scopeParseInt(m['quantity'], fallback: 1),
+      sellingPrice: _scopeParseDouble(m['selling_price']),
+      pinsTotal: _scopeParseDouble(m['pins_total']),
+      isComposite: m['is_composite'] == true,
+      pinId: _scopeParseIntOrNull(m['pin_id']),
+      compositeItemId: _scopeParseIntOrNull(m['composite_item_id']),
+      compositeItems: compositeItems,
+    );
+  }
+}
+
+@immutable
+class _QuoteCompositeItemVm {
+  const _QuoteCompositeItemVm({
+    required this.childItemName,
+    required this.quantity,
+    this.childItemId,
+  });
+
+  final String childItemName;
+  final int quantity;
+  final int? childItemId;
+
+  factory _QuoteCompositeItemVm.fromMap(Map<String, dynamic> m) {
+    return _QuoteCompositeItemVm(
+      childItemName:
+          (m['child_item_name'] ?? m['name'] ?? 'Item').toString().trim(),
+      quantity: _scopeParseInt(m['quantity'], fallback: 1),
+      childItemId: _scopeParseIntOrNull(m['child_item_id']),
+    );
+  }
+}
+
+int _scopeParseInt(dynamic v, {int fallback = 0}) {
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse('${v ?? ''}') ?? fallback;
+}
+
+int? _scopeParseIntOrNull(dynamic v) {
+  if (v == null) return null;
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse(v.toString());
+}
+
+class _ScopeSectionCard extends StatelessWidget {
+  const _ScopeSectionCard({
+    required this.section,
+    required this.expanded,
+    required this.onExpandedChanged,
+    required this.formatMoney,
+    required this.plotExpanded,
+    required this.onPlotExpandedChanged,
+  });
+
+  final _QuoteSectionVm section;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
+  final String Function(num) formatMoney;
+  final bool Function(int plotIndex) plotExpanded;
+  final void Function(int plotIndex, bool expanded) onPlotExpandedChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ScopeCollapsibleCard(
+      title: section.name,
+      trailing: formatMoney(section.sectionTotal),
+      expanded: expanded,
+      onExpandedChanged: onExpandedChanged,
+      child: section.plots.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'No plots in this block.',
+                style: AppFonts.bodySmall(color: AppColors.muted),
+              ),
+            )
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+              child: Column(
+                children: [
+                  for (var pi = 0; pi < section.plots.length; pi++) ...[
+                    if (pi > 0) const SizedBox(height: 8),
+                    _ScopePlotCard(
+                      plot: section.plots[pi],
+                      expanded: plotExpanded(pi),
+                      onExpandedChanged: (v) => onPlotExpandedChanged(pi, v),
+                      formatMoney: formatMoney,
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  _ScopeBlockTotalsFooter(
+                    subtotal: section.sectionTotal,
+                    formatMoney: formatMoney,
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+class _ScopePlotCard extends StatelessWidget {
+  const _ScopePlotCard({
+    required this.plot,
+    required this.expanded,
+    required this.onExpandedChanged,
+    required this.formatMoney,
+  });
+
+  final _QuotePlotVm plot;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
+  final String Function(num) formatMoney;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ScopeCollapsibleCard(
+      title: plot.name,
+      trailing: formatMoney(plot.plotTotal),
+      expanded: expanded,
+      onExpandedChanged: onExpandedChanged,
+      nested: true,
+      child: plot.pins.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'No quoted items in this plot.',
+                style: AppFonts.bodySmall(color: AppColors.muted),
+              ),
+            )
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+              child: Column(
+                children: [
+                  for (var i = 0; i < plot.pins.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 8),
+                    _ScopeQuotePinCard(
+                      pin: plot.pins[i],
+                      formatMoney: formatMoney,
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  _ScopePlotTotalsRow(
+                    total: plot.plotTotal,
+                    formatMoney: formatMoney,
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+class _ScopeCollapsibleCard extends StatelessWidget {
+  const _ScopeCollapsibleCard({
+    required this.title,
+    required this.trailing,
+    required this.expanded,
+    required this.onExpandedChanged,
+    required this.child,
+    this.nested = false,
+  });
+
+  final String title;
+  final String trailing;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
+  final Widget child;
+  final bool nested;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = nested ? const Color(0xFFE8E8E8) : AppColors.borderLight;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(nested ? 10 : 12),
+        border: Border.all(color: borderColor),
+        boxShadow: nested
+            ? null
+            : [
+                BoxShadow(
+                  color: AppColors.inkStrong.withValues(alpha: 0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: AppColors.white,
+            child: InkWell(
+              onTap: () => onExpandedChanged(!expanded),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(nested ? 10 : 12),
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: nested ? 10 : 12,
+                  vertical: nested ? 10 : 12,
+                ),
+                child: Row(
+                  children: [
+                    if (!nested)
+                      Icon(
+                        Icons.drag_indicator,
+                        color: AppColors.muted.withValues(alpha: 0.85),
+                        size: 24,
+                      ),
+                    if (!nested) const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: AppFonts.titleMedium(
+                          color: AppColors.inkStrong,
+                        ).copyWith(
+                          fontWeight: FontWeight.w800,
+                          fontSize: nested ? 15 : 16,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      trailing,
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: nested ? 14 : 15,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                      color: AppColors.inkStrong,
+                      size: nested ? 22 : 24,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: AppColors.borderLight.withValues(alpha: 0.9),
+            ),
+            child,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScopeQuotePinCard extends StatelessWidget {
+  const _ScopeQuotePinCard({
+    required this.pin,
+    required this.formatMoney,
+  });
+
+  final _QuotePinVm pin;
+  final String Function(num) formatMoney;
+
+  @override
+  Widget build(BuildContext context) {
+    const linkBlue = Color(0xFF1976D2);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            pin.name,
+            style: AppFonts.titleMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+          const SizedBox(height: 10),
+          _ScopeMetricRow(
+            label: 'Qty',
+            value: pin.quantity.toString(),
+            valueBlue: false,
+          ),
+          _ScopeMetricRow(
+            label: 'Selling Price',
+            value: formatMoney(pin.sellingPrice),
+            valueBlue: false,
+          ),
+          _ScopeMetricRow(
+            label: 'Total',
+            value: formatMoney(pin.pinsTotal),
+            valueBlue: true,
+          ),
+          if (pin.isComposite && pin.compositeItems.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'COMPOSITE ITEMS',
+              style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.45,
+                fontSize: 10,
+              ),
+            ),
+            const SizedBox(height: 6),
+            for (final item in pin.compositeItems)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '· ${item.childItemName} (x${item.quantity})',
+                  style: AppFonts.bodySmall(color: linkBlue).copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScopePlotTotalsRow extends StatelessWidget {
+  const _ScopePlotTotalsRow({
+    required this.total,
+    required this.formatMoney,
+  });
+
+  final double total;
+  final String Function(num) formatMoney;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'PLOT TOTAL',
+              style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+                fontSize: 10,
+              ),
+            ),
+          ),
+          Text(
+            formatMoney(total),
+            style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScopeBlockTotalsFooter extends StatelessWidget {
+  const _ScopeBlockTotalsFooter({
+    required this.subtotal,
+    required this.formatMoney,
+  });
+
+  final double subtotal;
+  final String Function(num) formatMoney;
+
+  @override
+  Widget build(BuildContext context) {
+    final labelStyle = AppFonts.labelMedium(color: AppColors.muted).copyWith(
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.6,
+      fontSize: 10,
+    );
+    final valueStyle = AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+      fontWeight: FontWeight.w800,
+      fontSize: 15,
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.borderLight.withValues(alpha: 0.85)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('BLOCK TOTAL', style: labelStyle),
+                const SizedBox(height: 4),
+                Text(formatMoney(subtotal), style: valueStyle),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScopeQuoteGrandSummary extends StatelessWidget {
+  const _ScopeQuoteGrandSummary({
+    required this.grandTotal,
+    required this.formatMoney,
+  });
+
+  final double grandTotal;
+  final String Function(num) formatMoney;
+
+  @override
+  Widget build(BuildContext context) {
+    const linkBlue = Color(0xFF1976D2);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Grand Total',
+              style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
+            ),
+          ),
+          Text(
+            formatMoney(grandTotal),
+            style: AppFonts.bodyMedium(color: linkBlue).copyWith(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

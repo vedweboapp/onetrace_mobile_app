@@ -36,7 +36,9 @@ import 'package:red5/features/dashboard/presentation/views/settings/settings_pag
 import 'package:red5/features/dashboard/presentation/views/settings/invite_user_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/tags_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/users_settings_page.dart';
-import 'package:red5/features/dashboard/presentation/views/settings/zoho_integration_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/zoho_integration_finish_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/form_metadata_detail_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/forms_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/module_field_options_page.dart';
 import 'package:red5/features/clients/data/client_models.dart';
 import 'package:red5/features/clients/presentation/views/add_client_page.dart';
@@ -92,6 +94,7 @@ import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_qr_scan_page.dart';
 import 'package:red5/employee_role/reports/data/employee_reports_data.dart';
 import 'package:red5/employee_role/reports/presentation/employee_report_product_detail_page.dart';
 import 'package:red5/employee_role/sites/presentation/employee_site_detail_page.dart';
@@ -253,9 +256,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: TechnicianHomePage.path,
         name: TechnicianHomePage.name,
+        pageBuilder: (context, state) {
+          final tab = EmployeeShellTab.fromExtra(state.extra);
+          return _animatedPage(
+            state: state,
+            child: TechnicianHomePage(initialNavPageIndex: tab.navIndex),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeQrScanPage.path,
+        name: EmployeeQrScanPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: const TechnicianHomePage(),
+          child: const EmployeeQrScanPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),
@@ -394,6 +409,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) {
           int? formId;
           int? jobId;
+          int? jobFormId;
+          int? submissionId;
           final extra = state.extra;
           if (extra is Map) {
             final map = Map<String, dynamic>.from(extra);
@@ -409,12 +426,26 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             } else if (rawJobId != null) {
               jobId = int.tryParse(rawJobId.toString().trim());
             }
+            final rawJobFormId = map['jobFormId'];
+            if (rawJobFormId is int) {
+              jobFormId = rawJobFormId;
+            } else if (rawJobFormId != null) {
+              jobFormId = int.tryParse(rawJobFormId.toString().trim());
+            }
+            final rawSubmissionId = map['submissionId'];
+            if (rawSubmissionId is int) {
+              submissionId = rawSubmissionId;
+            } else if (rawSubmissionId != null) {
+              submissionId = int.tryParse(rawSubmissionId.toString().trim());
+            }
           }
           return _animatedPage(
             state: state,
             child: EmployeeJobFormPage(
               formId: formId ?? 0,
               jobId: jobId,
+              jobFormId: jobFormId,
+              submissionId: submissionId,
             ),
             beginOffset: const Offset(0.08, 0),
           );
@@ -425,16 +456,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: EmployeeJobConfirmationPage.name,
         pageBuilder: (context, state) {
           String? jobTitle;
+          int? jobId;
           final extra = state.extra;
           if (extra is Map) {
-            final rawJobTitle = Map<String, dynamic>.from(extra)['jobTitle'];
+            final map = Map<String, dynamic>.from(extra);
+            final rawJobTitle = map['jobTitle'];
             if (rawJobTitle is String && rawJobTitle.trim().isNotEmpty) {
               jobTitle = rawJobTitle.trim();
+            }
+            final rawJobId = map['jobId'];
+            if (rawJobId is int) {
+              jobId = rawJobId;
+            } else if (rawJobId is String) {
+              jobId = int.tryParse(rawJobId);
             }
           }
           return _animatedPage(
             state: state,
-            child: EmployeeJobConfirmationPage(jobTitle: jobTitle),
+            child: EmployeeJobConfirmationPage(jobId: jobId, jobTitle: jobTitle),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -444,7 +483,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: EmployeeJobsPage.name,
         pageBuilder: (context, state) => _animatedPage(
           state: state,
-          child: const EmployeeJobsPage(),
+          child: const TechnicianHomePage(initialNavPageIndex: 1),
           beginOffset: const Offset(0.08, 0),
         ),
       ),
@@ -695,6 +734,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => _animatedPage(
           state: state,
           child: const AddInvoicePage(),
+          beginOffset: const Offset(0, 0.08),
+        ),
+      ),
+      GoRoute(
+        path: AddJobPage.standalonePath,
+        name: AddJobPage.standaloneName,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const AddJobPage(standalone: true),
           beginOffset: const Offset(0, 0.08),
         ),
       ),
@@ -1146,6 +1194,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '${ProjectDetailsPage.pathPrefix}/:projectId/jobs/:jobId/edit',
+        name: AddJobPage.editJobName,
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final jobId = state.pathParameters['jobId'] ?? '';
+          return _animatedPage(
+            state: state,
+            child: AddJobPage(
+              projectId: projectId,
+              editJobId: jobId,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: '${ProjectDetailsPage.pathPrefix}/:projectId/jobs/:jobId',
         name: JobDetailsPage.name,
         pageBuilder: (context, state) {
@@ -1461,13 +1525,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
-        path: ZohoIntegrationPage.path,
-        name: ZohoIntegrationPage.name,
-        pageBuilder: (context, state) => _animatedPage(
-          state: state,
-          child: const ZohoIntegrationPage(),
-          beginOffset: const Offset(0.08, 0),
-        ),
+        path: '${ZohoIntegrationFinishPage.pathPrefix}/:connectionId',
+        name: ZohoIntegrationFinishPage.name,
+        pageBuilder: (context, state) {
+          final id = int.tryParse(state.pathParameters['connectionId'] ?? '') ?? 0;
+          return _animatedPage(
+            state: state,
+            child: ZohoIntegrationFinishPage(connectionId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
       ),
       GoRoute(
         path: ProjectsMetadataPage.path,
@@ -1486,6 +1553,30 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           child: const QuotationsMetadataPage(),
           beginOffset: const Offset(0.08, 0),
         ),
+      ),
+      GoRoute(
+        path: FormsSettingsPage.path,
+        name: FormsSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const FormsSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+        routes: [
+          GoRoute(
+            path: ':formId',
+            name: FormMetadataDetailPage.name,
+            pageBuilder: (context, state) {
+              final formId =
+                  int.tryParse(state.pathParameters['formId'] ?? '') ?? 0;
+              return _animatedPage(
+                state: state,
+                child: FormMetadataDetailPage(formId: formId),
+                beginOffset: const Offset(0.08, 0),
+              );
+            },
+          ),
+        ],
       ),
       GoRoute(
         path: PinStatusSettingsPage.path,

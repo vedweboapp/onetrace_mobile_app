@@ -33,4 +33,10 @@ abstract final class LocalStorageKeys {
 
   /// JSON: `"jobId:yyyy-MM-dd"` -> true when operative completed pre-start safety.
   static const employeeJobSafetyVerified = 'employee_job_safety_verified_v1';
+
+  /// JSON: `"jobId"` -> start timestamp (ms since epoch) for running job timers.
+  static const employeeJobTimerStarts = 'employee_job_timer_starts_v1';
+
+  /// JSON: `"jobId"` -> true when the operative completed the job.
+  static const employeeJobTimerCompleted = 'employee_job_timer_completed_v1';
 }

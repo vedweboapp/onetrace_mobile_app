@@ -3,6 +3,26 @@ import 'package:intl/intl.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 
+/// One child line inside a composite pin (for display + create payload).
+@immutable
+class QuotationCompositeChildPin {
+  const QuotationCompositeChildPin({
+    required this.childItemName,
+    required this.quantity,
+    this.childItemId,
+  });
+
+  final String childItemName;
+  final int quantity;
+  final int? childItemId;
+
+  Map<String, dynamic> toPayloadMap() => <String, dynamic>{
+        if (childItemId != null) 'child_item_id': childItemId,
+        'child_item_name': childItemName,
+        'quantity': quantity,
+      };
+}
+
 /// One pin from design / level API (`plots[].pins[]`) for display in the map sheet.
 @immutable
 class QuotationDesignPin {
@@ -16,6 +36,8 @@ class QuotationDesignPin {
     this.statusTextHex,
     this.sellingPrice,
     this.compositeItemId,
+    this.isComposite = false,
+    this.compositeItems = const [],
   });
 
   final String id;
@@ -28,6 +50,14 @@ class QuotationDesignPin {
   final double? sellingPrice;
   /// `composite_item_id` for quotation create payload (from pin `item_detail` / API).
   final int? compositeItemId;
+  final bool isComposite;
+  final List<QuotationCompositeChildPin> compositeItems;
+
+  double get lineTotal {
+    final sp = sellingPrice ?? 0;
+    final qty = quantity < 1 ? 1 : quantity;
+    return sp * qty;
+  }
 }
 
 /// Block / plot preview opened from a map line with a pin count.
@@ -390,13 +420,36 @@ class _DesignPinLineCard extends StatelessWidget {
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
           row('List Price', formatMoney(listPrice)),
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
-          row('Amount', formatMoney(0)),
+          row('Amount', formatMoney(pin.lineTotal)),
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
           row('Discount', formatMoney(0)),
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
           row('Tax', formatMoney(0)),
           const Divider(height: 1, color: Color(0xFFF1F5F9)),
-          row('Total', formatMoney(0), valueStyleOverride: totalValueStyle),
+          row('Total', formatMoney(pin.lineTotal), valueStyleOverride: totalValueStyle),
+          if (pin.isComposite && pin.compositeItems.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'COMPOSITE ITEMS',
+              style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.45,
+                fontSize: 10,
+              ),
+            ),
+            const SizedBox(height: 6),
+            for (final child in pin.compositeItems)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '· ${child.childItemName} (x${child.quantity})',
+                  style: AppFonts.bodySmall(color: _linkBlue).copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+          ],
           const SizedBox(height: 8),
         ],
       ),

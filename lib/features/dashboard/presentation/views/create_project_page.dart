@@ -9,7 +9,11 @@ import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
+import 'package:red5/features/dashboard/presentation/widgets/create_project_type_dialog.dart';
+import 'package:red5/features/dashboard/presentation/widgets/project_type_picker_sheet.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
+import 'package:red5/features/sites/data/site_models.dart';
+import 'package:red5/features/sites/data/sites_api_client.dart';
 
 class CreateProjectPage extends ConsumerStatefulWidget {
   const CreateProjectPage({
@@ -43,6 +47,24 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
   List<ClientOption> _clients = const [];
   ClientOption? _selectedClient;
 
+  bool _isLoadingProjectTypes = false;
+  String? _projectTypesError;
+  List<NamedIdOption> _projectTypes = const [];
+  NamedIdOption? _selectedProjectType;
+
+  bool _isLoadingSites = false;
+  String? _sitesError;
+  List<SiteModel> _sites = const [];
+  SiteModel? _selectedSite;
+
+  static TextStyle get _dropdownValueStyle => AppFonts.bodyMedium(
+        color: AppColors.inkStrong,
+      ).copyWith(fontSize: 15, fontWeight: FontWeight.w600);
+
+  static TextStyle get _dropdownHintStyle => AppFonts.bodyMedium(
+        color: AppColors.textFieldHint,
+      ).copyWith(fontSize: 15, fontWeight: FontWeight.w500);
+
   @override
   void initState() {
     super.initState();
@@ -50,7 +72,173 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
     _descriptionController.addListener(_onFormChanged);
     _startDateController.addListener(_onFormChanged);
     _endDateController.addListener(_onFormChanged);
-    _loadClients();
+    _loadFormOptions();
+  }
+
+  Future<void> _loadFormOptions() async {
+    setState(() {
+      _isLoadingClients = true;
+      _isLoadingProjectTypes = true;
+      _clientsError = null;
+      _projectTypesError = null;
+    });
+
+    final api = ref.read(quoteProjectApiClientProvider);
+    var clients = const <ClientOption>[];
+    var projectTypes = const <NamedIdOption>[];
+    String? clientsError;
+    String? projectTypesError;
+
+    try {
+      clients = await api.fetchClients();
+    } catch (e) {
+      clientsError = ApiResponseMessage.fromAnyError(
+        e,
+        genericFallback: 'Failed to load clients',
+      );
+    }
+
+    try {
+      projectTypes = await api.fetchProjectTypeOptions();
+    } catch (e) {
+      projectTypesError = ApiResponseMessage.fromAnyError(
+        e,
+        genericFallback: 'Failed to load project types',
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _clients = clients;
+      _projectTypes = projectTypes;
+      _clientsError = clientsError;
+      _projectTypesError = projectTypesError;
+      _isLoadingClients = false;
+      _isLoadingProjectTypes = false;
+
+      final incomingId = widget.preselectedClientId;
+      if (_selectedClient == null && incomingId != null) {
+        final match = clients.where((c) => c.id == incomingId).toList();
+        if (match.isNotEmpty) {
+          _selectedClient = match.first;
+        } else {
+          final fallbackName = (widget.preselectedClientName ?? '').trim();
+          _selectedClient = ClientOption(
+            id: incomingId,
+            name: fallbackName.isEmpty ? 'Client #$incomingId' : fallbackName,
+          );
+        }
+      }
+    });
+
+    if (_selectedClient != null) {
+      await _loadSitesForClient(_selectedClient!.id);
+    }
+  }
+
+  Future<void> _loadProjectTypes({NamedIdOption? select}) async {
+    setState(() {
+      _isLoadingProjectTypes = true;
+      _projectTypesError = null;
+    });
+    try {
+      final projectTypes =
+          await ref.read(quoteProjectApiClientProvider).fetchProjectTypeOptions();
+      if (!mounted) return;
+      setState(() {
+        _projectTypes = projectTypes;
+        _isLoadingProjectTypes = false;
+        if (select != null) {
+          _selectedProjectType = select;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingProjectTypes = false;
+        _projectTypesError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load project types',
+        );
+      });
+    }
+  }
+
+  Future<void> _pickProjectType() async {
+    if (_isLoadingProjectTypes) return;
+    final api = ref.read(quoteProjectApiClientProvider);
+    final selected = await showProjectTypePickerSheet(
+      context: context,
+      projectTypes: _projectTypes,
+      selected: _selectedProjectType,
+      onAddProjectType: () => showCreateProjectTypeDialog(
+        context: context,
+        api: api,
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _selectedProjectType = selected;
+      if (!_projectTypes.any((type) => type.id == selected.id)) {
+        _projectTypes = [..._projectTypes, selected];
+      }
+    });
+  }
+
+  Future<void> _createProjectTypeFromPicker() async {
+    final api = ref.read(quoteProjectApiClientProvider);
+    final created = await showCreateProjectTypeDialog(context: context, api: api);
+    if (created == null || !mounted) return;
+    await _loadProjectTypes(select: created);
+  }
+
+  Future<void> _loadSitesForClient(int? clientId) async {
+    setState(() {
+      _isLoadingSites = true;
+      _sitesError = null;
+      _sites = const [];
+      _selectedSite = null;
+    });
+    if (clientId == null) {
+      setState(() => _isLoadingSites = false);
+      return;
+    }
+    try {
+      final sites =
+          await ref.read(sitesApiClientProvider).fetchAllSites(clientId: clientId);
+      if (!mounted) return;
+      setState(() {
+        _sites = sites;
+        _isLoadingSites = false;
+        if (sites.length == 1) {
+          _selectedSite = sites.first;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _sites = const [];
+        _isLoadingSites = false;
+        _sitesError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load sites',
+        );
+      });
+    }
+  }
+
+  void _onClientChanged(ClientOption? client) {
+    setState(() => _selectedClient = client);
+    _loadSitesForClient(client?.id);
+  }
+
+  static String _siteDropdownLabel(SiteModel site) {
+    final location = [
+      site.city.trim(),
+      site.state.trim(),
+    ].where((part) => part.isNotEmpty).join(', ');
+    if (location.isEmpty) return site.siteName;
+    return '${site.siteName} — $location';
   }
 
   @override
@@ -69,45 +257,6 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
   void _onFormChanged() {
     if (!mounted) return;
     setState(() {});
-  }
-
-  Future<void> _loadClients() async {
-    setState(() {
-      _isLoadingClients = true;
-      _clientsError = null;
-    });
-    try {
-      final api = ref.read(quoteProjectApiClientProvider);
-      final clients = await api.fetchClients();
-      if (!mounted) return;
-      setState(() {
-        _clients = clients;
-        final incomingId = widget.preselectedClientId;
-        if (_selectedClient == null && incomingId != null) {
-          final match = clients.where((c) => c.id == incomingId).toList();
-          if (match.isNotEmpty) {
-            _selectedClient = match.first;
-          } else {
-            final fallbackName = (widget.preselectedClientName ?? '').trim();
-            _selectedClient = ClientOption(
-              id: incomingId,
-              name:
-                  fallbackName.isEmpty ? 'Client #$incomingId' : fallbackName,
-            );
-          }
-        }
-        _isLoadingClients = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _clientsError = ApiResponseMessage.fromAnyError(
-          e,
-          genericFallback: 'Failed to load clients',
-        );
-        _isLoadingClients = false;
-      });
-    }
   }
 
   String _formatForInput(DateTime value) {
@@ -158,47 +307,6 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
     });
   }
 
-  Future<void> _chooseClient() async {
-    if (_isLoadingClients || _clients.isEmpty) return;
-    final selected = await showModalBottomSheet<ClientOption>(
-      context: context,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: ListView.separated(
-            itemCount: _clients.length,
-            separatorBuilder: (_, _) =>
-                const Divider(height: 1, color: AppColors.borderLight),
-            itemBuilder: (context, index) {
-              final client = _clients[index];
-              final selected = _selectedClient?.id == client.id;
-              return ListTile(
-                title: Text(
-                  client.name,
-                  style: AppFonts.bodyMedium(color: AppColors.inkStrong)
-                      .copyWith(
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                      ),
-                ),
-                trailing: selected
-                    ? const Icon(Icons.check, color: AppColors.inkStrong)
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(client),
-              );
-            },
-          ),
-        );
-      },
-    );
-    if (selected == null || !mounted) return;
-    setState(() => _selectedClient = selected);
-  }
-
   Future<void> _submit() async {
     setState(() => _attemptedSubmit = true);
     final form = _formKey.currentState;
@@ -212,6 +320,8 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       final projectId = await api.createProject(
         name: _projectNameController.text.trim(),
         clientId: _selectedClient!.id,
+        projectTypeId: _selectedProjectType!.id,
+        siteId: int.tryParse(_selectedSite!.id),
         description: _descriptionController.text.trim(),
         startDate: _formatForApi(_startDate!),
         endDate: _formatForApi(_endDate!),
@@ -275,12 +385,171 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
 
   bool get _isClientValid => _selectedClient != null;
 
+  bool get _isProjectTypeValid => _selectedProjectType != null;
+
+  bool get _isSiteValid => _selectedSite != null;
+
   bool get _isFormValid =>
       _isProjectNameValid &&
+      _isProjectTypeValid &&
       _isDescriptionValid &&
       _isClientValid &&
+      _isSiteValid &&
       _areDatesValid &&
-      !_isLoadingClients;
+      !_isLoadingClients &&
+      !_isLoadingProjectTypes &&
+      !_isLoadingSites;
+
+  Widget _apiDropdownField<T>({
+    required T? value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?>? onChanged,
+    required String hint,
+    String? Function(T?)? validator,
+    bool isLoading = false,
+    String? loadError,
+  }) {
+    final enabled = !isLoading && loadError == null && items.isNotEmpty;
+    final effectiveValue =
+        items.any((item) => item.value == value) ? value : null;
+
+    return DropdownButtonFormField<T>(
+      key: ValueKey('dropdown-$hint-${items.length}-$isLoading'),
+      value: effectiveValue,
+      items: items,
+      onChanged: enabled ? onChanged : null,
+      validator: validator,
+      isExpanded: true,
+      style: _dropdownValueStyle,
+      icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.muted),
+      dropdownColor: AppColors.white,
+      decoration: InputDecoration(
+        hintText: isLoading ? 'Loading...' : (loadError ?? hint),
+        hintStyle: _dropdownHintStyle,
+        filled: true,
+        fillColor: AppColors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.textFieldBorder),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.textFieldBorder),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.inkStrong, width: 1.2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.2),
+        ),
+      ),
+    );
+  }
+
+  Widget _projectTypeField() {
+    return FormField<void>(
+      validator: (_) {
+        if (!_isProjectTypeValid) return 'Project type is required';
+        return null;
+      },
+      autovalidateMode: _attemptedSubmit
+          ? AutovalidateMode.always
+          : AutovalidateMode.disabled,
+      builder: (state) {
+        final hasError = state.hasError;
+        final text = _selectedProjectType?.name ?? 'Select a Type';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: _isLoadingProjectTypes ? null : _pickProjectType,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                height: 52,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: hasError
+                        ? AppColors.error
+                        : AppColors.textFieldBorder,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _isLoadingProjectTypes ? 'Loading...' : text,
+                        style: _selectedProjectType == null
+                            ? _dropdownHintStyle
+                            : _dropdownValueStyle,
+                      ),
+                    ),
+                    if (_isLoadingProjectTypes)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      const Icon(
+                        Icons.keyboard_arrow_down,
+                        color: AppColors.muted,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (_projectTypesError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  _projectTypesError!,
+                  style: AppFonts.bodySmall(color: AppColors.danger),
+                ),
+              ),
+            if (hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  state.errorText ?? '',
+                  style: AppFonts.bodySmall(color: AppColors.error),
+                ),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _isLoadingProjectTypes
+                    ? null
+                    : _createProjectTypeFromPicker,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF2563EB),
+                  padding: const EdgeInsets.symmetric(horizontal: 0),
+                ),
+                child: Text(
+                  'Add a project type',
+                  style: AppFonts.bodySmall(
+                    color: const Color(0xFF2563EB),
+                  ).copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   Widget _sectionTitle(String text) {
     return Padding(
@@ -321,94 +590,6 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
               : const [],
         ),
       ),
-    );
-  }
-
-  Widget _clientField() {
-    return FormField<void>(
-      validator: (_) {
-        if (!_isClientValid) return 'Client is required';
-        return null;
-      },
-      autovalidateMode: _attemptedSubmit
-          ? AutovalidateMode.always
-          : AutovalidateMode.disabled,
-      builder: (state) {
-        final text = _selectedClient?.name ?? 'Select a client';
-        final hasError = state.hasError;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            InkWell(
-              onTap: _chooseClient,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                height: 52,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: hasError
-                        ? AppColors.error
-                        : AppColors.textFieldBorder,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        text,
-                        style:
-                            AppFonts.bodyMedium(
-                              color: _selectedClient == null
-                                  ? AppColors.textFieldHint
-                                  : AppColors.textFieldForeground,
-                            ).copyWith(
-                              fontSize: 15,
-                              fontWeight: _selectedClient == null
-                                  ? FontWeight.w500
-                                  : FontWeight.w600,
-                            ),
-                      ),
-                    ),
-                    if (_isLoadingClients)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    else
-                      const Icon(
-                        Icons.keyboard_arrow_down,
-                        color: AppColors.muted,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            if (hasError)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  state.errorText ?? '',
-                  style: AppFonts.bodySmall(
-                    color: AppColors.error,
-                  ).copyWith(fontWeight: FontWeight.w500),
-                ),
-              ),
-
-            if (hasError)
-              Padding(
-                padding: const EdgeInsets.only(left: 12, top: 6),
-                child: Text(
-                  state.errorText!,
-                  style: const TextStyle(color: Colors.red, fontSize: 12),
-                ),
-              ),
-          ],
-        );
-      },
     );
   }
 
@@ -539,14 +720,66 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
               },
             ),
             const SizedBox(height: 14),
-            _label('Client'),
-            _clientField(),
-            if (_clientsError != null)
+            _label('Project Type', required: true),
+            _projectTypeField(),
+            const SizedBox(height: 14),
+            _label('Client', required: true),
+            _apiDropdownField<ClientOption>(
+              value: _selectedClient,
+              isLoading: _isLoadingClients,
+              loadError: _clientsError,
+              hint: 'Select a client',
+              items: _clients
+                  .map(
+                    (c) => DropdownMenuItem<ClientOption>(
+                      value: c,
+                      child: Text(c.name, style: _dropdownValueStyle),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _onClientChanged,
+              validator: (value) => value == null ? 'Client is required' : null,
+            ),
+            const SizedBox(height: 14),
+            _label('Sites', required: true),
+            _apiDropdownField<SiteModel>(
+              value: _selectedSite,
+              isLoading: _isLoadingSites,
+              loadError: _sitesError,
+              hint: _selectedClient == null
+                  ? 'Select a client first'
+                  : 'Select a Site',
+              items: _sites
+                  .map(
+                    (s) => DropdownMenuItem<SiteModel>(
+                      value: s,
+                      child: Text(
+                        _siteDropdownLabel(s),
+                        style: _dropdownValueStyle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _selectedClient == null || _isLoadingSites
+                  ? null
+                  : (value) => setState(() => _selectedSite = value),
+              validator: (value) {
+                if (_selectedClient == null) return 'Select a client first';
+                if (value == null) return 'Site is required';
+                return null;
+              },
+            ),
+            if (_selectedClient != null &&
+                !_isLoadingSites &&
+                _sites.isEmpty &&
+                _sitesError == null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
-                  _clientsError!,
-                  style: AppFonts.bodySmall(color: AppColors.danger),
+                  'No sites found for this client. Add a site first.',
+                  style: AppFonts.bodySmall(color: AppColors.muted),
                 ),
               ),
             const SizedBox(height: 14),

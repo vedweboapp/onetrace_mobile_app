@@ -11,9 +11,12 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_date_picker_dialog.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/dashboard/data/job_models.dart';
 import 'package:red5/features/dashboard/data/job_write_payload.dart';
+import 'package:red5/features/dashboard/presentation/jobs_list_refresh.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
 import 'package:red5/features/forms/data/forms_api_client.dart';
+import 'package:red5/features/items/data/items_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
@@ -24,19 +27,35 @@ import 'package:red5/features/user_profile/data/user_profile_models.dart';
 class AddJobPage extends ConsumerStatefulWidget {
   const AddJobPage({
     super.key,
-    required this.projectId,
+    this.projectId = '',
     this.initialProjectName = '',
     this.initialClientName = '',
+    this.standalone = false,
+    this.editJobId,
   });
 
   static const name = 'add-job';
+  static const standaloneName = 'create-job';
+  static const editJobName = 'edit-job';
+  static const standalonePath = '/jobs/create';
 
   final String projectId;
   final String initialProjectName;
   final String initialClientName;
 
+  /// When true, navigates back to the jobs list after create instead of project details.
+  final bool standalone;
+
+  /// When set, loads the job and saves via `PUT /jobs/{id}/` instead of create.
+  final String? editJobId;
+
   static String pathFor(String projectId) =>
       '${ProjectDetailsPage.pathPrefix}/$projectId/add-job';
+
+  static String pathForEdit(String projectId, String jobId) =>
+      '${ProjectDetailsPage.pathPrefix}/$projectId/jobs/$jobId/edit';
+
+  bool get isEditing => (editJobId ?? '').trim().isNotEmpty;
 
   @override
   ConsumerState<AddJobPage> createState() => _AddJobPageState();
@@ -91,13 +110,13 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
   DateTime? _scheduleDate;
   bool _attemptedSubmit = false;
   bool _isSubmitting = false;
+  bool _isLoadingEditJob = false;
 
-  String _source = 'Manual';
+  bool get _isEditing => widget.isEditing;
+
   String? _scannedQrValue;
 
   final List<_MaterialLine> _materialLines = [];
-
-  static const _sourceOptions = ['Manual', 'Quotation'];
 
   static TextStyle get _dropdownValueStyle => AppFonts.bodyMedium(
         color: AppColors.inkStrong,
@@ -217,6 +236,9 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       }
       _applyInitialSelections();
     });
+    if (_isEditing) {
+      await _loadJobForEdit();
+    }
     if (_selectedGroup != null) {
       unawaited(_loadCompositeItemsForGroup(_selectedGroup!.id));
     }
@@ -329,6 +351,219 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     }
   }
 
+  Future<void> _loadJobForEdit() async {
+    final jobId = widget.editJobId?.trim();
+    if (jobId == null || jobId.isEmpty) return;
+    setState(() => _isLoadingEditJob = true);
+    try {
+      final job = await ref.read(quoteProjectApiClientProvider).fetchJobById(jobId);
+      if (!mounted) return;
+      await _applyJobForEdit(job);
+      if (!mounted) return;
+      setState(() => _isLoadingEditJob = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoadingEditJob = false);
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: 'Could not load job for editing.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _applyJobForEdit(JobRead job) async {
+    _jobTitleController.text = job.title;
+    _descriptionController.text = (job.description ?? '').trim();
+    if (job.startDate != null) {
+      _startDate = job.startDate;
+      _startDateController.text = _formatDate(job.startDate!);
+    }
+    if (job.endDate != null) {
+      _scheduleDate = job.endDate;
+      _scheduleDateController.text = _formatDate(job.endDate!);
+    }
+    if (job.plotName?.trim().isNotEmpty == true) {
+      _plotNameController.text = job.plotName!.trim();
+    }
+    if (job.qrCode != null) {
+      _scannedQrValue = job.qrCode.toString();
+      for (final q in _qrCodeOptions) {
+        if (q.id == job.qrCode) {
+          _selectedQrCode = q;
+          break;
+        }
+      }
+    }
+
+    if (job.project != null) {
+      final projectId = job.project.toString();
+      for (final p in _projects) {
+        if (p.id == projectId) {
+          _selectedProject = p;
+          _projectNameController.text = p.name;
+          break;
+        }
+      }
+    } else if (job.projectName?.trim().isNotEmpty == true) {
+      for (final p in _projects) {
+        if (p.name == job.projectName!.trim()) {
+          _selectedProject = p;
+          _projectNameController.text = p.name;
+          break;
+        }
+      }
+    }
+
+    if (job.client != null) {
+      for (final c in _clients) {
+        if (c.id == job.client) {
+          _selectedClient = c;
+          _clientNameController.text = c.name;
+          break;
+        }
+      }
+    } else if (job.clientName?.trim().isNotEmpty == true) {
+      for (final c in _clients) {
+        if (c.name == job.clientName!.trim()) {
+          _selectedClient = c;
+          _clientNameController.text = c.name;
+          break;
+        }
+      }
+    }
+
+    if (_selectedClient != null) {
+      await _loadSitesForClient(_selectedClient!.id);
+    }
+    if (job.site != null && mounted) {
+      final siteId = job.site.toString();
+      for (final s in _sites) {
+        if (s.id == siteId) {
+          setState(() => _selectedSite = s);
+          break;
+        }
+      }
+    }
+
+    if (job.assignedWorker != null) {
+      final workerId = job.assignedWorker.toString();
+      for (final w in _workers) {
+        if (w.id == workerId) {
+          setState(() => _selectedWorker = w);
+          break;
+        }
+      }
+    }
+
+    if (job.jobStatus != null) {
+      for (final s in _jobStatuses) {
+        if (s.id == job.jobStatus) {
+          setState(() => _selectedJobStatus = s);
+          break;
+        }
+      }
+    }
+
+    final formId = job.form ?? (job.formIds.isNotEmpty ? job.formIds.first : null);
+    if (formId != null) {
+      for (final f in _formOptions) {
+        if (f.id == formId) {
+          setState(() => _selectedForm = f);
+          break;
+        }
+      }
+    }
+
+    final plotMeta = job.jobMeta['plot'];
+    final sectionMeta = job.jobMeta['section'];
+    if (sectionMeta is Map) {
+      final sectionName = sectionMeta['name']?.toString().trim();
+      if (sectionName != null &&
+          sectionName.isNotEmpty &&
+          _materialLines.isNotEmpty) {
+        _materialLines.first.sectionController.text = sectionName;
+      }
+    } else if (job.sectionName?.trim().isNotEmpty == true &&
+        _materialLines.isNotEmpty) {
+      _materialLines.first.sectionController.text = job.sectionName!.trim();
+    }
+
+    int? groupId;
+    final compositeRows = <({int id, int quantity})>[];
+    if (plotMeta is Map) {
+      final plotName = plotMeta['name']?.toString().trim();
+      if (plotName != null && plotName.isNotEmpty) {
+        _plotNameController.text = plotName;
+      }
+      groupId = plotMeta['group'] is int
+          ? plotMeta['group'] as int
+          : int.tryParse('${plotMeta['group'] ?? ''}');
+      final rawItems = plotMeta['composite_items'];
+      if (rawItems is List) {
+        for (final row in rawItems) {
+          if (row is! Map) continue;
+          final map = Map<String, dynamic>.from(
+            row.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          final id = map['id'] is int
+              ? map['id'] as int
+              : int.tryParse('${map['id'] ?? map['composite_item'] ?? ''}');
+          final qty = map['quantity'] is int
+              ? map['quantity'] as int
+              : int.tryParse('${map['quantity'] ?? ''}') ?? 1;
+          if (id != null) compositeRows.add((id: id, quantity: qty));
+        }
+      }
+    }
+
+    if (groupId != null) {
+      for (final g in _groups) {
+        if (g.id == groupId) {
+          setState(() => _selectedGroup = g);
+          break;
+        }
+      }
+      await _loadCompositeItemsForGroup(groupId);
+    }
+
+    if (compositeRows.isNotEmpty && mounted) {
+      setState(() {
+        while (_materialLines.length < compositeRows.length) {
+          _materialLines.add(_MaterialLine());
+        }
+        _refreshMaterialListeners();
+        for (var i = 0; i < compositeRows.length; i++) {
+          final row = compositeRows[i];
+          CompositeItemOption? match;
+          for (final item in _compositeItems) {
+            if (item.id == row.id) {
+              match = item;
+              break;
+            }
+          }
+          _materialLines[i].applyCompositeItem(match);
+          _materialLines[i].qtyController.text = '${row.quantity}';
+        }
+      });
+    } else if (_materialLines.isNotEmpty) {
+      if (job.quantity != null) {
+        _materialLines.first.qtyController.text = '${job.quantity}';
+      }
+      if (job.sellingPrice != null) {
+        _materialLines.first.priceController.text =
+            job.sellingPrice!.toStringAsFixed(2);
+      }
+    }
+
+    if (mounted) setState(() {});
+  }
+
   void _onProjectSelected(ProjectOption? project) {
     setState(() {
       _selectedProject = project;
@@ -350,11 +585,35 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     setState(() {
       _selectedGroup = group;
       for (final line in _materialLines) {
-        line.compositeItem = null;
+        line.applyCompositeItem(null);
       }
     });
     if (group != null) {
       unawaited(_loadCompositeItemsForGroup(group.id));
+    }
+  }
+
+  void _onCompositeItemSelected(_MaterialLine line, CompositeItemOption? item) {
+    setState(() => line.applyCompositeItem(item));
+    if (item != null && item.sellingPrice == null) {
+      unawaited(_resolveCompositeItemSellingPrice(line, item));
+    }
+  }
+
+  Future<void> _resolveCompositeItemSellingPrice(
+    _MaterialLine line,
+    CompositeItemOption item,
+  ) async {
+    try {
+      final detail = await ref
+          .read(itemsApiClientProvider)
+          .fetchItemDetail(item.id.toString());
+      if (!mounted || line.compositeItem?.id != item.id) return;
+      setState(() {
+        line.priceController.text = detail.sellPrice.toStringAsFixed(2);
+      });
+    } catch (_) {
+      // Keep manual entry when detail lookup fails.
     }
   }
 
@@ -544,53 +803,6 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     if (picked != null) setState(() => _selectedWorker = picked);
   }
 
-  Future<String?> _pickOption({
-    required String title,
-    required List<String> options,
-    required String current,
-  }) {
-    return showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  title,
-                  style: AppFonts.titleMedium(
-                    color: AppColors.inkStrong,
-                  ).copyWith(fontWeight: FontWeight.w700),
-                ),
-              ),
-              ...options.map(
-                (o) => ListTile(
-                  title: Text(
-                    o,
-                    style: AppFonts.bodyMedium(
-                      color: AppColors.inkStrong,
-                    ).copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  trailing: o == current
-                      ? const Icon(Icons.check, color: AppColors.inkStrong)
-                      : null,
-                  onTap: () => Navigator.pop(ctx, o),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _addMaterialLine() {
     setState(() {
       _materialLines.add(_MaterialLine());
@@ -614,6 +826,12 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     if (_selectedWorker == null) {
       context.showTopSnackBar(
         const SnackBar(content: Text('Please assign a worker.')),
+      );
+      return;
+    }
+    if (_selectedProject == null && _effectiveProjectId.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Please select a project.')),
       );
       return;
     }
@@ -647,7 +865,24 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
     try {
-      await ref.read(quoteProjectApiClientProvider).createJob(_buildCreateJobPayload());
+      final api = ref.read(quoteProjectApiClientProvider);
+      if (_isEditing) {
+        final jobId = widget.editJobId!.trim();
+        await api.updateJob(
+          jobId: jobId,
+          payload: _buildCreateJobPayload(),
+        );
+        if (!mounted) return;
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text('Job updated successfully.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        context.pop(true);
+        return;
+      }
+      await api.createJob(_buildCreateJobPayload());
       if (!mounted) return;
       context.showTopSnackBar(
         const SnackBar(
@@ -655,6 +890,11 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+      if (widget.standalone) {
+        ref.read(jobsListRefreshTickProvider.notifier).state++;
+        context.pop(true);
+        return;
+      }
       context.go(
         ProjectDetailsPage.pathFor(_effectiveProjectId),
         extra: <String, Object?>{
@@ -964,7 +1204,7 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
                   ),
                 )
                 .toList(),
-            onChanged: (item) => setState(() => line.compositeItem = item),
+            onChanged: (item) => _onCompositeItemSelected(line, item),
           ),
           const SizedBox(height: 12),
           Row(
@@ -1043,13 +1283,15 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
           icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
         ),
         title: Text(
-          'Create Job',
+          _isEditing ? 'Edit Job' : 'Create Job',
           style: AppFonts.titleLarge(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w700),
         ),
       ),
-      body: Form(
+      body: _isLoadingEditJob
+          ? const Center(child: CircularProgressIndicator())
+          : Form(
         key: _formKey,
         autovalidateMode: _attemptedSubmit
             ? AutovalidateMode.always
@@ -1144,47 +1386,21 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
               ),
             ),
             const SizedBox(height: 14),
-            _halfRow(
-              left: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('Job Status', required: true),
-                  _apiDropdownField<NamedIdOption>(
-                    value: _selectedJobStatus,
-                    isLoading: _isLoadingJobStatuses,
-                    hint: 'Select status',
-                    items: _jobStatuses
-                        .map(
-                          (s) => DropdownMenuItem<NamedIdOption>(
-                            value: s,
-                            child: Text(s.name, style: _dropdownValueStyle),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (s) => setState(() => _selectedJobStatus = s),
-                    validator: (v) =>
-                        v == null ? 'Job status is required' : null,
-                  ),
-                ],
-              ),
-              right: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('Source'),
-                  _pickerField(
-                    value: _source,
-                    placeholder: 'Source',
-                    onTap: () async {
-                      final picked = await _pickOption(
-                        title: 'Source',
-                        options: _sourceOptions,
-                        current: _source,
-                      );
-                      if (picked != null) setState(() => _source = picked);
-                    },
-                  ),
-                ],
-              ),
+            _label('Job Status', required: true),
+            _apiDropdownField<NamedIdOption>(
+              value: _selectedJobStatus,
+              isLoading: _isLoadingJobStatuses,
+              hint: 'Select status',
+              items: _jobStatuses
+                  .map(
+                    (s) => DropdownMenuItem<NamedIdOption>(
+                      value: s,
+                      child: Text(s.name, style: _dropdownValueStyle),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (s) => setState(() => _selectedJobStatus = s),
+              validator: (v) => v == null ? 'Job status is required' : null,
             ),
             _sectionTitle('SCHEDULE'),
             _label('Assigned Worker', required: true),
@@ -1346,14 +1562,19 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      _isSubmitting ? 'Creating...' : 'Create Job',
+                      _isSubmitting
+                          ? (_isEditing ? 'Saving...' : 'Creating...')
+                          : (_isEditing ? 'Save Changes' : 'Create Job'),
                       style: AppFonts.titleMedium(
                         color: AppColors.white,
                       ).copyWith(fontWeight: FontWeight.w700),
                     ),
                     if (!_isSubmitting) ...[
                       const SizedBox(width: 10),
-                      const Icon(Icons.add, size: 18),
+                      Icon(
+                        _isEditing ? Icons.check_rounded : Icons.add,
+                        size: 18,
+                      ),
                     ],
                   ],
                 ),
@@ -1477,6 +1698,23 @@ class _MaterialLine {
   }
 
   double get lineTotal => quantity * unitPrice;
+
+  void applyCompositeItem(CompositeItemOption? item) {
+    compositeItem = item;
+    if (item == null) {
+      priceController.clear();
+      return;
+    }
+    final price = item.sellingPrice;
+    if (price != null) {
+      priceController.text = price.toStringAsFixed(2);
+    } else {
+      priceController.clear();
+    }
+    final qty = item.quantity;
+    qtyController.text =
+        qty == qty.roundToDouble() ? qty.round().toString() : qty.toString();
+  }
 
   void dispose() {
     sectionController.dispose();

@@ -6,15 +6,19 @@ import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
+import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/core/widgets/app_user_avatar.dart';
 import 'package:red5/employee_role/data/app_role.dart';
 import 'package:red5/employee_role/data/role_session.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
@@ -22,6 +26,8 @@ import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart'
 import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/employee_projects_list_content.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
+import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
 enum _EmployeeHomeTab { calendar, project }
 
@@ -32,24 +38,32 @@ class RoleHomeScaffold extends ConsumerStatefulWidget {
     super.key,
     required this.role,
     required this.primaryActions,
+    this.initialNavPageIndex = 0,
   });
 
   final AppRole role;
   final List<RoleActionItem> primaryActions;
+  final int initialNavPageIndex;
 
   @override
   ConsumerState<RoleHomeScaffold> createState() => _RoleHomeScaffoldState();
 }
 
 class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
-  final PageController _pageController = PageController();
+  late final PageController _pageController;
   _EmployeeHomeTab _selectedTab = _EmployeeHomeTab.calendar;
-  _EmployeeNavPage _selectedPage = _EmployeeNavPage.home;
+  late _EmployeeNavPage _selectedPage;
   bool _calendarExpanded = false;
 
   @override
   void initState() {
     super.initState();
+    final pageIndex = widget.initialNavPageIndex.clamp(
+      0,
+      _EmployeeNavPage.values.length - 1,
+    );
+    _selectedPage = _EmployeeNavPage.values[pageIndex];
+    _pageController = PageController(initialPage: pageIndex);
     Future.microtask(() {
       ref.read(employeeJobsControllerProvider.notifier).load();
     });
@@ -101,6 +115,10 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
     final isProjectTab = _selectedTab == _EmployeeHomeTab.project;
     final jobsState = ref.watch(employeeJobsControllerProvider);
     final jobsController = ref.read(employeeJobsControllerProvider.notifier);
+    ref.watch(employeeJobSessionProvider);
+    final jobSession = ref.read(employeeJobSessionProvider.notifier);
+    final selectedDateJobs = jobsState.selectedDateJobsFor(jobSession);
+    final weekJobs = jobsState.weekJobsFor(jobSession);
     return Scaffold(
       backgroundColor: AppColors.white,
       body: SafeArea(
@@ -169,7 +187,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
                           child: _SelectedDateJobsPanel(
                             isLoading: jobsState.isLoading,
                             errorMessage: jobsState.errorMessage,
-                            jobs: jobsState.selectedDateJobs,
+                            jobs: selectedDateJobs,
                             onRetry: jobsController.load,
                           ),
                         ),
@@ -179,7 +197,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
                           child: _SectionHeader(title: 'This Week'),
                         ),
                         const SizedBox(height: 12),
-                        if (jobsState.weekJobs.isEmpty)
+                        if (weekJobs.isEmpty)
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 18),
                             child: Text(
@@ -188,7 +206,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
                             ),
                           )
                         else
-                          for (final job in jobsState.weekJobs) ...[
+                          for (final job in weekJobs) ...[
                             Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 18),
                               child: _WeekTaskTile(job: job),
@@ -229,7 +247,7 @@ class RoleActionItem {
 }
 
 /// Shared top bar for Home / Jobs / Projects bottom tabs (title only changes).
-class _EmployeeSiteAppBar extends StatelessWidget {
+class _EmployeeSiteAppBar extends ConsumerStatefulWidget {
   const _EmployeeSiteAppBar({
     required this.title,
     required this.onLogout,
@@ -241,13 +259,58 @@ class _EmployeeSiteAppBar extends StatelessWidget {
   final VoidCallback onOpenSettings;
 
   @override
+  ConsumerState<_EmployeeSiteAppBar> createState() =>
+      _EmployeeSiteAppBarState();
+}
+
+class _EmployeeSiteAppBarState extends ConsumerState<_EmployeeSiteAppBar> {
+  String _displayName = 'User';
+  String? _avatarUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadProfile);
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final api = ref.read(userProfileApiClientProvider);
+      final storage = ref.read(localStorageProvider);
+      final storedUserId =
+          storage.getString(LocalStorageKeys.authUserId)?.trim() ?? '';
+
+      UserProfileModel? profile;
+      if (storedUserId.isNotEmpty) {
+        try {
+          profile = await api.fetchProfile(storedUserId);
+        } catch (_) {
+          profile = null;
+        }
+      }
+      profile ??= await api.fetchCurrentProfile();
+      if (!mounted || profile == null) return;
+
+      final name = '${profile.firstName} ${profile.lastName}'.trim();
+      final rawImage = profile.userImage.trim();
+      setState(() {
+        if (name.isNotEmpty) _displayName = name;
+        _avatarUrl =
+            rawImage.isEmpty ? null : _absoluteProfileImageUrl(rawImage);
+      });
+    } catch (_) {
+      // Keep initials fallback when profile is unavailable.
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 8, 10, 4),
       child: Row(
         children: [
           Text(
-            title,
+            widget.title,
             style: AppFonts.headlineSmall(
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 24),
@@ -261,7 +324,7 @@ class _EmployeeSiteAppBar extends StatelessWidget {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            onPressed: onOpenSettings,
+            onPressed: widget.onOpenSettings,
             icon: const Icon(Icons.settings_rounded),
             color: AppColors.inkStrong,
           ),
@@ -271,7 +334,7 @@ class _EmployeeSiteAppBar extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             onSelected: (value) {
-              if (value == 'logout') onLogout();
+              if (value == 'logout') widget.onLogout();
             },
             itemBuilder: (context) => [
               const PopupMenuItem<String>(
@@ -285,10 +348,12 @@ class _EmployeeSiteAppBar extends StatelessWidget {
                 ),
               ),
             ],
-            child: const CircleAvatar(
+            child: AppUserAvatar(
+              name: _displayName,
+              imageUrl: _avatarUrl,
               radius: 18,
-              backgroundColor: Color(0xFFD8B48A),
-              child: Icon(Icons.person, size: 20, color: AppColors.inkStrong),
+              backgroundColor: const Color(0xFFD8B48A),
+              foregroundColor: AppColors.inkStrong,
             ),
           ),
         ],
@@ -297,13 +362,103 @@ class _EmployeeSiteAppBar extends StatelessWidget {
   }
 }
 
-class _EmployeeHomeWelcomeHeader extends StatelessWidget {
+String? _absoluteProfileImageUrl(String imageFromApi) {
+  final raw = imageFromApi.trim();
+  if (raw.isEmpty) return null;
+  final parsed = Uri.tryParse(raw);
+  if (parsed != null &&
+      parsed.hasScheme &&
+      (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+    return raw;
+  }
+  return Uri.parse(AppApiUrls.baseUrl)
+      .resolve(raw.startsWith('/') ? raw : '/$raw')
+      .toString();
+}
+
+class _EmployeeHomeWelcomeHeader extends ConsumerStatefulWidget {
   const _EmployeeHomeWelcomeHeader({required this.role});
 
   final AppRole role;
 
   @override
+  ConsumerState<_EmployeeHomeWelcomeHeader> createState() =>
+      _EmployeeHomeWelcomeHeaderState();
+}
+
+class _EmployeeHomeWelcomeHeaderState
+    extends ConsumerState<_EmployeeHomeWelcomeHeader> {
+  String? _displayName;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadProfileName);
+  }
+
+  Future<void> _loadProfileName() async {
+    try {
+      final api = ref.read(userProfileApiClientProvider);
+      final storage = ref.read(localStorageProvider);
+      final storedUserId =
+          storage.getString(LocalStorageKeys.authUserId)?.trim() ?? '';
+
+      UserProfileModel? profile;
+      if (storedUserId.isNotEmpty) {
+        try {
+          profile = await api.fetchProfile(storedUserId);
+        } catch (_) {
+          profile = null;
+        }
+      }
+      profile ??= await api.fetchCurrentProfile();
+      if (!mounted || profile == null) return;
+
+      final name = _nameFromProfile(profile);
+      if (name.isEmpty) return;
+      setState(() => _displayName = name);
+    } catch (_) {
+      // Keep role-based fallback when profile is unavailable.
+    }
+  }
+
+  static String _nameFromProfile(UserProfileModel profile) {
+    return '${profile.firstName} ${profile.lastName}'.trim();
+  }
+
+  static String _initialsFromName(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
+  }
+
+  static String _fallbackNameForRole(AppRole role) {
+    switch (role) {
+      case AppRole.technician:
+        return 'Technician';
+      case AppRole.operative:
+        return 'Operative';
+      case AppRole.sales:
+        return 'Sales';
+      case AppRole.manager:
+        return 'Manager';
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final displayName = _displayName ?? _fallbackNameForRole(widget.role);
+    final initials = _initialsFromName(displayName);
+    final session = ref.watch(employeeJobSessionProvider);
+    final sessionController = ref.read(employeeJobSessionProvider.notifier);
+    final activeJobId = sessionController.primaryActiveJobId;
+    final showTimer = activeJobId != null;
+    final elapsed = activeJobId == null
+        ? Duration.zero
+        : session.elapsedFor(activeJobId);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -318,7 +473,7 @@ class _EmployeeHomeWelcomeHeader extends StatelessWidget {
               ),
               child: Center(
                 child: Text(
-                  _initialsForRole(role),
+                  initials,
                   style: AppFonts.titleMedium(
                     color: AppColors.white,
                   ).copyWith(fontWeight: FontWeight.w900),
@@ -337,7 +492,7 @@ class _EmployeeHomeWelcomeHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  _nameForRole(role),
+                  displayName,
                   style: AppFonts.headlineSmall(
                     color: AppColors.inkStrong,
                   ).copyWith(fontWeight: FontWeight.w900, fontSize: 23),
@@ -345,44 +500,20 @@ class _EmployeeHomeWelcomeHeader extends StatelessWidget {
               ],
             ),
             const Spacer(),
-            const Icon(Icons.timer_outlined, size: 17, color: AppColors.muted),
-            const SizedBox(width: 4),
-            Text(
-              '10:03:02',
-              style: AppFonts.bodyMedium(
-                color: AppColors.muted,
-              ).copyWith(fontWeight: FontWeight.w600),
-            ),
+            if (showTimer) ...[
+              const Icon(Icons.timer_outlined, size: 17, color: Color(0xFF5E4BFF)),
+              const SizedBox(width: 4),
+              Text(
+                EmployeeJobTimerBanner.formatDuration(elapsed),
+                style: AppFonts.bodyMedium(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w800),
+              ),
+            ],
           ],
         ),
       ],
     );
-  }
-
-  static String _initialsForRole(AppRole role) {
-    switch (role) {
-      case AppRole.technician:
-        return 'AK';
-      case AppRole.operative:
-        return 'OP';
-      case AppRole.sales:
-        return 'SA';
-      case AppRole.manager:
-        return 'MG';
-    }
-  }
-
-  static String _nameForRole(AppRole role) {
-    switch (role) {
-      case AppRole.technician:
-        return 'Alex Khan';
-      case AppRole.operative:
-        return 'Operative';
-      case AppRole.sales:
-        return 'Sales User';
-      case AppRole.manager:
-        return 'Manager';
-    }
   }
 }
 

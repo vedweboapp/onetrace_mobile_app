@@ -1,6 +1,7 @@
-import 'package:dio/dio.dart';
-import 'package:flutter/material.dart';
 import 'dart:convert';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:red5/core/logging/app_logger.dart';
 
@@ -13,19 +14,34 @@ const _sensitiveLogKeys = {
   'secret',
 };
 
-/// Logs every Dio request/response/error via [AppLogger.write].
-///
-/// Redacts common secret fields; avoids dumping raw binary bodies.
+/// Max characters per [debugPrint] chunk (Android logcat truncates long lines).
+const _logChunkSize = 800;
+
+/// Logs every Dio request/response/error with the **full** body (chunked).
 final class ApiDioLogInterceptor extends Interceptor {
   ApiDioLogInterceptor();
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    AppLogger.write(
-      'API → ${options.method} ${options.uri}',
-      extra: _describeRequestPayload(options.data),
-      level: Level.debug,
-    );
+    if (kDebugMode) {
+      _logBlock(
+        title: 'API REQUEST',
+        lines: [
+          '${options.method} ${options.uri}',
+          if (options.queryParameters.isNotEmpty)
+            'query: ${_prettyJson(options.queryParameters)}',
+          if (options.headers.isNotEmpty)
+            'headers: ${_prettyJson(_redactForLog(options.headers))}',
+          'body: ${_describeRequestPayload(options.data)}',
+        ],
+      );
+    } else {
+      AppLogger.write(
+        'API → ${options.method} ${options.uri}',
+        extra: _describeRequestPayload(options.data),
+        level: Level.debug,
+      );
+    }
     handler.next(options);
   }
 
@@ -34,18 +50,22 @@ final class ApiDioLogInterceptor extends Interceptor {
     final code = response.statusCode ?? 0;
     final uri = response.requestOptions.uri;
     final ok = code >= 200 && code < 300;
-    _printApiResponse(
-      prefix: 'API RESPONSE',
-      method: response.requestOptions.method,
-      uri: uri,
-      statusCode: code,
-      data: response.data,
-    );
-    AppLogger.write(
-      'API ← $code $uri | success=$ok',
-      extra: _describeResponsePayload(response.data),
-      level: ok ? Level.info : Level.warning,
-    );
+
+    if (kDebugMode) {
+      _logBlock(
+        title: 'API RESPONSE | HTTP $code',
+        lines: [
+          '${response.requestOptions.method} $uri',
+          'body:',
+          _prettyBody(response.data),
+        ],
+      );
+    } else {
+      AppLogger.write(
+        'API ← $code $uri | success=$ok',
+        level: ok ? Level.info : Level.warning,
+      );
+    }
     handler.next(response);
   }
 
@@ -53,24 +73,24 @@ final class ApiDioLogInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) {
     final code = err.response?.statusCode;
     final uri = err.requestOptions.uri;
-    AppLogger.write(
-      'API ✗ $uri | status=$code | type=${err.type}',
-      error: err,
-      stackTrace: err.stackTrace,
-      level: Level.error,
-    );
-    final data = err.response?.data;
-    if (data != null) {
-      _printApiResponse(
-        prefix: 'API ERROR BODY',
-        method: err.requestOptions.method,
-        uri: uri,
-        statusCode: code,
-        data: data,
+
+    if (kDebugMode) {
+      _logBlock(
+        title: 'API ERROR | HTTP ${code ?? 'n/a'} | ${err.type}',
+        lines: [
+          '${err.requestOptions.method} $uri',
+          'message: ${err.message ?? 'n/a'}',
+          if (err.response?.data != null) ...[
+            'error body:',
+            _prettyBody(err.response!.data),
+          ],
+        ],
       );
+    } else {
       AppLogger.write(
-        'API ✗ body',
-        extra: _redactForLog(data),
+        'API ✗ $uri | status=$code | type=${err.type}',
+        error: err,
+        stackTrace: err.stackTrace,
         level: Level.error,
       );
     }
@@ -78,17 +98,35 @@ final class ApiDioLogInterceptor extends Interceptor {
   }
 }
 
-void _printApiResponse({
-  required String prefix,
-  required String method,
-  required Uri uri,
-  required int? statusCode,
-  required dynamic data,
-}) {
-  final statusText = statusCode == null ? 'n/a' : '$statusCode';
-  final header = '[$prefix] $method $uri | status=$statusText';
-  final body = _prettyBody(data);
-  debugPrint('$header\n$body');
+void _logBlock({required String title, required List<String> lines}) {
+  final divider = '═' * 72;
+  _logChunked('');
+  _logChunked('╔$divider');
+  _logChunked('║ $title');
+  _logChunked('╠$divider');
+  for (final line in lines) {
+    if (line.contains('\n')) {
+      for (final sub in line.split('\n')) {
+        _logChunked('║ $sub');
+      }
+    } else {
+      _logChunked('║ $line');
+    }
+  }
+  _logChunked('╚$divider');
+}
+
+void _logChunked(String message) {
+  if (message.length <= _logChunkSize) {
+    debugPrint(message);
+    return;
+  }
+  var offset = 0;
+  while (offset < message.length) {
+    final end = (offset + _logChunkSize).clamp(0, message.length);
+    debugPrint(message.substring(offset, end));
+    offset = end;
+  }
 }
 
 String _prettyBody(dynamic data) {
@@ -96,20 +134,26 @@ String _prettyBody(dynamic data) {
   try {
     if (data is List<int>) {
       final text = utf8.decode(data, allowMalformed: true);
-      final parsed = jsonDecode(text);
-      return const JsonEncoder.withIndent('  ').convert(parsed);
+      return _prettyJson(jsonDecode(text));
     }
     if (data is Map || data is List) {
-      return const JsonEncoder.withIndent('  ').convert(data);
+      return _prettyJson(data);
     }
     final raw = data.toString().trim();
     if (raw.startsWith('{') || raw.startsWith('[')) {
-      final parsed = jsonDecode(raw);
-      return const JsonEncoder.withIndent('  ').convert(parsed);
+      return _prettyJson(jsonDecode(raw));
     }
     return raw;
   } catch (_) {
     return data.toString();
+  }
+}
+
+String _prettyJson(Object? value) {
+  try {
+    return const JsonEncoder.withIndent('  ').convert(value);
+  } catch (_) {
+    return value.toString();
   }
 }
 
@@ -130,7 +174,7 @@ Object? _redactForLog(Object? value) {
 
 String _describeRequestPayload(Object? data) {
   if (data == null) {
-    return 'body: <empty>';
+    return '<empty>';
   }
   if (data is FormData) {
     final fieldKeys = data.fields.map((e) => e.key).join(', ');
@@ -139,15 +183,5 @@ String _describeRequestPayload(Object? data) {
         .join(', ');
     return 'FormData(fields: [$fieldKeys], files: [$fileParts])';
   }
-  return 'body: ${_redactForLog(data)}';
-}
-
-String _describeResponsePayload(Object? data) {
-  if (data == null) {
-    return 'data: <empty>';
-  }
-  if (data is List<int>) {
-    return 'data: bytes(len=${data.length})';
-  }
-  return 'data: ${_redactForLog(data)}';
+  return _prettyJson(_redactForLog(data));
 }

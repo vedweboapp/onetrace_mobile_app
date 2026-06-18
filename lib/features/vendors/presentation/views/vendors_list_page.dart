@@ -1,53 +1,43 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/utils/debounced_search.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/vendors/data/vendor_models.dart';
+import 'package:red5/features/vendors/data/vendors_api_client.dart';
 import 'package:red5/features/vendors/presentation/views/add_vendor_page.dart';
 import 'package:red5/features/vendors/presentation/views/vendor_detail_page.dart';
 
-class VendorsListPage extends StatefulWidget {
+class VendorsListPage extends ConsumerStatefulWidget {
   const VendorsListPage({super.key});
 
   @override
-  State<VendorsListPage> createState() => _VendorsListPageState();
+  ConsumerState<VendorsListPage> createState() => _VendorsListPageState();
 }
 
-class _VendorsListPageState extends State<VendorsListPage> {
+class _VendorsListPageState extends ConsumerState<VendorsListPage> {
   final _searchController = TextEditingController();
   final _searchDebounce = DebouncedSearch();
-
-  static final _allVendors = VendorMockData.listItems;
-  List<VendorListItem> _filtered = List.of(_allVendors);
+  final List<VendorModel> _vendors = <VendorModel>[];
+  bool _isLoading = false;
+  bool _isLoadingMore = false;
+  String? _error;
+  int _page = 1;
+  int _totalPages = 1;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _fetchVendors(reset: true);
   }
 
   void _onSearchChanged() {
     setState(() {});
-    _searchDebounce.schedule(_applySearch);
-  }
-
-  void _applySearch() {
-    final query = _searchController.text.trim().toLowerCase();
-    setState(() {
-      if (query.isEmpty) {
-        _filtered = List.of(_allVendors);
-        return;
-      }
-      _filtered = _allVendors
-          .where(
-            (v) =>
-                v.name.toLowerCase().contains(query) ||
-                v.contactPerson.toLowerCase().contains(query) ||
-                v.phone.toLowerCase().contains(query),
-          )
-          .toList();
-    });
+    _searchDebounce.schedule(() => _fetchVendors(reset: true));
   }
 
   @override
@@ -56,6 +46,60 @@ class _VendorsListPageState extends State<VendorsListPage> {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchVendors({bool reset = false}) async {
+    if (reset) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    } else {
+      if (_isLoadingMore) return;
+      setState(() => _isLoadingMore = true);
+    }
+    try {
+      final api = ref.read(vendorsApiClientProvider);
+      final nextPage = reset ? 1 : (_page + 1);
+      final result = await api.fetchVendorsPage(
+        page: nextPage,
+        pageSize: VendorsApiClient.defaultPageSize,
+        search: _searchController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        if (reset) {
+          _vendors
+            ..clear()
+            ..addAll(result.items);
+        } else {
+          _vendors.addAll(result.items);
+        }
+        _page = result.currentPage;
+        _totalPages = result.totalPages;
+        _isLoading = false;
+        _isLoadingMore = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+        _error = _truncateErrorMessage(
+          ApiResponseMessage.fromAnyError(
+            e,
+            genericFallback: 'Failed to load vendors',
+          ),
+        );
+      });
+    }
+  }
+
+  static String _truncateErrorMessage(String message, {int maxLen = 320}) {
+    final trimmed = message.trim();
+    if (trimmed.length <= maxLen) return trimmed;
+    return '${trimmed.substring(0, maxLen)}…';
   }
 
   Widget _searchBar() {
@@ -92,9 +136,12 @@ class _VendorsListPageState extends State<VendorsListPage> {
     );
   }
 
-  Widget _vendorRow(VendorListItem vendor) {
+  Widget _vendorRow(VendorModel vendor) {
     return InkWell(
-      onTap: () => context.push(VendorDetailPage.pathFor(vendor.id)),
+      onTap: () async {
+        final changed = await context.push<bool?>(VendorDetailPage.pathFor(vendor.id));
+        if (changed == true) _fetchVendors(reset: true);
+      },
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -117,6 +164,19 @@ class _VendorsListPageState extends State<VendorsListPage> {
                       height: 1.2,
                     ),
                   ),
+                  if (vendor.typeName != null &&
+                      vendor.typeName!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      vendor.typeName!,
+                      style: AppFonts.bodySmall(
+                        color: const Color(0xFF8B8B8B),
+                      ).copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -129,7 +189,7 @@ class _VendorsListPageState extends State<VendorsListPage> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          vendor.contactPerson,
+                          vendor.displayContact,
                           style: AppFonts.bodySmall(
                             color: const Color(0xFF8B8B8B),
                           ).copyWith(
@@ -152,7 +212,7 @@ class _VendorsListPageState extends State<VendorsListPage> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          vendor.phone,
+                          vendor.displayPhone,
                           style: AppFonts.bodySmall(
                             color: const Color(0xFF8B8B8B),
                           ).copyWith(
@@ -241,20 +301,99 @@ class _VendorsListPageState extends State<VendorsListPage> {
 
   @override
   Widget build(BuildContext context) {
+    final hasQuery = _searchController.text.trim().isNotEmpty;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF6F6F7),
       body: Column(
         children: [
-          if (_filtered.isNotEmpty || _searchController.text.isNotEmpty)
-            _searchBar(),
+          if (_vendors.isNotEmpty || hasQuery) _searchBar(),
+          if (hasQuery)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Color(0xFFE0E0E1))),
+              ),
+              child: Text(
+                'SEARCH RESULTS (${_vendors.length})',
+                style: AppFonts.labelLarge(color: const Color(0xFF8A8A8A))
+                    .copyWith(
+                  letterSpacing: 0.7,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ),
           Expanded(
-            child: _filtered.isEmpty
+            child: _isLoading
+                ? const Center(
+                    child: AppSkeletonScreenBody(
+                      style: AppSkeletonScreenBodyStyle.listRows,
+                      listRowCount: 10,
+                    ),
+                  )
+                : _error != null
+                ? SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 24,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.error_outline,
+                          size: 48,
+                          color: Color(0xFFB0B0B3),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          maxLines: 8,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppFonts.bodyMedium(
+                            color: const Color(0xFF8A8A8A),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: () => _fetchVendors(reset: true),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                : _vendors.isEmpty
                 ? _emptyState()
-                : ListView.builder(
-                    padding: EdgeInsets.zero,
-                    itemCount: _filtered.length,
-                    itemBuilder: (context, index) =>
-                        _vendorRow(_filtered[index]),
+                : RefreshIndicator(
+                    onRefresh: () => _fetchVendors(reset: true),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: _vendors.length + 1,
+                      itemBuilder: (context, index) {
+                        if (index == _vendors.length) {
+                          if (!hasQuery &&
+                              !_isLoadingMore &&
+                              _page < _totalPages) {
+                            _fetchVendors(reset: false);
+                          }
+                          if (_isLoadingMore) {
+                            return const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        }
+                        return _vendorRow(_vendors[index]);
+                      },
+                    ),
                   ),
           ),
         ],
@@ -262,7 +401,10 @@ class _VendorsListPageState extends State<VendorsListPage> {
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: FloatingActionButton(
         heroTag: 'vendors_add_fab',
-        onPressed: () => context.push(AddVendorPage.path),
+        onPressed: () async {
+          final created = await context.push<bool?>(AddVendorPage.path);
+          if (created == true) _fetchVendors(reset: true);
+        },
         backgroundColor: const Color(0xFF121212),
         foregroundColor: AppColors.white,
         shape: const CircleBorder(),
