@@ -9,10 +9,13 @@ import 'package:red5/core/network/api_dio_log_interceptor.dart';
 import 'package:red5/core/network/api_int_parsing.dart';
 import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/core/models/named_id_option.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/features/quote/data/project_read.dart';
 import 'package:red5/features/sites/data/site_models.dart';
+
+export 'package:red5/core/models/named_id_option.dart';
 
 final class LevelSyncResult {
   const LevelSyncResult({this.levelId, this.rawResponse});
@@ -138,14 +141,6 @@ final class GroupItemOption {
   final String name;
 }
 
-/// Generic `{ id, name }` row for admin dropdowns (forms, job status, QR codes).
-final class NamedIdOption {
-  const NamedIdOption({required this.id, required this.name});
-
-  final int id;
-  final String name;
-}
-
 final class CompositeItemOption {
   const CompositeItemOption({
     required this.id,
@@ -206,6 +201,7 @@ final class QuoteProjectApiClient {
     String? description,
     String? startDate,
     String? endDate,
+    List<int>? forms,
   }) async {
     final payload = <String, dynamic>{'name': name};
     if (organizationId != null) payload['organization'] = organizationId;
@@ -215,6 +211,7 @@ final class QuoteProjectApiClient {
     if (description != null) payload['description'] = description;
     if (startDate != null) payload['start_date'] = startDate;
     if (endDate != null) payload['end_date'] = endDate;
+    if (forms != null && forms.isNotEmpty) payload['forms'] = forms;
     _logOutgoingPayload(
       methodName: 'createProject',
       endpoint: AppApiUrls.projects,
@@ -1272,6 +1269,80 @@ final class QuoteProjectApiClient {
       totalPages: meta.totalPages,
       totalRecords: meta.totalRecords,
     );
+  }
+
+  /// `GET /project/{id}/jobs/` — jobs for a single project.
+  Future<List<JobRead>> fetchProjectJobs({
+    required String projectId,
+    String? search,
+    int page = 1,
+    int pageSize = 50,
+  }) async {
+    final id = projectId.trim();
+    if (id.isEmpty) return const [];
+
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.projectJobs(id),
+      queryParameters: <String, dynamic>{
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        'page': page < 1 ? 1 : page,
+        'page_size': pageSize,
+      },
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final rows = root['results'] is List
+        ? (root['results'] as List<dynamic>)
+        : (root['data'] is List
+              ? (root['data'] as List<dynamic>)
+              : const <dynamic>[]);
+    return rows
+        .whereType<Map>()
+        .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
+        .whereType<JobRead>()
+        .toList(growable: false);
+  }
+
+  /// Fetches all pages from `GET /project/{id}/jobs/`.
+  Future<List<JobRead>> fetchAllProjectJobs({
+    required String projectId,
+    String? search,
+    int pageSize = 50,
+  }) async {
+    final id = projectId.trim();
+    if (id.isEmpty) return const [];
+
+    final jobs = <JobRead>[];
+    var page = 1;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.projectJobs(id),
+        queryParameters: <String, dynamic>{
+          if (search != null && search.trim().isNotEmpty)
+            'search': search.trim(),
+          'page': page,
+          'page_size': pageSize,
+        },
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = root['results'] is List
+          ? (root['results'] as List<dynamic>)
+          : (root['data'] is List
+                ? (root['data'] as List<dynamic>)
+                : const <dynamic>[]);
+      jobs.addAll(
+        rows
+            .whereType<Map>()
+            .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
+            .whereType<JobRead>(),
+      );
+      final pagination = _coerceMap(root['pagination']);
+      final hasNext = root['next'] != null ||
+          (pagination['next'] != null &&
+              pagination['next'].toString().trim().isNotEmpty);
+      if (!hasNext || rows.isEmpty) break;
+      page += 1;
+    }
+    return jobs;
   }
 
   /// Fetches all pages from `GET /jobs/`.

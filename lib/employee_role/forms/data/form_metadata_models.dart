@@ -1,4 +1,5 @@
-/// Parsed form layout from `GET /forms/{id}/metadata/`.
+/// Parsed form layout from `GET /project-forms/{id}/metadata/` (operative)
+/// or `GET /forms/{id}/metadata/` (admin).
 library;
 
 import 'package:flutter/foundation.dart';
@@ -97,16 +98,17 @@ final class FormMetadataField {
   }
 }
 
-/// Reads [sections] from form metadata (`GET /forms/{id}/metadata/`).
+/// Reads [sections] from project form metadata (`GET /project-forms/{id}/metadata/`).
 List<FormMetadataSection> parseFormMetadataSections(
   Map<String, dynamic> metadata,
 ) {
   final raw = metadata['sections'];
+  if (raw == null) return const [];
   if (raw is! List) return const [];
 
   final sections = <FormMetadataSection>[];
   for (final entry in raw) {
-    if (entry is! Map) continue;
+    if (entry == null || entry is! Map) continue;
     final map = Map<String, dynamic>.from(
       entry.map((k, v) => MapEntry(k.toString(), v)),
     );
@@ -116,7 +118,7 @@ List<FormMetadataSection> parseFormMetadataSections(
     final fields = <FormMetadataField>[];
     if (fieldsRaw is List) {
       for (final fieldEntry in fieldsRaw) {
-        if (fieldEntry is! Map) continue;
+        if (fieldEntry == null || fieldEntry is! Map) continue;
         final field = FormMetadataField.fromMap(
           Map<String, dynamic>.from(
             fieldEntry.map((k, v) => MapEntry(k.toString(), v)),
@@ -126,7 +128,6 @@ List<FormMetadataSection> parseFormMetadataSections(
       }
     }
     fields.sort((a, b) => a.sequence.compareTo(b.sequence));
-    if (fields.isEmpty) continue;
 
     sections.add(
       FormMetadataSection(
@@ -142,6 +143,21 @@ List<FormMetadataSection> parseFormMetadataSections(
 
   sections.sort((a, b) => a.sequence.compareTo(b.sequence));
   return sections;
+}
+
+/// Rules embedded in project-form metadata (`data.rules`).
+List<Map<String, dynamic>> parseFormMetadataRules(Map<String, dynamic> metadata) {
+  final raw = metadata['rules'];
+  if (raw == null) return const [];
+  if (raw is! List) return const [];
+  return raw
+      .where((entry) => entry != null && entry is Map)
+      .map(
+        (entry) => Map<String, dynamic>.from(
+          (entry as Map).map((k, v) => MapEntry(k.toString(), v)),
+        ),
+      )
+      .toList(growable: false);
 }
 
 /// Fields handled outside the operative dynamic form (job checklist / admin).
@@ -225,7 +241,6 @@ List<FormMetadataSection> filterOperativeFormSections(
     final fields = section.fields
         .where((field) => !isOperativeExcludedFormField(field))
         .toList(growable: false);
-    if (fields.isEmpty) continue;
     filtered.add(
       FormMetadataSection(
         id: section.id,

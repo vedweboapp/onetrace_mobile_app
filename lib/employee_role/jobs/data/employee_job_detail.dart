@@ -75,21 +75,6 @@ final class EmployeeJobDetail {
   }
 }
 
-/// Mandatory pre-start safety checks shown before the job timer begins.
-abstract final class EmployeeJobPreStartSafetyChecklist {
-  EmployeeJobPreStartSafetyChecklist._();
-
-  static const items = [
-    EmployeeSafetyChecklistItem(id: 'ppe', title: 'Wearing PPE'),
-    EmployeeSafetyChecklistItem(id: 'equipment', title: 'Equipment Inspected'),
-    EmployeeSafetyChecklistItem(id: 'work_area', title: 'Work Area Clear'),
-    EmployeeSafetyChecklistItem(
-      id: 'safety_guard',
-      title: 'Safety Guard in Place',
-    ),
-  ];
-}
-
 final class EmployeeJobSummary {
   const EmployeeJobSummary({
     required this.id,
@@ -158,17 +143,23 @@ final class EmployeeSafetyChecklistItem {
     required this.id,
     required this.title,
     this.isChecked = false,
+    this.isRequired = true,
+    this.sequence = 0,
   });
 
   final String id;
   final String title;
   final bool isChecked;
+  final bool isRequired;
+  final int sequence;
 
   EmployeeSafetyChecklistItem copyWith({bool? isChecked}) {
     return EmployeeSafetyChecklistItem(
       id: id,
       title: title,
       isChecked: isChecked ?? this.isChecked,
+      isRequired: isRequired,
+      sequence: sequence,
     );
   }
 }

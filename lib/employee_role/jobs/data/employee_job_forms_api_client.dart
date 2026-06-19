@@ -25,18 +25,29 @@ final class EmployeeJobFormsApiClient {
         },
       );
 
+  /// Submit/update use form-urlencoded so `values` stays a JSON string for
+  /// `json.loads` instead of being parsed into a list (TypeError) or stored
+  /// whole in a varchar column when sent as JSON.
+  Options _jobFormSubmitOptions(int jobId) => Options(
+        headers: <String, String>{
+          _jobIdHeader: jobId.toString(),
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.formUrlEncodedContentType,
+        },
+      );
+
   /// `POST /jobs/{jobId}/submit-form/` — [jobId] is the operative's job, not the form template id.
   Future<SubmittedJobForm> submitJobForm({
     required int jobId,
     required JobFormSubmitPayload payload,
   }) async {
     final url = AppApiUrls.jobSubmitForm(jobId);
-    final requestBody = payload.toJson();
+    final requestBody = payload.toFormBody();
 
     final response = await _dio.post<dynamic>(
       url,
       data: requestBody,
-      options: _jobOptions(jobId),
+      options: _jobFormSubmitOptions(jobId),
     );
 
     JobCompletionDebugLog.formApi(
@@ -112,12 +123,12 @@ final class EmployeeJobFormsApiClient {
     required JobFormUpdatePayload payload,
   }) async {
     final url = AppApiUrls.jobSubmittedFormUpdate(jobId, submissionId);
-    final requestBody = payload.toJson();
+    final requestBody = payload.toFormBody();
 
     final response = await _dio.put<dynamic>(
       url,
       data: requestBody,
-      options: _jobOptions(jobId),
+      options: _jobFormSubmitOptions(jobId),
     );
 
     JobCompletionDebugLog.formApi(

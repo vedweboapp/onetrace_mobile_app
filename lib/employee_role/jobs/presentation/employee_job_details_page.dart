@@ -54,14 +54,24 @@ class _EmployeeJobDetailsPageState
     final jobId = widget.jobId;
     if (jobId == null) return;
 
-    final job = ref.read(employeeJobDetailControllerProvider).job;
+    final detailState = ref.read(employeeJobDetailControllerProvider);
+    final job = detailState.job;
     final session = ref.read(employeeJobSessionProvider.notifier);
 
     _timerSynced = true;
 
-    if (job != null && _statusFromLabel(job.currentStatus) == EmployeeJobStatus.completed) {
+    final apiCompleted =
+        job != null && _statusFromLabel(job.currentStatus) == EmployeeJobStatus.completed;
+    final formsAllowCompletion = detailState.formIds.isEmpty ||
+        detailState.allRequiredFormsComplete;
+
+    if (apiCompleted && formsAllowCompletion) {
       session.completeJob(jobId);
       return;
+    }
+
+    if (apiCompleted && !formsAllowCompletion) {
+      session.reopenJob(jobId);
     }
 
     if (session.isJobStarted(jobId)) {
@@ -80,7 +90,8 @@ class _EmployeeJobDetailsPageState
       jobId: widget.jobId!,
       status: _statusFromLabel(job.currentStatus),
     );
-    if (!needsSafety) return;
+    final hasChecklist = job.safetyChecklist.isNotEmpty;
+    if (!needsSafety || !hasChecklist) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -95,6 +106,9 @@ class _EmployeeJobDetailsPageState
     final normalized = label.trim().toUpperCase();
     if (normalized.contains('PROGRESS')) return EmployeeJobStatus.inProgress;
     if (normalized.contains('COMPLETE')) return EmployeeJobStatus.completed;
+    if (normalized.contains('TO DO') || normalized.contains('TODO')) {
+      return EmployeeJobStatus.upcoming;
+    }
     if (normalized.contains('PENDING')) return EmployeeJobStatus.pending;
     return EmployeeJobStatus.upcoming;
   }
@@ -116,6 +130,8 @@ class _EmployeeJobDetailsPageState
     switch (itemId) {
       case 'linked_forms':
         _openFormPicker();
+      case 'safety_checklist':
+        _openSafetyChecklist();
       case 'qr_scan':
         _scanQrCode();
       default:
@@ -123,9 +139,26 @@ class _EmployeeJobDetailsPageState
     }
   }
 
+  Future<void> _openSafetyChecklist() async {
+    final jobId = ref.read(employeeJobDetailControllerProvider).job?.id ??
+        widget.jobId;
+    if (jobId == null) return;
+    await context.push(
+      EmployeeJobSafetyVerificationPage.path,
+      extra: <String, Object?>{'jobId': jobId},
+    );
+    if (!mounted) return;
+    await ref
+        .read(employeeJobDetailControllerProvider.notifier)
+        .load(jobId: jobId);
+  }
+
   Future<void> _openFormPicker() async {
-    final state = ref.read(employeeJobDetailControllerProvider);
     final controller = ref.read(employeeJobDetailControllerProvider.notifier);
+    await controller.refreshAttachedForms();
+
+    if (!mounted) return;
+    final state = ref.read(employeeJobDetailControllerProvider);
     final isCompletedJob = controller.isJobCompleted;
     final selected = await showEmployeeJobFormPickerSheet(
       context: context,
@@ -181,13 +214,20 @@ class _EmployeeJobDetailsPageState
 
     _redirectToSafetyIfNeeded(state);
 
-    final dynamicFormComplete = state.formIds.isEmpty
-        ? false
-        : state.formIds.every(state.completedFormIds.contains);
+    final dynamicFormComplete = state.allRequiredFormsComplete;
 
     final canSubmit = controller.canSubmit(
       dynamicFormComplete: dynamicFormComplete,
     );
+
+    final statusLabel = job == null
+        ? '—'
+        : state.formIds.isNotEmpty && !dynamicFormComplete
+            ? EmployeeJobStatus.inProgress.label
+            : sessionController.resolveStatusLabel(
+                jobId: job.id,
+                apiStatusLabel: job.currentStatus,
+              );
 
     final requiredItems = job == null
         ? const <EmployeeRequiredFormItem>[]
@@ -262,10 +302,7 @@ class _EmployeeJobDetailsPageState
                         const SizedBox(height: 16),
                       ],
                       EmployeeJobStatusCard(
-                        status: sessionController.resolveStatusLabel(
-                          jobId: job.id,
-                          apiStatusLabel: job.currentStatus,
-                        ),
+                        status: statusLabel,
                       ),
                       const SizedBox(height: 24),
                       EmployeeJobInfoSection(job: job),
@@ -282,13 +319,6 @@ class _EmployeeJobDetailsPageState
                           items: requiredItems,
                           onItemTap: _onRequiredFormItemTap,
                         ),
-                        if (state.formIds.isEmpty) ...[
-                          const SizedBox(height: 26),
-                          EmployeeSafetyChecklist(
-                            items: job.safetyChecklist,
-                            onChanged: controller.toggleChecklistItem,
-                          ),
-                        ],
                       ] else
                         const EmployeeJobLocationPanel(),
                     ],

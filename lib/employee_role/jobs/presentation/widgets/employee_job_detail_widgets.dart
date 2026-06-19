@@ -614,14 +614,17 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
             isComplete: dynamicFormComplete,
           ),
         ]
-      : [
+      : job.safetyChecklist.isNotEmpty
+      ? [
           EmployeeRequiredFormItem(
             id: 'safety_checklist',
-            title: 'Fill safety checklist',
-            isComplete: job.safetyChecklist.isNotEmpty &&
-                job.safetyChecklist.every((item) => item.isChecked),
+            title: 'Complete job checklist',
+            isComplete: job.safetyChecklist
+                .where((item) => item.isRequired)
+                .every((item) => item.isChecked),
           ),
-        ];
+        ]
+      : const <EmployeeRequiredFormItem>[];
 
   return [
     ...formItems,

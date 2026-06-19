@@ -6,11 +6,13 @@ import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/employee_role/forms/data/cached_technician_form.dart';
-import 'package:red5/features/forms/data/forms_api_client.dart';
+import 'package:red5/employee_role/forms/data/form_metadata_models.dart';
+import 'package:red5/employee_role/forms/data/operative_project_forms_api_client.dart';
+import 'package:red5/features/forms/data/form_models.dart';
 
 final technicianFormRepositoryProvider = Provider<TechnicianFormRepository>((ref) {
   return TechnicianFormRepository(
-    formsApi: sl<FormsApiClient>(),
+    projectFormsApi: sl<OperativeProjectFormsApiClient>(),
     database: sl<TechnicianFormDatabase>(),
     connectivity: sl<ConnectivityService>(),
   );
@@ -27,14 +29,14 @@ final class TechnicianFormLoadException implements Exception {
 
 final class TechnicianFormRepository {
   TechnicianFormRepository({
-    required FormsApiClient formsApi,
+    required OperativeProjectFormsApiClient projectFormsApi,
     required TechnicianFormDatabase database,
     required ConnectivityService connectivity,
-  })  : _formsApi = formsApi,
+  })  : _projectFormsApi = projectFormsApi,
         _database = database,
         _connectivity = connectivity;
 
-  final FormsApiClient _formsApi;
+  final OperativeProjectFormsApiClient _projectFormsApi;
   final TechnicianFormDatabase _database;
   final ConnectivityService _connectivity;
 
@@ -66,9 +68,12 @@ final class TechnicianFormRepository {
 
   Future<TechnicianFormBundle> _fetchFromApiAndCache(int formId) async {
     final id = formId.toString();
-    final summary = await _formsApi.fetchFormById(id);
-    final metadata = await _fetchMetadataOrEmpty(id);
-    final rules = await _fetchRulesOrEmpty(id);
+    final metadata = await _projectFormsApi.fetchProjectFormMetadata(id);
+    final summary = await _fetchSummary(id, formId, metadata);
+    var rules = parseFormMetadataRules(metadata);
+    if (rules.isEmpty) {
+      rules = await _fetchRulesOrEmpty(id);
+    }
 
     final contentHash = TechnicianFormBundle.computeContentHash(
       summaryRaw: summary.raw,
@@ -88,18 +93,33 @@ final class TechnicianFormRepository {
     return bundle;
   }
 
-  Future<Map<String, dynamic>> _fetchMetadataOrEmpty(String id) async {
+  Future<FormSummary> _fetchSummary(
+    String id,
+    int formId,
+    Map<String, dynamic> metadata,
+  ) async {
     try {
-      return await _formsApi.fetchFormMetadata(id);
+      return await _projectFormsApi.fetchProjectFormById(id);
     } on DioException catch (error) {
-      if (_isMissingOptionalResource(error)) return const {};
-      rethrow;
+      if (!_isMissingOptionalResource(error)) rethrow;
+      return _summaryFromMetadata(formId, metadata);
     }
+  }
+
+  FormSummary _summaryFromMetadata(int formId, Map<String, dynamic> metadata) {
+    final name = metadata['name']?.toString().trim() ??
+        metadata['form_name']?.toString().trim() ??
+        metadata['title']?.toString().trim();
+    return FormSummary.fromJson(<String, dynamic>{
+      ...metadata,
+      'id': formId,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
   }
 
   Future<List<Map<String, dynamic>>> _fetchRulesOrEmpty(String id) async {
     try {
-      return await _formsApi.fetchFormRules(id);
+      return await _projectFormsApi.fetchProjectFormRules(id);
     } on DioException catch (error) {
       if (_isMissingOptionalResource(error)) return const [];
       rethrow;
@@ -110,7 +130,7 @@ final class TechnicianFormRepository {
     final useCache = _shouldFallbackToCache(error);
     if (kDebugMode) {
       debugPrint(
-        '[FORM-LOAD] formId=$formId | online=${_connectivity.isOnline} | '
+        '[FORM-LOAD] project_form_id=$formId | online=${_connectivity.isOnline} | '
         'useCache=$useCache | error=$error',
       );
     }

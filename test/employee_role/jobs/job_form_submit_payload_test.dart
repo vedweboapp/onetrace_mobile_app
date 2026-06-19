@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
@@ -18,18 +20,52 @@ void main() {
     );
 
     expect(
-      payload.toJson(),
+      payload.toFormBody(),
       {
         'job_form_id': 6,
         'status': 'submitted',
         'remarks': 'Test Submission',
-        'values': [
+        'values': jsonEncode([
           {'field_id': 55, 'value': 'karan'},
           {'field_id': 56, 'value': 'karan@yopmail.com'},
           {'field_id': 19, 'value': 'In Progress'},
           {'field_id': 20, 'value': 'customer@yopmail.com'},
-        ],
+        ]),
       },
+    );
+  });
+
+  test('JobFormSubmitPayload encodes empty values as JSON array string', () {
+    const payload = JobFormSubmitPayload(
+      jobFormId: 14,
+      status: 'submitted',
+      values: [],
+    );
+
+    expect(payload.toFormBody()['values'], '[]');
+  });
+
+  test('prepareJobFormValuesForApi clamps answers to varchar(100)', () {
+    final values = prepareJobFormValuesForApi([
+      JobFormFieldValue(fieldId: 1, value: 'x' * 120),
+      JobFormFieldValue(
+        fieldId: 2,
+        value: jsonEncode({
+          'name': 'photo.jpg',
+          'path': '/data/user/0/${'x' * 200}/photo.jpg',
+        }),
+      ),
+    ]);
+
+    expect(values, hasLength(2));
+    expect(values.first.value.length, kJobFormApiValueMaxLength);
+    expect(values.last.value, 'photo.jpg');
+  });
+
+  test('prepareJobFormRemarksForApi clamps remarks to varchar(100)', () {
+    expect(
+      prepareJobFormRemarksForApi('a' * 150)?.length,
+      kJobFormApiValueMaxLength,
     );
   });
 

@@ -15,12 +15,15 @@ import 'package:red5/features/dashboard/data/job_models.dart';
 import 'package:red5/features/dashboard/data/job_write_payload.dart';
 import 'package:red5/features/dashboard/presentation/jobs_list_refresh.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/core/models/named_id_option.dart';
+import 'package:red5/features/forms/data/form_picker_utils.dart';
 import 'package:red5/features/forms/data/forms_api_client.dart';
 import 'package:red5/features/items/data/items_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/features/dashboard/presentation/widgets/forms_multi_picker_sheet.dart';
 import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
 /// Form to create a job (Job Details, Schedule, Materials, Forms, QR).
@@ -88,7 +91,7 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
   SiteModel? _selectedSite;
   UserProfileModel? _selectedWorker;
   NamedIdOption? _selectedJobStatus;
-  NamedIdOption? _selectedForm;
+  List<NamedIdOption> _selectedForms = const [];
   NamedIdOption? _selectedQrCode;
   GroupItemOption? _selectedGroup;
 
@@ -156,14 +159,12 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       _clientsLoadError = null;
     });
     final api = ref.read(quoteProjectApiClientProvider);
-    final formsApi = ref.read(formsApiClientProvider);
     final userApi = ref.read(userProfileApiClientProvider);
 
     var projects = const <ProjectOption>[];
     var clients = const <ClientOption>[];
     var workers = const <UserProfileModel>[];
     var jobStatuses = const <NamedIdOption>[];
-    var forms = const <NamedIdOption>[];
     var qrCodes = const <NamedIdOption>[];
     var groups = const <GroupItemOption>[];
     String? projectsError;
@@ -194,14 +195,6 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     }
 
     jobStatuses = await api.fetchJobStatusOptions();
-    try {
-      final formRows = await formsApi.fetchForms();
-      forms = formRows
-          .map((f) => NamedIdOption(id: f.id, name: f.name))
-          .toList(growable: false);
-    } catch (_) {
-      forms = const [];
-    }
     qrCodes = await api.fetchQrCodeOptions();
 
     try {
@@ -216,26 +209,30 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       _clients = clients;
       _workers = workers;
       _jobStatuses = jobStatuses;
-      _formOptions = forms;
       _qrCodeOptions = qrCodes;
       _groups = groups;
       _isLoadingProjects = false;
       _isLoadingClients = false;
       _isLoadingWorkers = false;
       _isLoadingJobStatuses = false;
-      _isLoadingForms = false;
       _isLoadingQrCodes = false;
       _isLoadingGroups = false;
       _projectsLoadError = projectsError;
       _clientsLoadError = clientsError;
       if (_selectedJobStatus == null && jobStatuses.isNotEmpty) {
-        _selectedJobStatus = jobStatuses.first;
+        _selectedJobStatus = _defaultToDoStatus(jobStatuses);
       }
       if (_selectedGroup == null && groups.isNotEmpty) {
         _selectedGroup = groups.first;
       }
       _applyInitialSelections();
     });
+    final projectId = int.tryParse(_effectiveProjectId);
+    if (projectId != null) {
+      await _loadProjectForms(projectId: projectId);
+    } else if (mounted) {
+      setState(() => _isLoadingForms = false);
+    }
     if (_isEditing) {
       await _loadJobForEdit();
     }
@@ -244,6 +241,57 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     }
     if (_selectedClient != null) {
       unawaited(_loadSitesForClient(_selectedClient!.id));
+    }
+  }
+
+  NamedIdOption? _defaultToDoStatus(List<NamedIdOption> statuses) {
+    for (final status in statuses) {
+      final name = status.name.trim().toLowerCase();
+      if (name == 'to do' || name == 'todo' || name.contains('to do')) {
+        return status;
+      }
+    }
+    return statuses.isNotEmpty ? statuses.first : null;
+  }
+
+  Future<void> _loadProjectForms({
+    required int projectId,
+    bool preserveSelection = false,
+  }) async {
+    final previousSelection =
+        preserveSelection ? List<NamedIdOption>.from(_selectedForms) : const <NamedIdOption>[];
+
+    setState(() {
+      _isLoadingForms = true;
+      if (!preserveSelection) {
+        _selectedForms = const [];
+      }
+    });
+
+    try {
+      final formRows = await ref
+          .read(formsApiClientProvider)
+          .fetchProjectForms(projectId: projectId);
+      final options = formRows.toActivePickerOptions();
+      if (!mounted) return;
+      setState(() {
+        _formOptions = options;
+        _isLoadingForms = false;
+        if (preserveSelection && previousSelection.isNotEmpty) {
+          _selectedForms = previousSelection
+              .where((picked) => options.any((option) => option.id == picked.id))
+              .toList(growable: false);
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _formOptions = const [];
+        _isLoadingForms = false;
+        if (!preserveSelection) {
+          _selectedForms = const [];
+        }
+      });
     }
   }
 
@@ -470,13 +518,19 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       }
     }
 
-    final formId = job.form ?? (job.formIds.isNotEmpty ? job.formIds.first : null);
-    if (formId != null) {
-      for (final f in _formOptions) {
-        if (f.id == formId) {
-          setState(() => _selectedForm = f);
-          break;
+    final linkedFormIds = JobRead.linkedFormTemplateIds(job.raw);
+    if (linkedFormIds.isNotEmpty) {
+      final picked = <NamedIdOption>[];
+      for (final formId in linkedFormIds) {
+        for (final f in _formOptions) {
+          if (f.id == formId) {
+            picked.add(f);
+            break;
+          }
         }
+      }
+      if (picked.isNotEmpty) {
+        setState(() => _selectedForms = picked);
       }
     }
 
@@ -518,6 +572,33 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
               ? map['quantity'] as int
               : int.tryParse('${map['quantity'] ?? ''}') ?? 1;
           if (id != null) compositeRows.add((id: id, quantity: qty));
+        }
+      }
+    }
+
+    if (compositeRows.isEmpty) {
+      final rawItems = job.jobMeta['composite_items'];
+      if (rawItems is List) {
+        for (final row in rawItems) {
+          if (row is! Map) continue;
+          final map = Map<String, dynamic>.from(
+            row.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          final id = map['id'] is int
+              ? map['id'] as int
+              : int.tryParse('${map['id'] ?? map['composite_item'] ?? ''}');
+          final qty = map['quantity'] is int
+              ? map['quantity'] as int
+              : int.tryParse('${map['quantity'] ?? ''}') ?? 1;
+          if (id != null) compositeRows.add((id: id, quantity: qty));
+          if (groupId == null && map['group'] is Map) {
+            final groupMap = Map<String, dynamic>.from(
+              (map['group'] as Map).map((k, v) => MapEntry(k.toString(), v)),
+            );
+            groupId = groupMap['id'] is int
+                ? groupMap['id'] as int
+                : int.tryParse('${groupMap['id'] ?? ''}');
+          }
         }
       }
     }
@@ -568,6 +649,7 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     setState(() {
       _selectedProject = project;
       _projectNameController.text = project?.name ?? '';
+      _selectedForms = const [];
       if (project?.clientId != null) {
         for (final c in _clients) {
           if (c.id == project!.clientId) {
@@ -579,6 +661,15 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       }
     });
     unawaited(_loadSitesForClient(_selectedClient?.id));
+    final projectId = int.tryParse(project?.id ?? '');
+    if (projectId != null) {
+      unawaited(_loadProjectForms(projectId: projectId));
+    } else {
+      setState(() {
+        _formOptions = const [];
+        _isLoadingForms = false;
+      });
+    }
   }
 
   void _onGroupSelected(GroupItemOption? group) {
@@ -698,12 +789,26 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
   }
 
   Map<String, dynamic> _buildCreateJobPayload() {
-    final firstMaterial = _materialLines.first;
-    final compositeRows = <({int id, int quantity})>[];
+    final compositeItems = <Map<String, dynamic>>[];
     for (final line in _materialLines) {
-      final itemId = line.compositeItem?.id;
-      if (itemId == null) continue;
-      compositeRows.add((id: itemId, quantity: line.quantity.round()));
+      final item = line.compositeItem;
+      if (item == null) continue;
+      final quantity = line.quantity.round();
+      final amount = line.lineTotal.round();
+      final groupId = item.groupId ?? _selectedGroup?.id;
+      final groupName = _selectedGroup?.name;
+      compositeItems.add(<String, dynamic>{
+        'id': item.id,
+        'quantity': quantity,
+        'name': item.name,
+        if (groupId != null)
+          'group': <String, dynamic>{
+            'id': groupId,
+            if (groupName != null && groupName.trim().isNotEmpty)
+              'name': groupName.trim(),
+          },
+        'amount': amount,
+      });
     }
     final scannedQrId = _scannedQrValue == null
         ? null
@@ -719,14 +824,11 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       client: _selectedClient?.id,
       project: int.tryParse(_effectiveProjectId),
       site: int.tryParse(_selectedSite?.id ?? ''),
-      form: _selectedForm?.id,
+      formIds: _selectedForms.map((form) => form.id).toList(growable: false),
       qrCode: _selectedQrCode?.id ?? scannedQrId,
-      jobMeta: JobWritePayload.buildMaterialsMeta(
-        sectionName: firstMaterial.sectionName,
-        plotName: _plotNameController.text,
-        plotTotal: _materialsSubtotal,
-        groupId: _selectedGroup?.id,
-        compositeItems: compositeRows,
+      jobMeta: JobWritePayload.buildCompositeJobMeta(
+        compositeItems: compositeItems,
+        total: _materialsSubtotal,
       ),
     );
   }
@@ -748,6 +850,33 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       }
     });
   }
+
+  Future<void> _pickForms() async {
+    if (_isLoadingForms) return;
+    if (_effectiveProjectId.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('Select a project first.')),
+      );
+      return;
+    }
+    if (_formOptions.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('No forms available for this project.')),
+      );
+      return;
+    }
+
+    final picked = await showFormsMultiPickerSheet(
+      context: context,
+      forms: _formOptions,
+      selected: _selectedForms,
+      description: 'Choose one or more forms to attach to this job.',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _selectedForms = picked);
+  }
+
+  String get _selectedFormsLabel => formatNamedIdSelectionLabel(_selectedForms);
 
   Future<void> _pickWorker() async {
     if (_workers.isEmpty) {
@@ -1497,20 +1626,17 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
               ),
             ),
             _sectionTitle('FORMS'),
-            _label('Select Form'),
-            _apiDropdownField<NamedIdOption>(
-              value: _selectedForm,
-              isLoading: _isLoadingForms,
-              hint: 'Choose form',
-              items: _formOptions
-                  .map(
-                    (f) => DropdownMenuItem<NamedIdOption>(
-                      value: f,
-                      child: Text(f.name, style: _dropdownValueStyle),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (f) => setState(() => _selectedForm = f),
+            _label('Select Forms'),
+            _pickerField(
+              value: _selectedFormsLabel,
+              placeholder: _isLoadingForms
+                  ? 'Loading forms...'
+                  : _effectiveProjectId.isEmpty
+                      ? 'Select a project first'
+                      : 'Choose forms',
+              onTap: _isLoadingForms || _effectiveProjectId.isEmpty
+                  ? () {}
+                  : _pickForms,
             ),
             _sectionTitle('IDENTIFICATION'),
             _label('QR Code'),

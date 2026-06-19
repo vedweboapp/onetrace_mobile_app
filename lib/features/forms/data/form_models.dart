@@ -17,18 +17,33 @@ final class FormSummary {
   final Map<String, dynamic> raw;
 
   factory FormSummary.fromJson(Map<String, dynamic> json) {
-    final idRaw = json['id'];
+    final nestedForm = json['form'];
+    final nestedMap = nestedForm is Map
+        ? Map<String, dynamic>.from(
+            nestedForm.map((k, v) => MapEntry(k.toString(), v)),
+          )
+        : const <String, dynamic>{};
+
+    final idRaw = json['id'] ?? json['project_form_id'] ?? nestedMap['id'];
     final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}') ?? 0;
     return FormSummary(
       id: id,
       name: _readString(json, const [
-        'form_name',
-        'name',
-        'title',
-        'label',
-      ]) ?? 'Form $id',
-      description: _readString(json, const ['description', 'details']),
-      isActive: _readBool(json['is_active']) ?? true,
+            'form_name',
+            'name',
+            'title',
+            'label',
+          ]) ??
+          _readString(nestedMap, const [
+            'form_name',
+            'name',
+            'title',
+            'label',
+          ]) ??
+          'Form $id',
+      description: _readString(json, const ['description', 'details']) ??
+          _readString(nestedMap, const ['description', 'details']),
+      isActive: _readBool(json['is_active']) ?? _readBool(nestedMap['is_active']) ?? true,
       raw: Map<String, dynamic>.from(json),
     );
   }

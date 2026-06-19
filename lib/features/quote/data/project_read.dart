@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'package:red5/features/forms/data/linked_form_ids.dart';
 import 'package:red5/features/sites/data/site_models.dart';
-
 @immutable
 final class ProjectRead {
   const ProjectRead({
@@ -82,15 +82,10 @@ final class ProjectRead {
       endDate: _readDate(map['end_date']),
       clientId: clientId,
       clientName: clientName,
-      formIds: _readIntList(map['form_ids']),
+      formIds: readLinkedTemplateFormIds(map),
       sites: sites,
       raw: Map<String, dynamic>.from(map),
     );
-  }
-
-  static List<int> _readIntList(dynamic value) {
-    if (value is! List) return const [];
-    return value.map(_readInt).whereType<int>().toList(growable: false);
   }
 
   static int? _readInt(dynamic value) {

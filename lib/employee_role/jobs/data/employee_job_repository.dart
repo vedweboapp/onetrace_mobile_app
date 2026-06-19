@@ -10,6 +10,7 @@ import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/dashboard/data/job_write_payload.dart';
 
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
@@ -96,9 +97,7 @@ final class EmployeeJobRepository {
 
   EmployeeJobDetail _mapJobRead(JobRead job) {
 
-    final formProgress = job.jobMeta['form_progress'];
-
-    final checklist = _checklistFromFormProgress(formProgress);
+    final checklist = _checklistFromJob(job);
 
     final items = _itemsFromJob(job);
 
@@ -426,75 +425,61 @@ final class EmployeeJobRepository {
 
 
 
-  List<EmployeeSafetyChecklistItem> _checklistFromFormProgress(
-
-    dynamic formProgress,
-
-  ) {
-
-    if (formProgress is! Map) {
-
-      return _defaultChecklist;
-
+  List<EmployeeSafetyChecklistItem> _checklistFromJob(JobRead job) {
+    final checklists = JobChecklistRead.tryFromMap(job.raw['checklists']) ??
+        job.checklists;
+    if (checklists == null || checklists.items.isEmpty) {
+      return const [];
     }
 
-    final map = Map<String, dynamic>.from(
+    return checklists.items
+        .map(
+          (item) => EmployeeSafetyChecklistItem(
+            id: item.id.toString(),
+            title: item.title,
+            isChecked: item.isChecked,
+            isRequired: item.isRequired,
+            sequence: item.sequence,
+          ),
+        )
+        .toList(growable: false);
+  }
 
-      formProgress.map((k, v) => MapEntry(k.toString(), v)),
-
+  /// Persists operative checklist completion via `PUT /jobs/{id}/`.
+  Future<JobRead> updateJobChecklists({
+    required int jobId,
+    required List<EmployeeSafetyChecklistItem> items,
+  }) async {
+    final job = await _jobsApi.fetchJobById(jobId.toString());
+    final payload = JobWritePayload.buildFromJobRead(
+      job,
+      checklists: _checklistWritePayload(items),
     );
 
-    if (map.isEmpty) return _defaultChecklist;
+    JobCompletionDebugLog.api(
+      label: 'Update job checklists',
+      method: 'PUT',
+      url: '/api/v1/jobs/$jobId/',
+      request: payload,
+    );
 
-    return map.entries
-
-        .map(
-
-          (entry) => EmployeeSafetyChecklistItem(
-
-            id: entry.key,
-
-            title: _humanizeKey(entry.key),
-
-            isChecked: entry.value == true ||
-
-                entry.value.toString().toLowerCase() == 'true',
-
-          ),
-
-        )
-
-        .toList(growable: false);
-
+    return _jobsApi.updateJob(jobId: jobId.toString(), payload: payload);
   }
 
-
-
-  static String _humanizeKey(String key) {
-
-    return key
-
-        .replaceAll('_', ' ')
-
-        .split(' ')
-
-        .where((part) => part.isNotEmpty)
-
-        .map(
-
-          (part) =>
-
-              '${part[0].toUpperCase()}${part.length > 1 ? part.substring(1) : ''}',
-
-        )
-
-        .join(' ');
-
-  }
-
-
-
-  static const _defaultChecklist = EmployeeJobPreStartSafetyChecklist.items;
+  List<Map<String, dynamic>> _checklistWritePayload(
+    List<EmployeeSafetyChecklistItem> items,
+  ) =>
+      items
+          .map(
+            (item) => JobChecklistItemRead(
+              id: int.tryParse(item.id) ?? 0,
+              title: item.title,
+              sequence: item.sequence,
+              isRequired: item.isRequired,
+              isChecked: item.isChecked,
+            ).toWriteJson(),
+          )
+          .toList(growable: false);
 
   static String _primaryActionLabel(EmployeeJobStatus status) {
     return switch (status) {
@@ -533,12 +518,11 @@ final class EmployeeJobRepository {
       JobCompletionDebugLog.info('job_status lookup failed — using completed_at only');
     }
 
-    final payload = job.toWritePayload()
-      ..['completed_at'] = DateTime.now().toUtc().toIso8601String()
-      ..['form'] = job.form;
-    if (completedStatusId != null) {
-      payload['job_status'] = completedStatusId;
-    }
+    final payload = JobWritePayload.buildFromJobRead(
+      job,
+      completedAt: DateTime.now(),
+      jobStatusOverride: completedStatusId,
+    );
 
     JobCompletionDebugLog.api(
       label: 'Mark job completed',

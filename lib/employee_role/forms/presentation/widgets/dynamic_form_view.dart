@@ -147,7 +147,15 @@ class DynamicFormViewState extends State<DynamicFormView> {
   }
 
   /// Validates all visible fields and returns `true` when valid.
-  bool validate() => _formKey.currentState?.validate() ?? false;
+  /// Forms with no input fields (empty/null metadata) always pass validation.
+  bool validate() {
+    if (!hasInputFields) return true;
+    return _formKey.currentState?.validate() ?? true;
+  }
+
+  /// Whether the form has any fields the operative can fill in.
+  bool get hasInputFields =>
+      _sections.any((section) => section.fields.isNotEmpty);
 
   /// Current field values keyed by [FormMetadataField.apiName].
   Map<String, dynamic> collectValues() {
@@ -179,18 +187,12 @@ class DynamicFormViewState extends State<DynamicFormView> {
           case _FieldKind.checkbox:
             values[key] = _boolValues[key] ?? false;
           case _FieldKind.image:
-            final file = _fileValues[key];
-            values[key] = file == null
-                ? null
-                : <String, dynamic>{
-                    'name': file.name,
-                    'path': file.path,
-                    'size_bytes': file.sizeBytes,
-                  };
+            values[key] = _fileValues[key]?.name;
           case _FieldKind.signature:
-            values[key] = signatureValueFromStrokes(
-              _signatureStrokes[key] ?? const [],
-            );
+            final strokes = _signatureStrokes[key] ?? const [];
+            values[key] = strokes.any((stroke) => stroke.length >= 2)
+                ? 'signed'
+                : null;
         }
       }
     }
@@ -1037,7 +1039,7 @@ class _EmptyMetadataState extends StatelessWidget {
               Icon(Icons.description_outlined, size: 40, color: AppColors.muted),
               const SizedBox(height: 8),
               Text(
-                'No fields configured for this form.',
+                'No fields configured for this form. You can still add remarks and save.',
                 textAlign: TextAlign.center,
                 style: AppFonts.bodyMedium(color: AppColors.muted),
               ),

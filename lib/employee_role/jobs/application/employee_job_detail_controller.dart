@@ -68,6 +68,10 @@ final class EmployeeJobDetailState {
 
   bool get hasMultipleForms => formIds.length > 1;
 
+  /// Every form currently linked to the job has been saved/submitted locally.
+  bool get allRequiredFormsComplete =>
+      formIds.isNotEmpty && formIds.every(completedFormIds.contains);
+
   String titleForForm(int formId) =>
       formTitles[formId]?.trim().isNotEmpty == true
       ? formTitles[formId]!.trim()
@@ -266,22 +270,88 @@ final class EmployeeJobDetailController
         formIds: formIds,
         assignments: assignments,
       );
-      if (completed.isEmpty) return;
       state = state.copyWith(
-        completedFormIds: {...state.completedFormIds, ...completed},
+        completedFormIds: completed
+            .where((formId) => formIds.contains(formId))
+            .toSet(),
       );
     } catch (_) {
       // Best-effort: local cache still drives completion when offline.
     }
   }
 
+  /// Re-fetches linked forms from the API (e.g. when new forms are attached mid-job).
+  Future<void> refreshAttachedForms() async {
+    final job = state.job;
+    if (job == null) return;
+
+    try {
+      final refreshedAssignments =
+          await _submissionRepository.refreshJobFormLinksFromApi(job.id);
+
+      var formIds = List<int>.from(state.formIds);
+      var formAssignments = List<JobFormAssignment>.from(job.formAssignments);
+      var formTitles = Map<int, String>.from(state.formTitles);
+
+      if (refreshedAssignments.isNotEmpty) {
+        formAssignments = JobFormAssignment.mergeByFormId(
+          formAssignments,
+          refreshedAssignments,
+        );
+        formIds = {
+          ...formIds,
+          ...refreshedAssignments.map((assignment) => assignment.formId),
+        }.toList(growable: false);
+      }
+
+      try {
+        final linked =
+            await _submissionRepository.fetchLinkedFormsRemote(job.id);
+        if (linked.isNotEmpty) {
+          formIds = {
+            ...formIds,
+            ...linked.map((form) => form.formId),
+          }.toList(growable: false);
+          formAssignments = JobFormAssignment.mergeByFormId(
+            formAssignments,
+            JobFormAssignment.fromLinkedForms(linked),
+          );
+          for (final row in linked) {
+            formTitles[row.formId] = row.name;
+          }
+        }
+      } catch (_) {
+        // Linked forms are best-effort.
+      }
+
+      state = state.copyWith(
+        job: job.copyWith(
+          formIds: formIds,
+          formAssignments: formAssignments,
+        ),
+        formIds: formIds,
+        formTitles: formTitles,
+      );
+
+      if (formIds.isNotEmpty) {
+        await _loadCompletedForms(job.id, formIds, formAssignments);
+      } else {
+        state = state.copyWith(completedFormIds: const {});
+      }
+
+      if (!state.allRequiredFormsComplete) {
+        _ref.read(employeeJobSessionProvider.notifier).reopenJob(job.id);
+      }
+    } catch (_) {
+      // Best-effort refresh when offline or API fails.
+    }
+  }
+
   Future<void> refreshCompletedForms() async {
+    await refreshAttachedForms();
     final job = state.job;
     if (job == null || state.formIds.isEmpty) return;
-    await Future.wait([
-      _loadCompletedForms(job.id, state.formIds, job.formAssignments),
-      _loadSubmissionIds(job.id, state.formIds),
-    ]);
+    await _loadSubmissionIds(job.id, state.formIds);
   }
 
   int? jobFormIdFor(int formTemplateId) {
@@ -295,9 +365,14 @@ final class EmployeeJobDetailController
   bool get isJobCompleted {
     final job = state.job;
     if (job == null) return false;
+    if (state.formIds.isNotEmpty && !state.allRequiredFormsComplete) {
+      return false;
+    }
     if (state.isJobCompleted) return true;
     return _ref.read(employeeJobSessionProvider.notifier).isJobCompleted(job.id);
   }
+
+  bool get allRequiredFormsComplete => state.allRequiredFormsComplete;
 
   Future<void> _loadSubmissionIds(int jobId, List<int> formIds) async {
     final ids = Map<int, int>.from(state.formSubmissionIds);

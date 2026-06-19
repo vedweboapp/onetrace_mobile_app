@@ -125,13 +125,94 @@ final class JobFormSubmitPayload {
   final String? remarks;
   final List<JobFormFieldValue> values;
 
-  Map<String, dynamic> toJson() => <String, dynamic>{
-        'job_form_id': jobFormId,
-        'status': status,
-        if (remarks != null && remarks!.trim().isNotEmpty)
-          'remarks': remarks!.trim(),
-        'values': values.map((v) => v.toJson()).toList(growable: false),
-      };
+  /// Wire body for `POST /jobs/{id}/submit-form/` (form-urlencoded).
+  Map<String, dynamic> toFormBody() {
+    final preparedValues = prepareJobFormValuesForApi(values);
+    final preparedRemarks = prepareJobFormRemarksForApi(remarks);
+    return <String, dynamic>{
+      'job_form_id': jobFormId,
+      'status': status,
+      if (preparedRemarks != null) 'remarks': preparedRemarks,
+      'values': encodeJobFormValuesField(preparedValues),
+    };
+  }
+
+  Map<String, dynamic> toJson() => toFormBody();
+}
+
+/// Each stored answer and remarks are `varchar(100)` on the API.
+const int kJobFormApiValueMaxLength = 100;
+
+/// API expects `values` as a JSON string (backend calls `json.loads` on it).
+String encodeJobFormValuesField(List<JobFormFieldValue> values) {
+  return jsonEncode(values.map((v) => v.toJson()).toList(growable: false));
+}
+
+List<JobFormFieldValue> prepareJobFormValuesForApi(
+  List<JobFormFieldValue> values,
+) {
+  return values
+      .map(
+        (row) => JobFormFieldValue(
+          fieldId: row.fieldId,
+          value: clampJobFormFieldValueForApi(row.value),
+        ),
+      )
+      .where((row) => row.fieldId > 0 && row.value.trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+String? prepareJobFormRemarksForApi(String? remarks) {
+  final trimmed = remarks?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return clampJobFormFieldValueForApi(trimmed);
+}
+
+String clampJobFormFieldValueForApi(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+  if (trimmed.length <= kJobFormApiValueMaxLength) return trimmed;
+
+  if (trimmed.startsWith('{')) {
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        final name = decoded['name']?.toString().trim();
+        if (name != null && name.isNotEmpty) {
+          return _truncateJobFormApiValue(name);
+        }
+        if (decoded['signed'] == true) return 'signed';
+      }
+    } catch (_) {}
+  }
+
+  return _truncateJobFormApiValue(trimmed);
+}
+
+String _truncateJobFormApiValue(String value) {
+  if (value.length <= kJobFormApiValueMaxLength) return value;
+  return value.substring(0, kJobFormApiValueMaxLength);
+}
+
+List<JobFormFieldValue> decodeJobFormValuesField(dynamic raw) {
+  if (raw == null) return const [];
+  dynamic decoded = raw;
+  if (raw is String) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return const [];
+    decoded = jsonDecode(trimmed);
+  }
+  if (decoded is! List) return const [];
+  return decoded
+      .whereType<Map>()
+      .map(
+        (entry) => JobFormFieldValue.fromJson(
+          Map<String, dynamic>.from(
+            entry.map((k, v) => MapEntry(k.toString(), v)),
+          ),
+        ),
+      )
+      .toList(growable: false);
 }
 
 /// Body for `PUT /jobs/{jobId}/submitted-forms/{submissionId}/update/`.
@@ -147,12 +228,17 @@ final class JobFormUpdatePayload {
   final String? remarks;
   final List<JobFormFieldValue> values;
 
-  Map<String, dynamic> toJson() => <String, dynamic>{
-        'status': status,
-        if (remarks != null && remarks!.trim().isNotEmpty)
-          'remarks': remarks!.trim(),
-        'values': values.map((v) => v.toJson()).toList(growable: false),
-      };
+  Map<String, dynamic> toFormBody() {
+    final preparedValues = prepareJobFormValuesForApi(values);
+    final preparedRemarks = prepareJobFormRemarksForApi(remarks);
+    return <String, dynamic>{
+      'status': status,
+      if (preparedRemarks != null) 'remarks': preparedRemarks,
+      'values': encodeJobFormValuesField(preparedValues),
+    };
+  }
+
+  Map<String, dynamic> toJson() => toFormBody();
 }
 
 enum JobFormSubmissionSyncStatus { pending, synced, failed }
@@ -411,19 +497,7 @@ int? _readSubmissionId(Map<String, dynamic> map, {int? formId}) {
 }
 
 List<JobFormFieldValue> _parseFieldValues(dynamic valuesRaw) {
-  final values = <JobFormFieldValue>[];
-  if (valuesRaw is! List) return values;
-  for (final entry in valuesRaw) {
-    if (entry is! Map) continue;
-    values.add(
-      JobFormFieldValue.fromJson(
-        Map<String, dynamic>.from(
-          entry.map((k, v) => MapEntry(k.toString(), v)),
-        ),
-      ),
-    );
-  }
-  return values;
+  return decodeJobFormValuesField(valuesRaw);
 }
 
 List<JobFormAssignment> _parseFormsList(dynamic raw) {

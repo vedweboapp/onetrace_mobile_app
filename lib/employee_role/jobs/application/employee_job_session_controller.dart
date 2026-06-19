@@ -230,6 +230,13 @@ final class EmployeeJobSessionController
     }
   }
 
+  /// Clears local "completed" state when new required forms are attached mid-job.
+  void reopenJob(int jobId) {
+    final completed = _readCompletedJobIds();
+    if (!completed.remove(jobId)) return;
+    unawaited(_persistCompleted(completed));
+  }
+
   /// Maps API status using local start/completion state from the operative flow.
   EmployeeJobStatus resolveStatus({
     required int jobId,

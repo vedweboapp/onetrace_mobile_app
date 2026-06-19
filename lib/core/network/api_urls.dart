@@ -118,6 +118,9 @@ abstract final class AppApiUrls {
   /// `GET` [project_read] · `PUT` [project_update] · `PATCH` [project_partial_update] · `DELETE` [project_delete]
   static String projectById(String id) => '$_v1/project/$id/';
 
+  /// `GET` jobs linked to a project — `GET /project/{id}/jobs/`.
+  static String projectJobs(String projectId) => '$_v1/project/$projectId/jobs/';
+
   /// `GET` list · `POST` create — server route is singular `invoice/`.
   static const String invoices = '$_v1/invoice/';
 
@@ -194,6 +197,22 @@ abstract final class AppApiUrls {
 
   /// `POST` add section to a form
   static String formSections(String formId) => '$_v1/forms/$formId/section/';
+
+  // ─── Project forms (operative / technician) ───────────────────────────────
+
+  /// `GET` project forms for a project — `GET /project-forms/?project_id=`.
+  static const String projectForms = '$_v1/project-forms/';
+
+  /// `GET` project form template linked to a project (`project_form_id`).
+  static String projectFormById(String id) => '$_v1/project-forms/$id/';
+
+  /// `GET` operative form layout — `GET /project-forms/{id}/metadata/`.
+  static String projectFormMetadataById(String id) =>
+      '$_v1/project-forms/$id/metadata/';
+
+  /// `GET` project form validation rules.
+  static String projectFormRules(String formId) =>
+      '$_v1/project-forms/$formId/rules/';
 
   /// `GET` [qr_codes_list] · `POST` [qr_codes_create]
   static const String qrCodes = '$_v1/qr-codes/';

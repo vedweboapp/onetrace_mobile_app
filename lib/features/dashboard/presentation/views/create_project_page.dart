@@ -9,8 +9,12 @@ import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
+import 'package:red5/core/models/named_id_option.dart';
 import 'package:red5/features/dashboard/presentation/widgets/create_project_type_dialog.dart';
+import 'package:red5/features/dashboard/presentation/widgets/forms_multi_picker_sheet.dart';
 import 'package:red5/features/dashboard/presentation/widgets/project_type_picker_sheet.dart';
+import 'package:red5/features/forms/data/form_picker_utils.dart';
+import 'package:red5/features/forms/data/forms_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/site_models.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
@@ -52,6 +56,11 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
   List<NamedIdOption> _projectTypes = const [];
   NamedIdOption? _selectedProjectType;
 
+  bool _isLoadingForms = false;
+  String? _formsError;
+  List<NamedIdOption> _formOptions = const [];
+  List<NamedIdOption> _selectedForms = const [];
+
   bool _isLoadingSites = false;
   String? _sitesError;
   List<SiteModel> _sites = const [];
@@ -79,15 +88,20 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
     setState(() {
       _isLoadingClients = true;
       _isLoadingProjectTypes = true;
+      _isLoadingForms = true;
       _clientsError = null;
       _projectTypesError = null;
+      _formsError = null;
     });
 
     final api = ref.read(quoteProjectApiClientProvider);
+    final formsApi = ref.read(formsApiClientProvider);
     var clients = const <ClientOption>[];
     var projectTypes = const <NamedIdOption>[];
+    var forms = const <NamedIdOption>[];
     String? clientsError;
     String? projectTypesError;
+    String? formsError;
 
     try {
       clients = await api.fetchClients();
@@ -107,14 +121,27 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
       );
     }
 
+    try {
+      final formRows = await formsApi.fetchForms();
+      forms = formRows.toActivePickerOptions();
+    } catch (e) {
+      formsError = ApiResponseMessage.fromAnyError(
+        e,
+        genericFallback: 'Failed to load forms',
+      );
+    }
+
     if (!mounted) return;
     setState(() {
       _clients = clients;
       _projectTypes = projectTypes;
+      _formOptions = forms;
       _clientsError = clientsError;
       _projectTypesError = projectTypesError;
+      _formsError = formsError;
       _isLoadingClients = false;
       _isLoadingProjectTypes = false;
+      _isLoadingForms = false;
 
       final incomingId = widget.preselectedClientId;
       if (_selectedClient == null && incomingId != null) {
@@ -191,6 +218,27 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
     if (created == null || !mounted) return;
     await _loadProjectTypes(select: created);
   }
+
+  Future<void> _pickForms() async {
+    if (_isLoadingForms) return;
+    if (_formOptions.isEmpty) {
+      context.showTopSnackBar(
+        const SnackBar(content: Text('No forms available to select.')),
+      );
+      return;
+    }
+
+    final picked = await showFormsMultiPickerSheet(
+      context: context,
+      forms: _formOptions,
+      selected: _selectedForms,
+      description: 'Choose one or more forms to link with this project.',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _selectedForms = picked);
+  }
+
+  String get _selectedFormsLabel => formatNamedIdSelectionLabel(_selectedForms);
 
   Future<void> _loadSitesForClient(int? clientId) async {
     setState(() {
@@ -325,6 +373,7 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
         description: _descriptionController.text.trim(),
         startDate: _formatForApi(_startDate!),
         endDate: _formatForApi(_endDate!),
+        forms: _selectedForms.map((form) => form.id).toList(growable: false),
       );
       if (!mounted) return;
       context.showSuccessTopPopup(
@@ -551,6 +600,64 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
     );
   }
 
+  Widget _formsField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: _isLoadingForms ? null : _pickForms,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.textFieldBorder),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _isLoadingForms
+                        ? 'Loading forms...'
+                        : (_selectedFormsLabel.isEmpty
+                            ? 'Choose forms'
+                            : _selectedFormsLabel),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _selectedFormsLabel.isEmpty
+                        ? _dropdownHintStyle
+                        : _dropdownValueStyle,
+                  ),
+                ),
+                if (_isLoadingForms)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  const Icon(
+                    Icons.keyboard_arrow_down,
+                    color: AppColors.muted,
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (_formsError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              _formsError!,
+              style: AppFonts.bodySmall(color: AppColors.danger),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _sectionTitle(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -722,6 +829,9 @@ class _CreateProjectPageState extends ConsumerState<CreateProjectPage> {
             const SizedBox(height: 14),
             _label('Project Type', required: true),
             _projectTypeField(),
+            const SizedBox(height: 14),
+            _label('Forms'),
+            _formsField(),
             const SizedBox(height: 14),
             _label('Client', required: true),
             _apiDropdownField<ClientOption>(

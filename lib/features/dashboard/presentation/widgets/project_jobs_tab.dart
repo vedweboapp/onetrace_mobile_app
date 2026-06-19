@@ -183,9 +183,14 @@ class _ProjectJobsTabState extends ConsumerState<ProjectJobsTab> {
       _errorMessage = null;
     });
     try {
-      final rows = await ref
-          .read(quoteProjectApiClientProvider)
-          .fetchAllJobs(search: _searchController.text.trim(), pageSize: 50);
+      final projectId = widget.projectId.trim();
+      final rows = projectId.isEmpty
+          ? const <JobRead>[]
+          : await ref.read(quoteProjectApiClientProvider).fetchAllProjectJobs(
+                projectId: projectId,
+                search: _searchController.text.trim(),
+                pageSize: 50,
+              );
       if (!mounted) return;
       setState(() {
         _jobs = rows.map(ProjectJobListItem.fromApi).toList(growable: false);

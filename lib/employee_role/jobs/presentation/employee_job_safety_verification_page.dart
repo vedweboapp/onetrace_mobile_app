@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
 
 class EmployeeJobSafetyVerificationPage extends ConsumerStatefulWidget {
@@ -22,17 +25,59 @@ class EmployeeJobSafetyVerificationPage extends ConsumerStatefulWidget {
 
 class _EmployeeJobSafetyVerificationPageState
     extends ConsumerState<EmployeeJobSafetyVerificationPage> {
-  late List<EmployeeSafetyChecklistItem> _items;
+  List<EmployeeSafetyChecklistItem> _items = const [];
+  bool _isLoading = true;
+  bool _isSubmitting = false;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _items = EmployeeJobPreStartSafetyChecklist.items
-        .map((item) => item.copyWith(isChecked: false))
-        .toList(growable: true);
+    Future.microtask(_loadChecklist);
   }
 
-  bool get _allChecked => _items.every((item) => item.isChecked);
+  Future<void> _loadChecklist() async {
+    final jobId = widget.jobId;
+    if (jobId == null) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Job not found.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final job = await ref.read(employeeJobRepositoryProvider).fetchJobDetail(
+            jobId: jobId,
+          );
+      if (!mounted) return;
+      setState(() {
+        _items = job.safetyChecklist;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = ApiResponseMessage.fromAnyError(
+          error,
+          genericFallback: 'Could not load checklist.',
+        );
+      });
+    }
+  }
+
+  bool get _allRequiredChecked {
+    final requiredItems =
+        _items.where((item) => item.isRequired).toList(growable: false);
+    if (requiredItems.isEmpty) return true;
+    return requiredItems.every((item) => item.isChecked);
+  }
 
   void _toggleItem(String id) {
     setState(() {
@@ -43,15 +88,39 @@ class _EmployeeJobSafetyVerificationPageState
     });
   }
 
-  void _startJob() {
+  Future<void> _startJob() async {
     final jobId = widget.jobId;
-    if (jobId == null || !_allChecked) return;
+    if (jobId == null || !_allRequiredChecked || _isSubmitting) return;
 
-    ref.read(employeeJobSessionProvider.notifier).startJob(jobId);
-    context.pushReplacement(
-      EmployeeJobDetailsPage.path,
-      extra: <String, Object?>{'jobId': jobId},
-    );
+    setState(() => _isSubmitting = true);
+    try {
+      if (_items.isNotEmpty) {
+        await ref.read(employeeJobRepositoryProvider).updateJobChecklists(
+              jobId: jobId,
+              items: _items,
+            );
+      }
+
+      ref.read(employeeJobSessionProvider.notifier).startJob(jobId);
+      if (!mounted) return;
+      context.pushReplacement(
+        EmployeeJobDetailsPage.path,
+        extra: <String, Object?>{'jobId': jobId},
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              error,
+              genericFallback: 'Could not save checklist. Please try again.',
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -90,7 +159,7 @@ class _EmployeeJobSafetyVerificationPageState
             ),
             const SizedBox(width: 10),
             Text(
-              'Safety Checklist',
+              'Job Checklist',
               style: AppFonts.titleSmall(
                 color: AppColors.inkStrong,
               ).copyWith(fontWeight: FontWeight.w900),
@@ -116,20 +185,34 @@ class _EmployeeJobSafetyVerificationPageState
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Ensure all safety protocols are followed before starting the operation.',
+                  'Complete every required checklist item before starting the job.',
                   style: AppFonts.bodyMedium(
                     color: AppColors.muted,
                   ).copyWith(fontWeight: FontWeight.w500, height: 1.4),
                 ),
                 const SizedBox(height: 28),
-                for (final item in _items) ...[
-                  _SafetyCheckRow(
-                    title: item.title,
-                    isChecked: item.isChecked,
-                    onTap: () => _toggleItem(item.id),
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                if (_isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else if (_errorMessage != null)
+                  Text(
+                    _errorMessage!,
+                    style: AppFonts.bodyMedium(color: AppColors.error),
+                  )
+                else if (_items.isEmpty)
+                  Text(
+                    'No checklist items for this job.',
+                    style: AppFonts.bodyMedium(color: AppColors.muted),
+                  )
+                else
+                  for (final item in _items) ...[
+                    _SafetyCheckRow(
+                      title: item.title,
+                      isChecked: item.isChecked,
+                      isRequired: item.isRequired,
+                      onTap: () => _toggleItem(item.id),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
               ],
             ),
           ),
@@ -148,7 +231,10 @@ class _EmployeeJobSafetyVerificationPageState
                       width: double.infinity,
                       height: 52,
                       child: FilledButton(
-                        onPressed: _allChecked ? _startJob : null,
+                        onPressed:
+                            !_isLoading && _allRequiredChecked && !_isSubmitting
+                                ? _startJob
+                                : null,
                         style: FilledButton.styleFrom(
                           backgroundColor: AppColors.inkStrong,
                           disabledBackgroundColor: const Color(0xFFB8B8BE),
@@ -158,12 +244,21 @@ class _EmployeeJobSafetyVerificationPageState
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        child: Text(
-                          'Start Job',
-                          style: AppFonts.titleSmall(
-                            color: AppColors.white,
-                          ).copyWith(fontWeight: FontWeight.w900),
-                        ),
+                        child: _isSubmitting
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.white,
+                                ),
+                              )
+                            : Text(
+                                'Start Job',
+                                style: AppFonts.titleSmall(
+                                  color: AppColors.white,
+                                ).copyWith(fontWeight: FontWeight.w900),
+                              ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -171,9 +266,11 @@ class _EmployeeJobSafetyVerificationPageState
                       width: double.infinity,
                       height: 52,
                       child: OutlinedButton(
-                        onPressed: () {
-                          if (context.canPop()) context.pop();
-                        },
+                        onPressed: _isSubmitting
+                            ? null
+                            : () {
+                                if (context.canPop()) context.pop();
+                              },
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.inkStrong,
                           side: const BorderSide(color: AppColors.inkStrong),
@@ -204,11 +301,13 @@ class _SafetyCheckRow extends StatelessWidget {
   const _SafetyCheckRow({
     required this.title,
     required this.isChecked,
+    required this.isRequired,
     required this.onTap,
   });
 
   final String title;
   final bool isChecked;
+  final bool isRequired;
   final VoidCallback onTap;
 
   @override
@@ -228,11 +327,24 @@ class _SafetyCheckRow extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  title,
-                  style: AppFonts.bodyLarge(
-                    color: AppColors.inkStrong,
-                  ).copyWith(fontWeight: FontWeight.w600),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppFonts.bodyLarge(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    if (isRequired)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Required',
+                          style: AppFonts.labelSmall(color: AppColors.muted),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 12),

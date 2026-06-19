@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/features/forms/data/form_models.dart';
 
@@ -34,15 +35,50 @@ final class FormsApiClient {
           'page_size': pageSize,
         },
       );
-      final root = _coerceMap(response.data);
-      final rows = _readRows(root);
-      for (final row in rows) {
-        final map = _coerceMap(row);
+      final root = readApiMap(response.data);
+      final rows = readApiRows(root);
+      for (final map in rows) {
         final form = FormSummary.fromJson(map);
         if (form.id <= 0 || !seen.add(form.id)) continue;
         out.add(form);
       }
-      if (!_hasNextPage(root, rows)) break;
+      if (!readApiHasNextPage(root) || rows.isEmpty) break;
+      currentPage += 1;
+    }
+
+    return out;
+  }
+
+  /// `GET /project-forms/?project_id=` — forms linked to a project.
+  Future<List<FormSummary>> fetchProjectForms({
+    required int projectId,
+    int page = 1,
+    int pageSize = 20,
+    bool isActive = true,
+  }) async {
+    final out = <FormSummary>[];
+    final seen = <int>{};
+    var currentPage = page;
+
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.projectForms,
+        queryParameters: <String, dynamic>{
+          'project_id': projectId,
+          'page': currentPage,
+          'page_size': pageSize,
+          'is_active': isActive,
+        },
+      );
+      final root = readApiMap(response.data);
+      final rows = readApiRows(root);
+      for (final map in rows) {
+        final form = FormSummary.fromJson(map);
+        if (form.id <= 0 || !seen.add(form.id)) continue;
+        if (isActive && !form.isActive) continue;
+        out.add(form);
+      }
+      if (!readApiHasNextPage(root) || rows.isEmpty) break;
       currentPage += 1;
     }
 

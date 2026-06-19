@@ -23,6 +23,7 @@ import 'package:red5/features/dashboard/data/crm_quotes_api_client.dart';
 import 'package:red5/features/dashboard/data/organization_settings_api_client.dart';
 import 'package:red5/features/dashboard/data/qr_codes_api_client.dart';
 import 'package:red5/features/forms/data/forms_api_client.dart';
+import 'package:red5/employee_role/forms/data/operative_project_forms_api_client.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_forms_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
@@ -337,6 +338,24 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return FormsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<OperativeProjectFormsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return OperativeProjectFormsApiClient(dio: dio);
   });
 
   sl.registerLazySingleton<QrCodesApiClient>(() {

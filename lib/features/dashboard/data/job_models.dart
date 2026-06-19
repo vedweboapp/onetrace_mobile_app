@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import 'package:red5/features/forms/data/linked_form_ids.dart';
+
 final class JobRead {
   const JobRead({
     required this.id,
@@ -37,6 +40,7 @@ final class JobRead {
     this.siteName,
     this.organization,
     this.qrCode,
+    this.checklists,
     this.raw = const <String, dynamic>{},
   });
 
@@ -77,6 +81,7 @@ final class JobRead {
   final String? siteName;
   final int? organization;
   final int? qrCode;
+  final JobChecklistRead? checklists;
   final Map<String, dynamic> raw;
 
   String get displayId => 'JB-$id';
@@ -105,10 +110,10 @@ final class JobRead {
 
   String get displayStatus {
     if (completedAt != null) return 'Completed';
-    final direct = pinStatusName?.trim();
-    if (direct != null && direct.isNotEmpty) return direct;
-    final pinStatus = jobPinStatus?.trim();
-    if (pinStatus != null && pinStatus.isNotEmpty) return pinStatus;
+    final statusName = jobPinStatus?.trim();
+    if (statusName != null && statusName.isNotEmpty) return statusName;
+    final pin = pinStatusName?.trim();
+    if (pin != null && pin.isNotEmpty) return pin;
     return 'Active';
   }
 
@@ -152,7 +157,7 @@ final class JobRead {
       pin: _readInt(map['pin']),
       quotation: _readInt(map['quotation']),
       form: _readInt(map['form']) ?? _readFirstFormId(map['forms']),
-      formIds: _readIntList(map['form_ids']),
+      formIds: readLinkedTemplateFormIds(map),
       assignedWorker: _readFkId(map['assigned_worker']),
       jobStatus: _readFkId(map['job_status']),
       client: _readFkId(map['client']),
@@ -163,27 +168,9 @@ final class JobRead {
       siteName: siteName,
       organization: _readInt(map['organization']),
       qrCode: _readInt(map['qr_code']),
+      checklists: JobChecklistRead.tryFromMap(map['checklists']),
       raw: Map<String, dynamic>.from(map),
     );
-  }
-
-  Map<String, dynamic> toWritePayload({Map<String, dynamic>? jobMetaOverride}) {
-    return <String, dynamic>{
-      'title': title,
-      if (description != null && description!.trim().isNotEmpty)
-        'description': description,
-      if (startDate != null) 'start_date': startDate!.toUtc().toIso8601String(),
-      if (endDate != null) 'end_date': endDate!.toUtc().toIso8601String(),
-      if (comments != null && comments!.trim().isNotEmpty) 'comments': comments,
-      if (assignedWorker != null) 'assigned_worker': assignedWorker,
-      if (jobStatus != null) 'job_status': jobStatus,
-      if (client != null) 'client': client,
-      if (project != null) 'project': project,
-      if (site != null) 'site': site,
-      if (form != null) 'form': form,
-      if (qrCode != null) 'qr_code': qrCode,
-      'job_meta': jobMetaOverride ?? jobMeta,
-    };
   }
 
   static int? _readFkId(dynamic value) {
@@ -218,10 +205,8 @@ final class JobRead {
     return _readString(map, const ['status_name', 'name', 'label']);
   }
 
-  static List<int> _readIntList(dynamic value) {
-    if (value is! List) return const [];
-    return value.map(_readInt).whereType<int>().toList(growable: false);
-  }
+  static List<int> linkedFormTemplateIds(Map<String, dynamic> map) =>
+      readLinkedTemplateFormIds(map);
 
   static int? _readFirstFormId(dynamic value) {
     if (value is! List || value.isEmpty) return null;
@@ -286,6 +271,119 @@ final class JobRead {
       );
     }
     return const <String, dynamic>{};
+  }
+}
+
+@immutable
+final class JobChecklistItemRead {
+  const JobChecklistItemRead({
+    required this.id,
+    required this.title,
+    required this.sequence,
+    required this.isRequired,
+    required this.isChecked,
+    this.checkedAt,
+  });
+
+  final int id;
+  final String title;
+  final int sequence;
+  final bool isRequired;
+  final bool isChecked;
+  final DateTime? checkedAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'id': id,
+        'title': title,
+        'sequence': sequence,
+        'is_required': isRequired,
+        'is_checked': isChecked,
+        if (checkedAt != null) 'checked_at': checkedAt!.toUtc().toIso8601String(),
+      };
+
+  /// `PUT /jobs/{id}/` checklist rows use `checklist_id` (GET returns it as `id`).
+  Map<String, dynamic> toWriteJson({DateTime? checkedAtOverride}) =>
+      <String, dynamic>{
+        'checklist_id': id,
+        'is_checked': isChecked,
+        if (isChecked)
+          'checked_at': (checkedAtOverride ?? checkedAt ?? DateTime.now().toUtc())
+              .toUtc()
+              .toIso8601String(),
+      };
+
+  static JobChecklistItemRead? tryFromMap(Map<String, dynamic> map) {
+    final id = JobRead._readInt(map['checklist_id']) ?? JobRead._readInt(map['id']);
+    if (id == null) return null;
+    return JobChecklistItemRead(
+      id: id,
+      title: JobRead._readString(map, const ['title']) ?? 'Checklist item',
+      sequence: JobRead._readInt(map['sequence']) ?? 0,
+      isRequired: JobRead._readBool(map['is_required']) ?? true,
+      isChecked: JobRead._readBool(map['is_checked']) ?? false,
+      checkedAt: JobRead._readDate(map['checked_at']),
+    );
+  }
+}
+
+@immutable
+final class JobChecklistRead {
+  const JobChecklistRead({
+    required this.isMarked,
+    required this.items,
+  });
+
+  final bool isMarked;
+  final List<JobChecklistItemRead> items;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'is_marked': isMarked,
+        'items': items.map((item) => item.toJson()).toList(growable: false),
+      };
+
+  /// `PUT /jobs/{id}/` expects `checklists` as a list of item objects.
+  List<Map<String, dynamic>> toWriteList({DateTime? checkedAtOverride}) =>
+      items
+          .map((item) => item.toWriteJson(checkedAtOverride: checkedAtOverride))
+          .toList(growable: false);
+
+  static List<JobChecklistItemRead> parseItems(dynamic raw) {
+    if (raw is List) {
+      final items = <JobChecklistItemRead>[];
+      for (final entry in raw) {
+        if (entry is! Map) continue;
+        final parsed = JobChecklistItemRead.tryFromMap(
+          Map<String, dynamic>.from(
+            entry.map((k, v) => MapEntry(k.toString(), v)),
+          ),
+        );
+        if (parsed != null) items.add(parsed);
+      }
+      items.sort((a, b) => a.sequence.compareTo(b.sequence));
+      return items;
+    }
+    return const [];
+  }
+
+  static JobChecklistRead? tryFromMap(dynamic raw) {
+    if (raw is List) {
+      final items = parseItems(raw);
+      if (items.isEmpty) return null;
+      return JobChecklistRead(
+        isMarked: items.every((item) => !item.isRequired || item.isChecked),
+        items: items,
+      );
+    }
+    if (raw is! Map) return null;
+    final map = Map<String, dynamic>.from(
+      raw.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    final items = parseItems(map['items']);
+    if (items.isEmpty) return null;
+    return JobChecklistRead(
+      isMarked: JobRead._readBool(map['is_marked']) ?? false,
+      items: items,
+    );
   }
 }
 

@@ -248,9 +248,8 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
   }
 
   Future<void> _saveForm() async {
-    final formState = _dynamicFormKey.currentState;
-    if (formState == null) return;
-    if (!formState.validate()) {
+    final dynamicForm = _dynamicFormKey.currentState;
+    if (dynamicForm != null && !dynamicForm.validate()) {
       context.showTopSnackBar(
         const SnackBar(content: Text('Please complete all required fields.')),
       );
@@ -269,7 +268,7 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
 
     setState(() => _isSubmitting = true);
     try {
-      final values = formState.collectApiValues();
+      final values = dynamicForm?.collectApiValues() ?? const [];
       final remarks = _remarksController.text.trim();
       final job = ref.read(employeeJobDetailControllerProvider).job;
       final jobFormId = await _resolveJobFormId(jobId);

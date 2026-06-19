@@ -13,6 +13,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/dashboard/data/job_write_payload.dart';
 import 'package:red5/features/dashboard/data/quote_summary.dart';
 import 'package:red5/features/dashboard/presentation/views/add_job_page.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
@@ -361,9 +362,10 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
     if (job == null || _isUpdatingJob) return;
     setState(() => _isUpdatingJob = true);
     try {
-      final payload = job.toWritePayload()
-        ..['qr_code'] = qrId
-        ..['form'] = job.form;
+      final payload = JobWritePayload.buildFromJobRead(
+        job,
+        qrCodeOverride: qrId,
+      );
       final updated = await ref
           .read(quoteProjectApiClientProvider)
           .updateJob(jobId: job.id.toString(), payload: payload);
