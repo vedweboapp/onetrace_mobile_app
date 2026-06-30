@@ -284,6 +284,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
       blockName: _blockName?.trim(),
       levelName: level.isEmpty ? null : level,
       zoneLabel: (plotName ?? '').trim().isEmpty ? null : plotName!.trim(),
+      status: 'To Do',
       droppedAt: DateTime.now(),
     );
   }
@@ -889,7 +890,7 @@ class _QuoteProjectPageState extends ConsumerState<QuoteProjectPage> {
     final id = _asDouble(idRaw)?.round() ?? 1;
     if (id == 2) return 'In Progress';
     if (id == 3) return 'Done';
-    return 'Pending';
+    return 'To Do';
   }
 
   String _groupFromId(dynamic idRaw) {

@@ -9,8 +9,9 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/dashboard/data/project_jobs_tree_models.dart';
 import 'package:red5/features/dashboard/presentation/views/add_job_page.dart';
-import 'package:red5/features/dashboard/presentation/views/job_details_page.dart';
+import 'package:red5/features/dashboard/presentation/views/project_level_jobs_page.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 enum ProjectJobStatus { inProgress, completed, pending }
@@ -39,7 +40,7 @@ extension ProjectJobStatusX on ProjectJobStatus {
   }
 }
 
-/// One job row on the project Jobs tab (title, worker, location, dates, status).
+/// One job row on the global jobs list (flat `GET /jobs/`).
 class ProjectJobListItem {
   const ProjectJobListItem({
     required this.id,
@@ -75,11 +76,7 @@ class ProjectJobListItem {
 
   final String id;
   final String title;
-
-  /// e.g. "Worker 3"
   final String workerLabel;
-
-  /// e.g. "Block A, L02"
   final String locationLabel;
   final DateTime startDate;
   final DateTime endDate;
@@ -122,7 +119,17 @@ String _initialsFor(String value) {
       .toUpperCase();
 }
 
-/// Jobs list for [ProjectDetailsPage] — matches design (worker, location, status).
+int _levelJobCount(ProjectJobsLevel level) {
+  var count = 0;
+  for (final plot in level.plots) {
+    count += plot.jobs.length;
+  }
+  return count;
+}
+
+int _plotCount(ProjectJobsLevel level) => level.plots.length;
+
+/// Jobs tab on [ProjectDetailsPage] — level list → plot/job detail screen.
 class ProjectJobsTab extends ConsumerStatefulWidget {
   const ProjectJobsTab({
     super.key,
@@ -142,11 +149,13 @@ class ProjectJobsTab extends ConsumerStatefulWidget {
 }
 
 class _ProjectJobsTabState extends ConsumerState<ProjectJobsTab> {
+  static const _surfaceGrey = Color(0xFFF9FAFB);
+
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
   bool _isLoading = false;
   String? _errorMessage;
-  List<ProjectJobListItem> _jobs = const [];
+  ProjectJobsTree _tree = const ProjectJobsTree();
 
   @override
   void initState() {
@@ -184,16 +193,15 @@ class _ProjectJobsTabState extends ConsumerState<ProjectJobsTab> {
     });
     try {
       final projectId = widget.projectId.trim();
-      final rows = projectId.isEmpty
-          ? const <JobRead>[]
-          : await ref.read(quoteProjectApiClientProvider).fetchAllProjectJobs(
+      final tree = projectId.isEmpty
+          ? const ProjectJobsTree()
+          : await ref.read(quoteProjectApiClientProvider).fetchProjectJobsTree(
                 projectId: projectId,
                 search: _searchController.text.trim(),
-                pageSize: 50,
               );
       if (!mounted) return;
       setState(() {
-        _jobs = rows.map(ProjectJobListItem.fromApi).toList(growable: false);
+        _tree = tree;
         _isLoading = false;
       });
     } catch (e) {
@@ -225,73 +233,117 @@ class _ProjectJobsTabState extends ConsumerState<ProjectJobsTab> {
     );
   }
 
-  void _onRowTap(ProjectJobListItem job) {
+  void _openLevel(ProjectJobsLevel level) {
     final projectId = widget.projectId.trim();
-    if (projectId.isEmpty) {
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Project id is missing.')),
-      );
-      return;
-    }
+    if (projectId.isEmpty) return;
     context.push(
-      JobDetailsPage.pathFor(projectId, Uri.encodeComponent(job.id)),
-      extra: <String, Object?>{
-        'jobId': job.id,
-        'jobTitle': job.title,
-        'projectName': (widget.projectName ?? '').trim(),
-        'clientName': (widget.clientName ?? '').trim(),
-        'workerName': job.workerLabel,
-        'startDate': job.startDate.toIso8601String(),
-        'scheduleDate': job.endDate.toIso8601String(),
-        'latitude': job.latitude,
-        'longitude': job.longitude,
-        'status': job.status == ProjectJobStatus.inProgress
-            ? 'Active'
-            : job.status.label,
-      },
+      ProjectLevelJobsPage.pathFor(projectId),
+      extra: ProjectLevelJobsArgs(
+        levelName: level.name,
+        plots: level.plots,
+        projectName: widget.projectName,
+        clientName: widget.clientName,
+      ),
+    );
+  }
+
+  void _openManualJobs() {
+    final projectId = widget.projectId.trim();
+    if (projectId.isEmpty || _tree.manualJobs.isEmpty) return;
+    context.push(
+      ProjectLevelJobsPage.pathFor(projectId),
+      extra: ProjectLevelJobsArgs(
+        levelName: 'Manual Jobs',
+        plots: [
+          ProjectJobsPlot(id: 0, name: 'Manual', jobs: _tree.manualJobs),
+        ],
+        projectName: widget.projectName,
+        clientName: widget.clientName,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.paddingOf(context).bottom;
-    const metaGrey = Color(0xFF6B7280);
-    const dateGrey = Color(0xFF9CA3AF);
 
     return ColoredBox(
-      color: AppColors.white,
+      color: _surfaceGrey,
       child: Stack(
         fit: StackFit.expand,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+              ColoredBox(
+                color: AppColors.white,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Jobs',
-                      style: AppFonts.headlineSmall(
-                        color: AppColors.inkStrong,
-                      ).copyWith(fontWeight: FontWeight.w800, fontSize: 28),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Jobs',
+                            style: AppFonts.headlineSmall(
+                              color: AppColors.inkStrong,
+                            ).copyWith(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 28,
+                            ),
+                          ),
+                          const Spacer(),
+                          Material(
+                            color: const Color(0xFFECECEE),
+                            shape: const CircleBorder(),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              onTap: _onAddJob,
+                              customBorder: const CircleBorder(),
+                              child: const SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: Icon(
+                                  Icons.add,
+                                  size: 22,
+                                  color: AppColors.inkStrong,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const Spacer(),
-                    Material(
-                      color: const Color(0xFFECECEE),
-                      shape: const CircleBorder(),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: _onAddJob,
-                        customBorder: const CircleBorder(),
-                        child: const SizedBox(
-                          width: 40,
-                          height: 40,
-                          child: Icon(
-                            Icons.add,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                      child: TextField(
+                        controller: _searchController,
+                        style: AppFonts.bodyMedium(
+                          color: AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
+                        decoration: InputDecoration(
+                          hintText: 'Search jobs...',
+                          hintStyle: AppFonts.bodyMedium(
+                            color: AppColors.muted,
+                          ).copyWith(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 16,
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.search_rounded,
+                            color: Color(0xFF9CA3AF),
                             size: 22,
-                            color: AppColors.inkStrong,
+                          ),
+                          filled: true,
+                          fillColor: const Color(0xFFF3F4F6),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 14,
                           ),
                         ),
                       ),
@@ -299,195 +351,7 @@ class _ProjectJobsTabState extends ConsumerState<ProjectJobsTab> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-                child: TextField(
-                  controller: _searchController,
-                  style: AppFonts.bodyMedium(
-                    color: AppColors.inkStrong,
-                  ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
-                  decoration: InputDecoration(
-                    hintText: 'Search jobs...',
-                    hintStyle: AppFonts.bodyMedium(
-                      color: AppColors.muted,
-                    ).copyWith(fontWeight: FontWeight.w500, fontSize: 16),
-                    prefixIcon: const Icon(
-                      Icons.search_rounded,
-                      color: Color(0xFF9CA3AF),
-                      size: 22,
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xFFF3F4F6),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 14,
-                    ),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: _isLoading && _jobs.isEmpty
-                    ? Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.inkStrong,
-                        ),
-                      )
-                    : _errorMessage != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _errorMessage!,
-                                textAlign: TextAlign.center,
-                                style: AppFonts.bodyMedium(
-                                  color: AppColors.muted,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              TextButton(
-                                onPressed: _loadJobs,
-                                child: const Text('Retry'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : _jobs.isEmpty
-                    ? Center(
-                        child: Text(
-                          _searchController.text.trim().isEmpty
-                              ? 'No jobs found'
-                              : 'No jobs match your search',
-                          style: AppFonts.bodyMedium(color: AppColors.muted),
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _loadJobs,
-                        color: AppColors.inkStrong,
-                        child: ListView.separated(
-                          padding: EdgeInsets.fromLTRB(0, 4, 0, 88 + bottomPad),
-                          itemCount: _jobs.length,
-                          separatorBuilder: (_, _) => const Divider(
-                            height: 1,
-                            thickness: 1,
-                            color: Color(0xFFE5E7EB),
-                            indent: 16,
-                            endIndent: 16,
-                          ),
-                          itemBuilder: (context, index) {
-                            final job = _jobs[index];
-                            return Material(
-                              color: AppColors.white,
-                              child: InkWell(
-                                onTap: () => _onRowTap(job),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 14,
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              job.title,
-                                              maxLines: 2,
-                                              overflow: TextOverflow.ellipsis,
-                                              style:
-                                                  AppFonts.titleMedium(
-                                                    color: AppColors.inkStrong,
-                                                  ).copyWith(
-                                                    fontWeight: FontWeight.w700,
-                                                    fontSize: 17,
-                                                    height: 1.25,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Row(
-                                              children: [
-                                                _WorkerAvatar(
-                                                  background:
-                                                      job.avatarBackground,
-                                                  initials: job.avatarInitials,
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: Text(
-                                                    job.workerLocationLine,
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style:
-                                                        AppFonts.bodyMedium(
-                                                          color: metaGrey,
-                                                        ).copyWith(
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                          fontSize: 14,
-                                                        ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 6),
-                                            Text.rich(
-                                              TextSpan(
-                                                style:
-                                                    AppFonts.bodySmall(
-                                                      color: dateGrey,
-                                                    ).copyWith(
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                      fontSize: 14,
-                                                    ),
-                                                children: [
-                                                  TextSpan(
-                                                    text:
-                                                        '${job.dateRangeLine} • ',
-                                                  ),
-                                                  TextSpan(
-                                                    text: job.status.label,
-                                                    style: TextStyle(
-                                                      color: job.status.color,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      const Icon(
-                                        Icons.chevron_right_rounded,
-                                        color: Color(0xFFCBD5E1),
-                                        size: 26,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-              ),
+              Expanded(child: _buildBody(bottomPad)),
             ],
           ),
           Positioned(
@@ -506,31 +370,150 @@ class _ProjectJobsTabState extends ConsumerState<ProjectJobsTab> {
       ),
     );
   }
+
+  Widget _buildBody(double bottomPad) {
+    if (_isLoading && _tree.isEmpty) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.inkStrong),
+      );
+    }
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: AppFonts.bodyMedium(color: AppColors.muted),
+              ),
+              const SizedBox(height: 12),
+              TextButton(onPressed: _loadJobs, child: const Text('Retry')),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_tree.isEmpty) {
+      return Center(
+        child: Text(
+          _searchController.text.trim().isEmpty
+              ? 'No jobs found'
+              : 'No jobs match your search',
+          style: AppFonts.bodyMedium(color: AppColors.muted),
+        ),
+      );
+    }
+
+    final levelRows = <Widget>[
+      for (final level in _tree.levels)
+        _LevelListTile(
+          name: level.name,
+          jobCount: _levelJobCount(level),
+          plotCount: _plotCount(level),
+          onTap: () => _openLevel(level),
+        ),
+      if (_tree.manualJobs.isNotEmpty)
+        _LevelListTile(
+          name: 'Manual Jobs',
+          jobCount: _tree.manualJobs.length,
+          plotCount: 1,
+          onTap: _openManualJobs,
+        ),
+    ];
+
+    return RefreshIndicator(
+      onRefresh: _loadJobs,
+      color: AppColors.inkStrong,
+      child: ListView.separated(
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 88 + bottomPad),
+        itemCount: levelRows.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, index) => levelRows[index],
+      ),
+    );
+  }
 }
 
-class _WorkerAvatar extends StatelessWidget {
-  const _WorkerAvatar({required this.background, this.initials});
+class _LevelListTile extends StatelessWidget {
+  const _LevelListTile({
+    required this.name,
+    required this.jobCount,
+    required this.plotCount,
+    required this.onTap,
+  });
 
-  final Color background;
-  final String? initials;
+  static const _border = Color(0xFFE5E7EB);
+
+  final String name;
+  final int jobCount;
+  final int plotCount;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: 14,
-      backgroundColor: background,
-      child: initials != null && initials!.isNotEmpty
-          ? Text(
-              initials!,
-              style: AppFonts.labelSmall(
-                color: AppColors.inkStrong,
-              ).copyWith(fontWeight: FontWeight.w700, fontSize: 10),
-            )
-          : const Icon(
-              Icons.person_rounded,
-              size: 16,
-              color: Color(0xFF4B5563),
-            ),
+    final jobsLabel = jobCount == 1 ? '1 job' : '$jobCount jobs';
+    final plotsLabel = plotCount == 1 ? '1 plot' : '$plotCount plots';
+
+    return Material(
+      color: AppColors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: _border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.inkStrong,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name.toUpperCase(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppFonts.titleMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '$jobsLabel • $plotsLabel',
+                      style: AppFonts.bodySmall(
+                        color: const Color(0xFF6B7280),
+                      ).copyWith(fontWeight: FontWeight.w500, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFCBD5E1),
+                size: 28,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

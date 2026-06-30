@@ -4,17 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:red5/core/network/api_int_parsing.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_date_picker_dialog.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
-import 'package:red5/features/clients/data/client_models.dart';
-import 'package:red5/features/clients/data/clients_api_client.dart';
 import 'package:red5/features/contacts/data/contact_models.dart';
 import 'package:red5/features/contacts/data/contacts_api_client.dart';
+import 'package:red5/features/dashboard/data/invoice_models.dart';
+import 'package:red5/features/dashboard/data/purchase_order_models.dart';
+import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
+import 'package:red5/features/dashboard/presentation/purchase_order_list_refresh.dart';
+import 'package:red5/features/items/data/items_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
+import 'package:red5/features/vendors/data/vendor_models.dart';
+import 'package:red5/features/vendors/data/vendors_api_client.dart';
+import 'package:red5/features/vendors/presentation/widgets/vendor_picker_sheet.dart';
 
 class _PurchaseLineDraft {
   _PurchaseLineDraft();
@@ -23,19 +32,58 @@ class _PurchaseLineDraft {
   final qtyController = TextEditingController(text: '1');
   final unitPriceController = TextEditingController();
 
+  double get quantity => double.tryParse(qtyController.text.trim()) ?? 0;
+
+  double get unitPrice => double.tryParse(unitPriceController.text.trim()) ?? 0;
+
+  double get lineTotal =>
+      product == null ? 0 : quantity * unitPrice;
+
+  void applyProduct(CompositeItemOption? item) {
+    product = item;
+    if (item == null) {
+      unitPriceController.clear();
+      return;
+    }
+    final qty = item.quantity > 0 ? item.quantity : 1;
+    qtyController.text = qty == qty.roundToDouble()
+        ? qty.round().toString()
+        : qty.toString();
+    final price = item.sellingPrice;
+    if (price != null) {
+      unitPriceController.text = price.toStringAsFixed(2);
+    } else {
+      unitPriceController.clear();
+    }
+  }
+
   void dispose() {
     qtyController.dispose();
     unitPriceController.dispose();
   }
 }
 
-/// Create purchase order form (UI until PO API is available).
+/// Create or edit purchase order form.
 class AddPurchaseOrderPage extends ConsumerStatefulWidget {
-  const AddPurchaseOrderPage({super.key});
+  const AddPurchaseOrderPage({
+    super.key,
+    this.editPurchaseOrderId,
+    this.existing,
+  });
+
+  /// When set, submits `PATCH /purchase-orders/{id}`.
+  final String? editPurchaseOrderId;
+
+  /// Optional prefill from detail (skips fetch when [editPurchaseOrderId] is set).
+  final PurchaseOrderDetail? existing;
 
   static const pathPrefix = '/purchase-orders';
   static const name = 'add-purchase-order';
+  static const editName = 'edit-purchase-order';
   static String get path => '$pathPrefix/add';
+
+  static String pathForEdit(String id) =>
+      '$pathPrefix/${Uri.encodeComponent(id.trim())}/edit';
 
   @override
   ConsumerState<AddPurchaseOrderPage> createState() =>
@@ -53,43 +101,36 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
   final _currency = NumberFormat.currency(symbol: r'$');
   final _isoDate = DateFormat('yyyy-MM-dd');
 
-  final _billLine1 = TextEditingController(text: 'Acme Corporation');
-  final _billLine2 = TextEditingController(text: 'Acme Corporation');
+  final _billLine1 = TextEditingController();
+  final _billLine2 = TextEditingController();
   final _billCity = TextEditingController();
   final _billZip = TextEditingController();
   final _billCountry = TextEditingController();
   final _billState = TextEditingController();
 
-  final _shipLine1 = TextEditingController(text: 'Acme Corporation');
-  final _shipLine2 = TextEditingController(text: 'Acme Corporation');
+  final _shipLine1 = TextEditingController();
+  final _shipLine2 = TextEditingController();
   final _shipCity = TextEditingController();
   final _shipZip = TextEditingController();
   final _shipCountry = TextEditingController();
   final _shipState = TextEditingController();
 
-  final _poId = TextEditingController(text: 'PUR-2024-006');
-  final _categoryName = TextEditingController(text: 'Raw Material');
-  final _projectName = TextEditingController();
+  final _categoryName = TextEditingController();
   final _issueDate = TextEditingController();
   final _dueDate = TextEditingController();
-  final _clientNotes = TextEditingController(
-    text:
-        'Payment is due within 30 days of purchase order date. Late payments may incur additional charges.',
-  );
-  final _internalNotes = TextEditingController(
-    text: 'Add internal notes for office use only.',
-  );
+  final _clientNotes = TextEditingController();
+  final _internalNotes = TextEditingController();
 
   DateTime? _issueDateValue;
   DateTime? _dueDateValue;
   double _adjustment = 0;
 
-  ClientModel? _vendor;
+  VendorModel? _vendor;
   ContactModel? _contact;
   ProjectOption? _project;
-  String _paymentTerms = 'Net 30 Days';
+  String? _paymentTerms;
 
-  List<ClientModel> _vendors = const [];
+  List<VendorModel> _vendors = const [];
   List<ContactModel> _contacts = const [];
   List<ProjectOption> _projects = const [];
   List<GroupItemOption> _groups = const [];
@@ -98,7 +139,39 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
   final List<_PurchaseLineDraft> _lineItems = [_PurchaseLineDraft()];
   bool _loadingOptions = false;
   bool _loadingCompositeItems = false;
+  bool _loadingEdit = false;
+  bool _applyingEdit = false;
+  String? _loadEditError;
+  PurchaseOrderDetail? _resolvedEdit;
   bool _submitting = false;
+
+  bool get _isEditMode {
+    final ex = widget.existing;
+    if (ex != null && ex.id.trim().isNotEmpty) return true;
+    final eid = widget.editPurchaseOrderId?.trim();
+    return eid != null && eid.isNotEmpty;
+  }
+
+  String? get _editTargetId {
+    final ex = widget.existing;
+    if (ex != null && ex.id.trim().isNotEmpty) return ex.id.trim();
+    final resolved = _resolvedEdit;
+    if (resolved != null && resolved.id.trim().isNotEmpty) {
+      return resolved.id.trim();
+    }
+    final eid = widget.editPurchaseOrderId?.trim();
+    return eid != null && eid.isNotEmpty ? eid : null;
+  }
+
+  List<String> get _paymentTermChoices {
+    final current = _paymentTerms?.trim();
+    if (current != null &&
+        current.isNotEmpty &&
+        !_paymentTermOptions.contains(current)) {
+      return [current, ..._paymentTermOptions];
+    }
+    return _paymentTermOptions;
+  }
 
   static const _paymentTermOptions = [
     'Net 30 Days',
@@ -119,12 +192,383 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _issueDateValue = now;
-    _dueDateValue = now.add(const Duration(days: 30));
-    _issueDate.text = _isoDate.format(_issueDateValue!);
-    _dueDate.text = _isoDate.format(_dueDateValue!);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadOptions());
+    final hasPrefill = widget.existing != null;
+    final hasEditId = (widget.editPurchaseOrderId ?? '').trim().isNotEmpty;
+    if (_isEditMode) {
+      _loadingEdit = true;
+    } else if (!hasPrefill && !hasEditId) {
+      _resetForm();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    await _loadOptions();
+    if (!mounted) return;
+
+    final editId = _editTargetId ?? widget.editPurchaseOrderId?.trim();
+    if (editId != null && editId.isNotEmpty) {
+      await _loadForEdit(editId);
+      return;
+    }
+
+    final existing = widget.existing;
+    if (existing != null) {
+      await _applyFromDetail(existing);
+    }
+  }
+
+  Future<void> _loadForEdit(String id) async {
+    setState(() {
+      _loadingEdit = true;
+      _loadEditError = null;
+    });
+    try {
+      final detail = await ref
+          .read(purchaseOrdersApiClientProvider)
+          .fetchPurchaseOrderDetail(id);
+      if (!mounted) return;
+      setState(() {
+        _resolvedEdit = detail;
+        _loadingEdit = false;
+        _applyingEdit = true;
+      });
+      await _applyFromDetail(detail);
+      if (!mounted) return;
+      setState(() => _applyingEdit = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingEdit = false;
+        _applyingEdit = false;
+        _loadEditError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load purchase order',
+        );
+      });
+    }
+  }
+
+  Future<void> _applyFromDetail(PurchaseOrderDetail detail) async {
+    _categoryName.text =
+        detail.categoryName == '—' ? '' : detail.categoryName;
+    _clientNotes.text = detail.notes;
+    _internalNotes.text = detail.internalNotes;
+    _adjustment = detail.adjustment;
+
+    _applyAddressToControllers(
+      detail.billingAddress,
+      line1: _billLine1,
+      line2: _billLine2,
+      city: _billCity,
+      zip: _billZip,
+      country: _billCountry,
+      state: _billState,
+    );
+    _applyAddressToControllers(
+      detail.shippingAddress,
+      line1: _shipLine1,
+      line2: _shipLine2,
+      city: _shipCity,
+      zip: _shipZip,
+      country: _shipCountry,
+      state: _shipState,
+    );
+
+    if (detail.issueDate != null) {
+      _issueDateValue = detail.issueDate;
+      _issueDate.text = _isoDate.format(detail.issueDate!);
+    }
+    if (detail.dueDate != null) {
+      _dueDateValue = detail.dueDate;
+      _dueDate.text = _isoDate.format(detail.dueDate!);
+    }
+
+    final terms = detail.paymentTerms.trim();
+    if (terms.isNotEmpty && terms != '—') {
+      _paymentTerms = invoicePaymentTermsFromApi(terms);
+    }
+
+    _vendor = _matchVendor(detail);
+    _contact = _matchContact(detail);
+    _project = _matchProject(detail);
+    _ensureVendorInList();
+    _ensureContactInList();
+    _ensureProjectInList();
+
+    if (_project != null) {
+      await _loadCompositeCatalogForProject(_project!.id);
+      if (!mounted) return;
+      _ensureProjectInList();
+    }
+
+    int? groupId;
+    for (final item in detail.lineItems) {
+      if (item.groupId != null) {
+        groupId = item.groupId;
+        break;
+      }
+    }
+    if (groupId != null) {
+      GroupItemOption? matched;
+      for (final group in _groups) {
+        if (group.id == groupId) {
+          matched = group;
+          break;
+        }
+      }
+      matched ??= GroupItemOption(id: groupId, name: 'Group $groupId');
+      _selectedGroup = matched;
+      _ensureGroupInList();
+      await _loadCompositeItemsForGroup(groupId);
+    }
+
+    _applyLineItemsFromDetail(detail);
+    if (detail.vendorId != null) {
+      await _loadContactsForVendor(detail.vendorId);
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _ensureVendorInList() {
+    final vendor = _vendor;
+    if (vendor == null) return;
+    final index = _vendors.indexWhere((v) => v.id == vendor.id);
+    if (index >= 0) {
+      _vendor = _vendors[index];
+      return;
+    }
+    _vendors = [vendor, ..._vendors];
+  }
+
+  void _ensureContactInList() {
+    final contact = _contact;
+    if (contact == null) return;
+    final index = _contacts.indexWhere((c) => c.id == contact.id);
+    if (index >= 0) {
+      _contact = _contacts[index];
+      return;
+    }
+    _contacts = [contact, ..._contacts];
+  }
+
+  void _ensureProjectInList() {
+    final project = _project;
+    if (project == null) return;
+    final index = _projects.indexWhere((p) => p.id == project.id);
+    if (index >= 0) {
+      _project = _projects[index];
+      return;
+    }
+    _projects = [project, ..._projects];
+  }
+
+  void _ensureGroupInList() {
+    final group = _selectedGroup;
+    if (group == null) return;
+    final index = _groups.indexWhere((g) => g.id == group.id);
+    if (index >= 0) {
+      _selectedGroup = _groups[index];
+      return;
+    }
+    _groups = [group, ..._groups];
+  }
+
+  void _applyAddressToControllers(
+    PurchaseOrderAddress address, {
+    required TextEditingController line1,
+    required TextEditingController line2,
+    required TextEditingController city,
+    required TextEditingController zip,
+    required TextEditingController country,
+    required TextEditingController state,
+  }) {
+    final street = address.street.trim();
+    if (street.isNotEmpty && street != '—') {
+      final parts = street.split(',').map((p) => p.trim()).toList();
+      line1.text = parts.first;
+      if (parts.length > 1) {
+        line2.text = parts.sublist(1).join(', ');
+      } else {
+        line2.clear();
+      }
+    } else {
+      line1.clear();
+      line2.clear();
+    }
+    if (address.city.trim().isNotEmpty && address.city != '—') {
+      city.text = address.city;
+    }
+    if (address.postalCode.trim().isNotEmpty && address.postalCode != '—') {
+      zip.text = address.postalCode;
+    }
+    if (address.country.trim().isNotEmpty && address.country != '—') {
+      country.text = address.country;
+    }
+    if (address.state.trim().isNotEmpty && address.state != '—') {
+      state.text = address.state;
+    }
+  }
+
+  VendorModel? _matchVendor(PurchaseOrderDetail detail) {
+    final id = detail.vendorId?.trim();
+    if (id != null && id.isNotEmpty) {
+      for (final vendor in _vendors) {
+        if (vendor.id == id) return vendor;
+      }
+      return VendorModel(
+        id: id,
+        name: detail.vendorName == '—' ? 'Vendor' : detail.vendorName,
+        isActive: true,
+      );
+    }
+    final name = detail.vendorName.trim().toLowerCase();
+    if (name.isEmpty || name == '—') return null;
+    for (final vendor in _vendors) {
+      if (vendor.name.trim().toLowerCase() == name) return vendor;
+    }
+    return null;
+  }
+
+  ContactModel? _matchContact(PurchaseOrderDetail detail) {
+    final id = detail.contactId?.trim();
+    if (id != null && id.isNotEmpty) {
+      for (final contact in _contacts) {
+        if (contact.id == id) return contact;
+      }
+      final name = detail.contactPerson.trim();
+      return ContactModel(
+        id: id,
+        contactName: name.isEmpty || name == '—' ? 'Contact' : name,
+        client: ContactClientRef.empty,
+        email: '',
+        phone: '',
+        addressLine1: '',
+        addressLine2: '',
+        country: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        isActive: true,
+      );
+    }
+    final name = detail.contactPerson.trim().toLowerCase();
+    if (name.isEmpty || name == '—') return null;
+    for (final contact in _contacts) {
+      if (contact.contactName.trim().toLowerCase() == name) return contact;
+    }
+    return null;
+  }
+
+  ProjectOption? _matchProject(PurchaseOrderDetail detail) {
+    final id = detail.projectId?.trim();
+    if (id != null && id.isNotEmpty) {
+      for (final project in _projects) {
+        if (project.id == id) return project;
+      }
+      final name = detail.projectName.trim();
+      return ProjectOption(
+        id: id,
+        name: name.isEmpty || name == '—' ? 'Project' : name,
+      );
+    }
+    final name = detail.projectName.trim().toLowerCase();
+    if (name.isEmpty || name == '—') return null;
+    for (final project in _projects) {
+      if (project.name.trim().toLowerCase() == name) return project;
+    }
+    return null;
+  }
+
+  void _applyLineItemsFromDetail(PurchaseOrderDetail detail) {
+    for (final line in _lineItems) {
+      line.dispose();
+    }
+    _lineItems.clear();
+
+    for (final item in detail.lineItems) {
+      final draft = _PurchaseLineDraft();
+      if (item.qty > 0) {
+        draft.qtyController.text = _qtyLabel(item.qty);
+      }
+      if (item.listPrice > 0) {
+        draft.unitPriceController.text = item.listPrice.toString();
+      } else if (item.amount > 0 && item.qty > 0) {
+        draft.unitPriceController.text = (item.amount / item.qty).toString();
+      } else if (item.total > 0 && item.qty > 0) {
+        draft.unitPriceController.text = (item.total / item.qty).toString();
+      }
+
+      final compositeId = item.compositeItemId;
+      if (compositeId != null) {
+        CompositeItemOption? product;
+        for (final option in _compositeCatalog) {
+          if (option.id == compositeId) {
+            product = option;
+            break;
+          }
+        }
+        product ??= CompositeItemOption(
+          id: compositeId,
+          name: item.productName,
+          groupId: item.groupId,
+        );
+        draft.product = product;
+        if (!_compositeCatalog.any((option) => option.id == compositeId)) {
+          _compositeCatalog = [..._compositeCatalog, product];
+        } else {
+          draft.product = _compositeCatalog.firstWhere(
+            (option) => option.id == compositeId,
+          );
+        }
+      }
+      _lineItems.add(draft);
+    }
+
+    if (_lineItems.isEmpty) {
+      _lineItems.add(_PurchaseLineDraft());
+    }
+  }
+
+  void _resetForm() {
+    for (final c in [
+      _billLine1,
+      _billLine2,
+      _billCity,
+      _billZip,
+      _billCountry,
+      _billState,
+      _shipLine1,
+      _shipLine2,
+      _shipCity,
+      _shipZip,
+      _shipCountry,
+      _shipState,
+      _categoryName,
+      _issueDate,
+      _dueDate,
+      _clientNotes,
+      _internalNotes,
+    ]) {
+      c.clear();
+    }
+    _issueDateValue = null;
+    _dueDateValue = null;
+    _adjustment = 0;
+    _vendor = null;
+    _contact = null;
+    _project = null;
+    _paymentTerms = null;
+    _selectedGroup = null;
+    _groups = const [];
+    _compositeCatalog = const [];
+    _resolvedEdit = null;
+    for (final line in _lineItems) {
+      line.dispose();
+    }
+    _lineItems
+      ..clear()
+      ..add(_PurchaseLineDraft());
   }
 
   @override
@@ -142,9 +586,7 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
       _shipZip,
       _shipCountry,
       _shipState,
-      _poId,
       _categoryName,
-      _projectName,
       _issueDate,
       _dueDate,
       _clientNotes,
@@ -160,11 +602,7 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
 
   double _parseAmount(String raw) => double.tryParse(raw.trim()) ?? 0;
 
-  double _lineTotal(_PurchaseLineDraft line) {
-    if (line.product == null) return 0;
-    return _parseAmount(line.qtyController.text) *
-        _parseAmount(line.unitPriceController.text);
-  }
+  double _lineTotal(_PurchaseLineDraft line) => line.lineTotal;
 
   double get _subtotal =>
       _lineItems.fold<double>(0, (sum, line) => sum + _lineTotal(line));
@@ -173,58 +611,77 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
 
   Future<void> _loadOptions() async {
     setState(() => _loadingOptions = true);
+    final vendorsApi = ref.read(vendorsApiClientProvider);
+    final projectApi = ref.read(quoteProjectApiClientProvider);
+
+    List<VendorModel> vendors = const [];
+    List<ProjectOption> projects = const [];
+    List<GroupItemOption> groups = const [];
+    Object? vendorsError;
+
     try {
-      final clientsApi = ref.read(clientsApiClientProvider);
-      final contactsApi = ref.read(contactsApiClientProvider);
-      final projectApi = ref.read(quoteProjectApiClientProvider);
-      final results = await Future.wait<dynamic>([
-        clientsApi.fetchClientsPage(page: 1, pageSize: 100),
-        contactsApi.fetchContactsPage(page: 1, pageSize: 100),
-        projectApi.fetchProjects(),
-        projectApi.fetchGroups(),
-      ]);
-      if (!mounted) return;
-      final vendors = (results[0] as ClientsPageResult).items;
-      final contacts = (results[1] as ContactsPageResult).items;
-      final projects = results[2] as List<ProjectOption>;
-      final groups = results[3] as List<GroupItemOption>;
-      setState(() {
-        _vendors = vendors;
-        _contacts = contacts;
-        _projects = projects;
-        _groups = groups;
-        _loadingOptions = false;
-        if (_vendor == null && vendors.isNotEmpty) _vendor = vendors.first;
-        if (_contact == null && contacts.isNotEmpty) {
-          _contact = contacts.first;
-        }
-        if (_project == null && projects.isNotEmpty) {
-          _project = projects.first;
-          _projectName.text = projects.first.name;
-        }
-        if (_selectedGroup == null && groups.isNotEmpty) {
-          _selectedGroup = groups.first;
-        }
-      });
-      if (_selectedGroup != null) {
-        unawaited(_loadCompositeItemsForGroup(_selectedGroup!.id));
-      }
-      if (_project != null) {
-        unawaited(_loadCompositeCatalogForProject(_project!.id));
-      }
+      vendors = (await vendorsApi.fetchVendorsPage(
+        page: 1,
+        pageSize: 100,
+        isActive: true,
+      ))
+          .items;
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _loadingOptions = false);
+      vendorsError = e;
+    }
+
+    try {
+      projects = await projectApi.fetchProjects();
+    } catch (_) {}
+
+    try {
+      groups = await projectApi.fetchGroups();
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _vendors = vendors;
+      _projects = projects;
+      _groups = groups;
+      _loadingOptions = false;
+    });
+
+    if (vendorsError != null && mounted) {
       context.showTopSnackBar(
         SnackBar(
           content: Text(
             ApiResponseMessage.fromAnyError(
-              e,
-              genericFallback: 'Could not load vendors or contacts',
+              vendorsError,
+              genericFallback: 'Could not load vendors',
             ),
           ),
         ),
       );
+    }
+  }
+
+  Future<void> _loadContactsForVendor(String? vendorId) async {
+    final id = vendorId?.trim();
+    if (id == null || id.isEmpty) {
+      if (mounted) setState(() => _contacts = const []);
+      return;
+    }
+    try {
+      final contacts = await ref
+          .read(contactsApiClientProvider)
+          .fetchVendorContacts(vendorId: id);
+      if (!mounted) return;
+      setState(() {
+        _contacts = contacts;
+        _ensureContactInList();
+        if (_contact != null &&
+            !_contacts.any((c) => c.id == _contact!.id)) {
+          _contact = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _contacts = const []);
     }
   }
 
@@ -237,24 +694,21 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
           .fetchGroupCompositeCatalog(projectId: id);
       if (!mounted || _project?.id != id) return;
       setState(() {
-        _groups = catalog.groups;
         if (catalog.groups.isNotEmpty) {
-          final keepGroup = _selectedGroup != null &&
-              catalog.groups.any((g) => g.id == _selectedGroup!.id);
-          _selectedGroup =
-              keepGroup ? _selectedGroup : catalog.groups.first;
+          _groups = catalog.groups;
+          if (_selectedGroup != null &&
+              !catalog.groups.any((g) => g.id == _selectedGroup!.id)) {
+            _selectedGroup = null;
+          }
         }
-        if (catalog.items.isNotEmpty) {
-          _compositeCatalog = catalog.items;
-        }
+        _compositeCatalog = const [];
       });
-      if (_compositeCatalog.isEmpty && _selectedGroup != null) {
-        unawaited(_loadCompositeItemsForGroup(_selectedGroup!.id));
-      }
     } catch (_) {
-      if (_selectedGroup != null) {
-        unawaited(_loadCompositeItemsForGroup(_selectedGroup!.id));
-      }
+      if (!mounted || _project?.id != id) return;
+      setState(() {
+        _selectedGroup = null;
+        _compositeCatalog = const [];
+      });
     }
   }
 
@@ -283,12 +737,118 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
       _selectedGroup = group;
       _compositeCatalog = const [];
       for (final line in _lineItems) {
-        line.product = null;
-        line.unitPriceController.clear();
+        line.applyProduct(null);
+        line.qtyController.text = '1';
       }
     });
     if (group != null) {
       unawaited(_loadCompositeItemsForGroup(group.id));
+    }
+  }
+
+  void _onVendorSelected(VendorModel? vendor) {
+    setState(() {
+      _vendor = vendor;
+      _contact = null;
+      _contacts = const [];
+    });
+    if (vendor != null) {
+      _ensureVendorInList();
+      unawaited(_loadContactsForVendor(vendor.id));
+    }
+  }
+
+  Future<void> _pickVendor() async {
+    final picked = await showVendorPickerSheet(
+      context: context,
+      selected: _vendor,
+    );
+    if (picked == null || !mounted) return;
+    _onVendorSelected(picked);
+  }
+
+  InputDecoration _pickerDecoration({String? errorText}) {
+    return InputDecoration(
+      filled: true,
+      fillColor: AppColors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.textFieldBorder),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.textFieldBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.inkStrong, width: 1.2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.error),
+      ),
+      errorText: errorText,
+    );
+  }
+
+  Widget _vendorPickerField() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: FormField<VendorModel>(
+        validator: (_) => _vendor == null ? 'Vendor is required' : null,
+        builder: (field) {
+          final vendor = _vendor;
+          final hasValue = vendor != null;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                onTap: _submitting ? null : _pickVendor,
+                borderRadius: BorderRadius.circular(8),
+                child: InputDecorator(
+                  decoration: _pickerDecoration(errorText: field.errorText),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          hasValue
+                              ? (vendor.name.trim().isEmpty
+                                  ? 'Vendor'
+                                  : vendor.name)
+                              : 'Select vendor',
+                          style: hasValue
+                              ? _dropdownValueStyle
+                              : _dropdownHintStyle,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.keyboard_arrow_down,
+                        color: AppColors.muted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _onProjectSelected(ProjectOption? project) {
+    setState(() {
+      _project = project;
+      _selectedGroup = null;
+      _compositeCatalog = const [];
+      for (final line in _lineItems) {
+        line.applyProduct(null);
+        line.qtyController.text = '1';
+      }
+    });
+    if (project != null) {
+      unawaited(_loadCompositeCatalogForProject(project.id));
     }
   }
 
@@ -327,13 +887,40 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
   }
 
   void _onProductSelected(int index, CompositeItemOption? product) {
-    setState(() {
-      _lineItems[index].product = product;
-      if (product != null &&
-          _lineItems[index].unitPriceController.text.trim().isEmpty) {
-        _lineItems[index].unitPriceController.text = '0';
-      }
-    });
+    setState(() => _lineItems[index].applyProduct(product));
+    if (product != null && product.sellingPrice == null) {
+      unawaited(_resolveCompositeItemSellingPrice(index, product));
+    }
+  }
+
+  Future<void> _resolveCompositeItemSellingPrice(
+    int index,
+    CompositeItemOption item,
+  ) async {
+    try {
+      final detail = await ref
+          .read(itemsApiClientProvider)
+          .fetchItemDetail(item.id.toString());
+      if (!mounted || _lineItems[index].product?.id != item.id) return;
+      setState(() {
+        _lineItems[index].unitPriceController.text =
+            detail.sellPrice.toStringAsFixed(2);
+      });
+    } catch (_) {
+      // Keep manual rate entry when detail lookup fails.
+    }
+  }
+
+  GroupItemOption? _groupForProduct(CompositeItemOption? product) {
+    if (_selectedGroup != null &&
+        (product?.groupId == null || product!.groupId == _selectedGroup!.id)) {
+      return _selectedGroup;
+    }
+    if (product?.groupId == null) return null;
+    for (final g in _groups) {
+      if (g.id == product!.groupId) return g;
+    }
+    return null;
   }
 
   void _changeAdjustment(double delta) {
@@ -345,13 +932,110 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
     return qty.toString();
   }
 
+  Map<String, dynamic> _buildPayload() {
+    final vendorId = readApiInt(_vendor!.id)!;
+    final projectId = readApiInt(_project!.id)!;
+    final contactId = readApiInt(_contact!.id)!;
+    final compositeItems = <InvoiceCompositeItemPayload>[];
+    for (final line in _lineItems) {
+      final product = line.product;
+      if (product == null) continue;
+      final qty = _parseAmount(line.qtyController.text);
+      if (qty <= 0) continue;
+      final amount = _lineTotal(line);
+      final group = _groupForProduct(product);
+      compositeItems.add(
+        InvoiceCompositeItemPayload(
+          id: product.id,
+          name: product.name,
+          quantity: qty,
+          amount: amount,
+          groupId: group?.id ?? product.groupId,
+          groupName: group?.name,
+        ),
+      );
+    }
+
+    return <String, dynamic>{
+      'vendor': vendorId,
+      'contact': contactId,
+      'project': projectId,
+      'total': _subtotal,
+      'due_date': _isoDate.format(_dueDateValue!),
+      'payment_terms': invoicePaymentTermsToApi(_paymentTerms!),
+      'bill_to': InvoiceAddressPayload(
+        addressLine1: _billLine1.text,
+        addressLine2: _billLine2.text,
+        city: _billCity.text,
+        state: _billState.text,
+        pincode: _billZip.text,
+        country: _billCountry.text,
+      ).toJson(),
+      'ship_to': InvoiceAddressPayload(
+        addressLine1: _shipLine1.text,
+        addressLine2: _shipLine2.text,
+        city: _shipCity.text,
+        state: _shipState.text,
+        pincode: _shipZip.text,
+        country: _shipCountry.text,
+      ).toJson(),
+      'composite_items':
+          compositeItems.map((e) => e.toJson()).toList(growable: false),
+      if (_clientNotes.text.trim().isNotEmpty)
+        'vendor_notes': _clientNotes.text.trim(),
+      if (_internalNotes.text.trim().isNotEmpty)
+        'internal_notes': _internalNotes.text.trim(),
+    };
+  }
+
   Future<void> _save({required bool send}) async {
-    if (_submitting) return;
+    if (_submitting || _loadingEdit) return;
+    if (_isEditMode && _editTargetId == null) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     if (_vendor == null) {
       context.showAppTopToast(
         title: 'Select a vendor',
+        type: AppTopToastType.warning,
+      );
+      return;
+    }
+
+    if (_contact == null) {
+      context.showAppTopToast(
+        title: 'Select a contact',
+        type: AppTopToastType.warning,
+      );
+      return;
+    }
+
+    if (_project == null) {
+      context.showAppTopToast(
+        title: 'Select a project',
+        type: AppTopToastType.warning,
+      );
+      return;
+    }
+
+    if (_dueDateValue == null) {
+      context.showAppTopToast(
+        title: 'Select a due date',
+        type: AppTopToastType.warning,
+      );
+      return;
+    }
+
+    if (_paymentTerms == null || _paymentTerms!.trim().isEmpty) {
+      context.showAppTopToast(
+        title: 'Select payment terms',
+        type: AppTopToastType.warning,
+      );
+      return;
+    }
+
+    if (!_isEditMode && _selectedGroup == null) {
+      context.showAppTopToast(
+        title: 'Select a group',
         type: AppTopToastType.warning,
       );
       return;
@@ -371,16 +1055,42 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
     }
 
     setState(() => _submitting = true);
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    if (!mounted) return;
-    setState(() => _submitting = false);
-
-    context.showAppTopToast(
-      title: send ? 'Purchase order sent' : 'Purchase order saved',
-      subtitle: _poId.text.trim().isNotEmpty ? _poId.text.trim() : null,
-      type: AppTopToastType.success,
-    );
-    context.pop(true);
+    try {
+      final api = ref.read(purchaseOrdersApiClientProvider);
+      final payload = _buildPayload();
+      final PurchaseOrderDetail result;
+      if (_isEditMode) {
+        result = await api.updatePurchaseOrder(_editTargetId!, payload);
+      } else {
+        result = await api.createPurchaseOrder(payload);
+      }
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ref.read(purchaseOrderListRefreshTickProvider.notifier).state++;
+      context.showAppTopToast(
+        title: _isEditMode
+            ? (send ? 'Purchase order sent' : 'Purchase order updated')
+            : (send ? 'Purchase order sent' : 'Purchase order saved'),
+        subtitle: result.purchaseOrderNumber,
+        type: AppTopToastType.success,
+      );
+      context.pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      context.showTopSnackBar(
+        SnackBar(
+          content: Text(
+            ApiResponseMessage.fromAnyError(
+              e,
+              genericFallback: _isEditMode
+                  ? 'Failed to update purchase order'
+                  : 'Failed to save purchase order',
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   Widget _sectionCard({
@@ -445,6 +1155,34 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
     );
   }
 
+  Widget _requiredFieldLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: text.toUpperCase(),
+              style: AppFonts.labelSmall(color: _labelGrey).copyWith(
+                letterSpacing: 0.6,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+              ),
+            ),
+            TextSpan(
+              text: ' *',
+              style: AppFonts.labelSmall(color: AppColors.error).copyWith(
+                letterSpacing: 0.6,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _textField(
     TextEditingController controller, {
     required String hint,
@@ -479,25 +1217,39 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
     required String hint,
     String? Function(T?)? validator,
     bool enabled = true,
+    bool compact = false,
   }) {
+    final resolvedValue = _resolveDropdownValue(items, value);
+    final valueKey = switch (resolvedValue) {
+      VendorModel v => v.id,
+      ContactModel c => c.id,
+      ProjectOption p => p.id,
+      GroupItemOption g => '${g.id}',
+      CompositeItemOption i => '${i.id}',
+      _ => resolvedValue?.hashCode ?? 0,
+    };
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: compact ? EdgeInsets.zero : const EdgeInsets.only(bottom: 14),
       child: DropdownButtonFormField<T>(
-        value: items.any((i) => i.value == value) ? value : null,
+        key: ValueKey('po-dropdown-$hint-$valueKey-${items.length}'),
+        initialValue: resolvedValue,
         items: items,
-        onChanged: (_loadingOptions || !enabled) ? null : onChanged,
+        onChanged: (_loadingOptions || !enabled || items.isEmpty)
+            ? null
+            : onChanged,
         validator: validator,
         isExpanded: true,
         style: _dropdownValueStyle,
+        dropdownColor: AppColors.white,
         icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.muted),
         decoration: InputDecoration(
           hintText: _loadingOptions ? 'Loading...' : hint,
           hintStyle: _dropdownHintStyle,
           filled: true,
           fillColor: AppColors.white,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 14,
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 12 : 14,
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
@@ -517,6 +1269,29 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
         ),
       ),
     );
+  }
+
+  T? _resolveDropdownValue<T>(List<DropdownMenuItem<T>> items, T? value) {
+    if (value == null) return null;
+    for (final item in items) {
+      final candidate = item.value;
+      if (candidate == null) continue;
+      if (_dropdownValuesEqual(candidate, value)) return candidate;
+    }
+    return null;
+  }
+
+  bool _dropdownValuesEqual<T>(T a, T b) {
+    if (identical(a, b)) return true;
+    return switch ((a, b)) {
+      (VendorModel left, VendorModel right) => left.id == right.id,
+      (ContactModel left, ContactModel right) => left.id == right.id,
+      (ProjectOption left, ProjectOption right) => left.id == right.id,
+      (GroupItemOption left, GroupItemOption right) => left.id == right.id,
+      (CompositeItemOption left, CompositeItemOption right) =>
+        left.id == right.id,
+      _ => a == b,
+    };
   }
 
   Widget _dateField({
@@ -554,17 +1329,6 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
     );
   }
 
-  Widget _halfRow({required Widget left, required Widget right}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: left),
-        const SizedBox(width: 12),
-        Expanded(child: right),
-      ],
-    );
-  }
-
   Widget _addressBlock({
     required TextEditingController line1,
     required TextEditingController line2,
@@ -573,76 +1337,133 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
     required TextEditingController country,
     required TextEditingController state,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _fieldLabel('Address Line 1'),
-        _textField(line1, hint: 'Address line 1'),
-        _fieldLabel('Address Line 2'),
-        _textField(line2, hint: 'Address line 2'),
-        _halfRow(
-          left: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('City'),
-              _textField(city, hint: 'City'),
-            ],
-          ),
-          right: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('Zip Code'),
-              _textField(zip, hint: 'Zip'),
-            ],
-          ),
-        ),
-        _halfRow(
-          left: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('Country'),
-              _textField(country, hint: 'Country'),
-            ],
-          ),
-          right: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('State'),
-              _textField(state, hint: 'State'),
-            ],
-          ),
-        ),
-      ],
+    return AppAddressFields(
+      line1: line1,
+      line2: line2,
+      city: city,
+      state: state,
+      postalCode: zip,
+      countryController: country,
+      layout: AppAddressLayout.billing,
+      borderRadius: 8,
+      postalCodeHint: 'Zip',
+      line2Hint: 'Address line 2',
+      labelBuilder: (text, {required = false}) => _fieldLabel(text),
+      onPlaceSelected: (_) {
+        if (mounted) setState(() {});
+      },
     );
   }
 
   String _compositeItemHint() {
-    if (_loadingCompositeItems) return 'Loading composite items...';
+    if (_loadingCompositeItems) return 'Loading...';
     if (_selectedGroup == null) return 'Select a group first';
     if (_compositeCatalog.isEmpty) {
-      return 'No composite items in this group';
+      return 'No items in group';
     }
-    return 'Select composite item';
+    return 'Select product...';
   }
 
-  Widget _lineItemEditor(int index, _PurchaseLineDraft line) {
-    final product = line.product;
+  Widget _compactNumberField(
+    TextEditingController controller, {
+    required String hint,
+    ValueChanged<String>? onChanged,
+  }) {
+    return AppTextField(
+      controller: controller,
+      hintText: hint,
+      borderRadius: 8,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onChanged: onChanged,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+    );
+  }
+
+  Widget _lineItemsTableHeader() {
+    final showDelete = _lineItems.length > 1;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(flex: 26, child: _fieldLabel('Groups')),
+          const SizedBox(width: 8),
+          Expanded(flex: 34, child: _requiredFieldLabel('Items')),
+          const SizedBox(width: 8),
+          SizedBox(width: 64, child: _fieldLabel('Qty')),
+          const SizedBox(width: 8),
+          SizedBox(width: 80, child: _fieldLabel('Rate')),
+          if (showDelete) const SizedBox(width: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _inlineGroupDropdown({String? Function(GroupItemOption?)? validator}) {
+    return _dropdownField<GroupItemOption>(
+      value: _selectedGroup,
+      hint: _loadingOptions
+          ? 'Loading...'
+          : _groups.isEmpty
+          ? 'No groups'
+          : 'Select group',
+      enabled: !_loadingOptions && _groups.isNotEmpty,
+      compact: true,
+      items: _groups
+          .map(
+            (g) => DropdownMenuItem<GroupItemOption>(
+              value: g,
+              child: Text(g.name, style: _dropdownValueStyle),
+            ),
+          )
+          .toList(),
+      onChanged: _onGroupSelected,
+      validator: validator,
+    );
+  }
+
+  Widget _lineItemRow(int index, _PurchaseLineDraft line) {
     final canPickItem =
         _selectedGroup != null &&
         !_loadingCompositeItems &&
         _compositeCatalog.isNotEmpty;
+    final showDelete = _lineItems.length > 1;
 
-    if (product == null) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _fieldLabel('Composite Item'),
-            _dropdownField<CompositeItemOption>(
+    return Padding(
+      padding: EdgeInsets.only(bottom: index < _lineItems.length - 1 ? 10 : 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 26,
+            child: index == 0
+                ? _inlineGroupDropdown(
+                    validator: (v) =>
+                        !_isEditMode && v == null ? 'Required' : null,
+                  )
+                : _selectedGroup == null
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(top: 14, left: 4, right: 4),
+                    child: Text(
+                      _selectedGroup!.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppFonts.bodyMedium(color: _labelGrey).copyWith(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 34,
+            child: _dropdownField<CompositeItemOption>(
               value: line.product,
               hint: _compositeItemHint(),
               enabled: canPickItem,
+              compact: true,
               items: _compositeCatalog
                   .map(
                     (p) => DropdownMenuItem<CompositeItemOption>(
@@ -658,94 +1479,42 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
                   )
                   .toList(),
               onChanged: (v) => _onProductSelected(index, v),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final qty = _parseAmount(line.qtyController.text);
-    final unit = _parseAmount(line.unitPriceController.text);
-    final total = _lineTotal(line);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      product.name,
-                      style: AppFonts.bodyLarge(color: AppColors.inkStrong)
-                          .copyWith(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${_qtyLabel(qty)} Unit @ ${_currency.format(unit)}',
-                      style: AppFonts.bodyMedium(color: _labelGrey).copyWith(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                _currency.format(total),
-                style: AppFonts.bodyLarge(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
-              ),
-              if (_lineItems.length > 1)
-                IconButton(
-                  onPressed: () => _removeLineItem(index),
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    color: Color(0xFFDC2626),
-                  ),
-                  visualDensity: VisualDensity.compact,
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          _halfRow(
-            left: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _fieldLabel('Quantity'),
-                _textField(
-                  line.qtyController,
-                  hint: '1',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ],
-            ),
-            right: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _fieldLabel('Unit Price'),
-                _textField(
-                  line.unitPriceController,
-                  hint: '0',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ],
+              validator: index == 0 && _lineItems.length == 1
+                  ? (v) => v == null ? 'Required' : null
+                  : null,
             ),
           ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 64,
+            child: _compactNumberField(
+              line.qtyController,
+              hint: '1',
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 80,
+            child: _compactNumberField(
+              line.unitPriceController,
+              hint: '0.00',
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+          if (showDelete)
+            SizedBox(
+              width: 40,
+              child: IconButton(
+                onPressed: () => _removeLineItem(index),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Color(0xFFDC2626),
+                ),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+              ),
+            ),
         ],
       ),
     );
@@ -803,7 +1572,7 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
             ),
             alignment: Alignment.center,
             child: Text(
-              _currency.format(_adjustment),
+              _adjustment == 0 ? '—' : _currency.format(_adjustment),
               style: _dropdownValueStyle.copyWith(fontSize: 14),
             ),
           ),
@@ -861,7 +1630,7 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
             child: FilledButton.icon(
               onPressed: _submitting ? null : () => _save(send: false),
               icon: const Icon(Icons.save_outlined, size: 18),
-              label: const Text('Save Purchase Order'),
+              label: Text(_isEditMode ? 'Update' : 'Save Purchase Order'),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF111111),
                 foregroundColor: AppColors.white,
@@ -884,6 +1653,54 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_loadingEdit || _applyingEdit) {
+      return const Scaffold(
+        backgroundColor: _pageBg,
+        body: AppSkeletonScreenBody(
+          style: AppSkeletonScreenBodyStyle.listRows,
+        ),
+      );
+    }
+
+    if (_loadEditError != null) {
+      return Scaffold(
+        backgroundColor: _pageBg,
+        appBar: AppBar(
+          backgroundColor: _pageBg,
+          foregroundColor: AppColors.inkStrong,
+          leading: IconButton(
+            onPressed: () => context.pop(),
+            icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
+          ),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _loadEditError!,
+                  textAlign: TextAlign.center,
+                  style: AppFonts.bodyMedium(color: _labelGrey),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () {
+                    final id = _editTargetId ?? widget.editPurchaseOrderId;
+                    if (id != null && id.trim().isNotEmpty) {
+                      _loadForEdit(id.trim());
+                    }
+                  },
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     final bottom = MediaQuery.paddingOf(context).bottom;
 
     return Scaffold(
@@ -897,7 +1714,7 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
           icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
         ),
         title: Text(
-          'New Purchase Order',
+          _isEditMode ? 'Edit Purchase Order' : 'New Purchase Order',
           style: AppFonts.titleLarge(
             color: AppColors.inkStrong,
           ).copyWith(fontWeight: FontWeight.w700),
@@ -913,27 +1730,16 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
               title: 'Basic Information',
               children: [
                 _fieldLabel('Vendor Name'),
-                _dropdownField<ClientModel>(
-                  value: _vendor,
-                  hint: 'Select vendor',
-                  items: _vendors
-                      .map(
-                        (v) => DropdownMenuItem<ClientModel>(
-                          value: v,
-                          child: Text(
-                            v.name.trim().isEmpty ? 'Vendor' : v.name,
-                            style: _dropdownValueStyle,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) => setState(() => _vendor = v),
-                  validator: (v) => v == null ? 'Vendor is required' : null,
-                ),
+                _vendorPickerField(),
                 _fieldLabel('Contact Person'),
                 _dropdownField<ContactModel>(
                   value: _contact,
-                  hint: 'Select contact',
+                  hint: _vendor == null
+                      ? 'Select a vendor first'
+                      : _contacts.isEmpty
+                      ? 'No contacts for this vendor'
+                      : 'Select contact',
+                  enabled: _vendor != null && _contacts.isNotEmpty,
                   items: _contacts
                       .map(
                         (c) => DropdownMenuItem<ContactModel>(
@@ -978,8 +1784,6 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
             _sectionCard(
               title: 'Additional Information',
               children: [
-                _fieldLabel('Purchase Order ID'),
-                _textField(_poId, hint: 'PUR-2024-001'),
                 _dateField(
                   controller: _issueDate,
                   label: 'Issue Date',
@@ -993,8 +1797,8 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
                 _fieldLabel('Payment Terms'),
                 _dropdownField<String>(
                   value: _paymentTerms,
-                  hint: 'Payment terms',
-                  items: _paymentTermOptions
+                  hint: 'Select payment terms',
+                  items: _paymentTermChoices
                       .map(
                         (t) => DropdownMenuItem<String>(
                           value: t,
@@ -1002,9 +1806,9 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
                         ),
                       )
                       .toList(),
-                  onChanged: (v) {
-                    if (v != null) setState(() => _paymentTerms = v);
-                  },
+                  onChanged: (v) => setState(() => _paymentTerms = v),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'Required' : null,
                 ),
                 _fieldLabel('Project Name'),
                 _dropdownField<ProjectOption>(
@@ -1018,43 +1822,18 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
                         ),
                       )
                       .toList(),
-                  onChanged: (p) {
-                    setState(() {
-                      _project = p;
-                      _projectName.text = p?.name ?? '';
-                    });
-                    if (p != null) {
-                      unawaited(_loadCompositeCatalogForProject(p.id));
-                    }
-                  },
+                  onChanged: _onProjectSelected,
                 ),
                 _fieldLabel('Category Name'),
-                _textField(_categoryName, hint: 'Raw Material'),
+                _textField(_categoryName, hint: 'Enter category'),
               ],
             ),
             _sectionCard(
               title: 'Line Items',
               children: [
-                _fieldLabel('Group'),
-                _dropdownField<GroupItemOption>(
-                  value: _selectedGroup,
-                  hint: _groups.isEmpty
-                      ? 'No groups available'
-                      : 'Select group',
-                  enabled: _groups.isNotEmpty,
-                  items: _groups
-                      .map(
-                        (g) => DropdownMenuItem<GroupItemOption>(
-                          value: g,
-                          child: Text(g.name, style: _dropdownValueStyle),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _onGroupSelected,
-                  validator: (v) => v == null ? 'Group is required' : null,
-                ),
+                _lineItemsTableHeader(),
                 for (var i = 0; i < _lineItems.length; i++)
-                  _lineItemEditor(i, _lineItems[i]),
+                  _lineItemRow(i, _lineItems[i]),
                 Align(
                   alignment: Alignment.center,
                   child: TextButton.icon(
@@ -1070,34 +1849,41 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
                   ),
                 ),
                 const Divider(height: 24, color: Color(0xFFE5E7EB)),
-                _summaryRow('Sub Total', _currency.format(_subtotal)),
+                _summaryRow(
+                  'Sub Total',
+                  _subtotal == 0 ? '—' : _currency.format(_subtotal),
+                ),
                 _adjustmentRow(),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 14,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _totalBoxBg,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      Text(
-                        'Total',
-                        style: AppFonts.titleMedium(
-                          color: AppColors.inkStrong,
-                        ).copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const Spacer(),
-                      Text(
-                        _currency.format(_total),
-                        style: AppFonts.titleLarge(
-                          color: AppColors.inkStrong,
-                        ).copyWith(fontWeight: FontWeight.w800, fontSize: 20),
-                      ),
-                    ],
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 220),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _totalBoxBg,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Total amount',
+                          style: AppFonts.bodyMedium(
+                            color: AppColors.inkStrong,
+                          ).copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 16),
+                        Text(
+                          _currency.format(_total),
+                          style: AppFonts.titleMedium(
+                            color: AppColors.inkStrong,
+                          ).copyWith(fontWeight: FontWeight.w800, fontSize: 18),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -1105,7 +1891,7 @@ class _AddPurchaseOrderPageState extends ConsumerState<AddPurchaseOrderPage> {
             _sectionCard(
               title: 'Notes & Terms',
               children: [
-                _fieldLabel('Client Notes'),
+                _fieldLabel('Vendor Notes'),
                 _textField(
                   _clientNotes,
                   hint: 'Notes visible to vendor',

@@ -16,6 +16,7 @@ final class EmployeeJobDetail {
     this.formId,
     this.formIds = const [],
     this.formAssignments = const [],
+    this.jobForms = const [],
     this.projectId,
   });
 
@@ -33,9 +34,13 @@ final class EmployeeJobDetail {
   final int? formId;
   final List<int> formIds;
   final List<JobFormAssignment> formAssignments;
+  final List<JobLinkedFormSummary> jobForms;
   final int? projectId;
 
   List<int> get linkedFormIds {
+    if (jobForms.isNotEmpty) {
+      return jobForms.map((form) => form.formId).toList(growable: false);
+    }
     if (formAssignments.isNotEmpty) {
       return formAssignments.map((a) => a.formId).toList(growable: false);
     }
@@ -52,13 +57,15 @@ final class EmployeeJobDetail {
   }
 
   EmployeeJobDetail copyWith({
+    String? currentStatus,
     List<int>? formIds,
     List<JobFormAssignment>? formAssignments,
+    List<JobLinkedFormSummary>? jobForms,
   }) {
     return EmployeeJobDetail(
       id: id,
       title: title,
-      currentStatus: currentStatus,
+      currentStatus: currentStatus ?? this.currentStatus,
       project: project,
       client: client,
       siteContact: siteContact,
@@ -70,6 +77,7 @@ final class EmployeeJobDetail {
       formId: formId,
       formIds: formIds ?? this.formIds,
       formAssignments: formAssignments ?? this.formAssignments,
+      jobForms: jobForms ?? this.jobForms,
       projectId: projectId,
     );
   }

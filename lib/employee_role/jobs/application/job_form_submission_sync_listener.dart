@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/employee_role/offline/operative_sync_coordinator.dart';
 
-/// Placeholder widget — form submissions sync on job completion, not on reconnect.
+/// Starts operative background sync when connectivity is restored.
 class JobFormSubmissionSyncListener extends ConsumerWidget {
   const JobFormSubmissionSyncListener({
     super.key,
@@ -11,5 +12,8 @@ class JobFormSubmissionSyncListener extends ConsumerWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => child;
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(operativeSyncBootstrapProvider);
+    return child;
+  }
 }

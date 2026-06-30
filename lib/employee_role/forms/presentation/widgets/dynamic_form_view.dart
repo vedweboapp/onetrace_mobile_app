@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -21,6 +22,7 @@ import 'package:red5/employee_role/forms/presentation/widgets/form_metadata_layo
 import 'package:red5/core/utils/qr_code_utils.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_qr_input_sheet.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_qr_scanner_page.dart';
+import 'package:red5/employee_role/forms/data/signature_form_value.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_signature_field.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 
@@ -55,10 +57,14 @@ class DynamicFormViewState extends State<DynamicFormView> {
   final _boolValues = <String, bool>{};
   final _fileValues = <String, _PickedFileValue>{};
   final _signatureStrokes = <String, List<List<Offset>>>{};
+  final _signaturePngBase64 = <String, String>{};
+  final _signatureFiles = <String, _PickedFileValue>{};
+  final _signatureDrawing = <String, bool>{};
   final _phoneCountries = <String, CountryCode>{};
 
   late List<FormMetadataSection> _sections;
   static final _dateFormat = DateFormat('MM/dd/yyyy');
+  static final _dateTimeFormat = DateFormat('MM/dd/yyyy HH:mm');
 
   @override
   void initState() {
@@ -82,6 +88,9 @@ class DynamicFormViewState extends State<DynamicFormView> {
       _boolValues.clear();
       _fileValues.clear();
       _signatureStrokes.clear();
+      _signaturePngBase64.clear();
+      _signatureFiles.clear();
+      _signatureDrawing.clear();
       _phoneCountries.clear();
       _initFieldState();
     }
@@ -113,6 +122,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
               () => TextEditingController(),
             );
           case _FieldKind.date:
+          case _FieldKind.dateTime:
             _dateValues[key] = null;
           case _FieldKind.radio:
           case _FieldKind.dropdown:
@@ -179,8 +189,9 @@ class DynamicFormViewState extends State<DynamicFormView> {
               _textControllers[key]?.text ?? '',
             );
           case _FieldKind.date:
-            final date = _dateValues[key];
-            values[key] = date?.toIso8601String();
+            values[key] = _formatDateForApi(_dateValues[key]);
+          case _FieldKind.dateTime:
+            values[key] = _formatDateTimeForApi(_dateValues[key]);
           case _FieldKind.radio:
           case _FieldKind.dropdown:
             values[key] = _choiceValues[key];
@@ -189,14 +200,60 @@ class DynamicFormViewState extends State<DynamicFormView> {
           case _FieldKind.image:
             values[key] = _fileValues[key]?.name;
           case _FieldKind.signature:
-            final strokes = _signatureStrokes[key] ?? const [];
-            values[key] = strokes.any((stroke) => stroke.length >= 2)
-                ? 'signed'
-                : null;
+            values[key] = _signatureFiles[key]?.name ?? '';
         }
       }
     }
     return values;
+  }
+
+  /// Ensures signature fields are exported to PNG files before submit/draft.
+  Future<void> ensureSignaturesReady() async {
+    for (final section in _sections) {
+      for (final field in section.fields) {
+        if (_fieldKind(field) != _FieldKind.signature) continue;
+        final key = field.apiName;
+        if ((_signatureFiles[key]?.name.trim().isNotEmpty ?? false)) continue;
+        final strokes = _signatureStrokes[key] ?? const [];
+        if (!strokes.any((stroke) => stroke.length >= 2)) continue;
+        await _refreshSignaturePngCache(field, strokes);
+      }
+    }
+  }
+
+  String? _localFilePathForField(FormMetadataField field) {
+    switch (_fieldKind(field)) {
+      case _FieldKind.signature:
+        return _signatureFiles[field.apiName]?.path;
+      case _FieldKind.image:
+        return _fileValues[field.apiName]?.path;
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _refreshSignaturePngCache(
+    FormMetadataField field,
+    List<List<Offset>> strokes,
+  ) async {
+    final apiName = field.apiName;
+    final export = await exportSignaturePngFile(
+      fieldId: field.id,
+      strokes: strokes,
+    );
+    if (!mounted) return;
+    if (export == null) {
+      _signatureFiles.remove(apiName);
+      _signaturePngBase64.remove(apiName);
+    } else {
+      _signatureFiles[apiName] = _PickedFileValue(
+        name: export.filename,
+        path: export.path,
+        sizeBytes: export.bytes.length,
+      );
+      _signaturePngBase64[apiName] = base64Encode(export.bytes);
+    }
+    setState(() {});
   }
 
   /// Field values formatted for `POST /jobs/{id}/submit-form/`.
@@ -213,11 +270,19 @@ class DynamicFormViewState extends State<DynamicFormView> {
           JobFormFieldValue(
             fieldId: field.id,
             value: value,
+            localFilePath: _localFilePathForField(field),
+            fieldType: field.fieldType,
           ),
         );
       }
     }
     return rows;
+  }
+
+  /// Like [collectApiValues] but writes signature pads to PNG files first.
+  Future<List<JobFormFieldValue>> collectApiValuesAsync() async {
+    await ensureSignaturesReady();
+    return collectApiValues();
   }
 
   /// Restores saved or submitted values keyed by metadata field id.
@@ -254,7 +319,9 @@ class DynamicFormViewState extends State<DynamicFormView> {
         _phoneCountries[key] = parsed.country;
         _textControllers[key]?.text = parsed.nationalDigits;
       case _FieldKind.date:
-        _dateValues[key] = DateTime.tryParse(raw);
+        _dateValues[key] = _parseDateValue(raw);
+      case _FieldKind.dateTime:
+        _dateValues[key] = _parseDateTimeValue(raw);
       case _FieldKind.radio:
       case _FieldKind.dropdown:
         _choiceValues[key] = raw.isEmpty ? null : raw;
@@ -264,16 +331,76 @@ class DynamicFormViewState extends State<DynamicFormView> {
       case _FieldKind.image:
         break;
       case _FieldKind.signature:
+        final display = parseSignatureDisplayValue(raw);
+        if (display.hasImage) {
+          if (display.bytes != null) {
+            _signaturePngBase64[key] = base64Encode(display.bytes!);
+          } else {
+            _signaturePngBase64[key] = raw.trim();
+          }
+          if (display.bytes != null && field.id > 0) {
+            _signatureFiles[key] = _PickedFileValue(
+              name: signatureFilenameForField(field.id),
+              path: null,
+              sizeBytes: display.bytes!.length,
+            );
+          } else if (raw.trim().toLowerCase().endsWith('.png')) {
+            _signatureFiles[key] = _PickedFileValue(
+              name: raw.trim(),
+              path: null,
+            );
+          }
+          _signatureStrokes[key] = const [];
+          break;
+        }
         _signatureStrokes[key] = strokesFromSignatureValue(raw);
+        _signaturePngBase64.remove(key);
+        _signatureFiles.remove(key);
+        final restored = _signatureStrokes[key] ?? const [];
+        if (restored.any((stroke) => stroke.length >= 2)) {
+          unawaited(_refreshSignaturePngCache(field, restored));
+        }
     }
   }
 
   static String _serializeFieldForApi(FormMetadataField field, dynamic value) {
+    if (_fieldKind(field) == _FieldKind.date) {
+      return _serializeDateForApi(value);
+    }
+    if (_fieldKind(field) == _FieldKind.dateTime) {
+      return _serializeDateTimeForApi(value);
+    }
+    if (_fieldKind(field) == _FieldKind.signature) {
+      if (value == null) return '';
+      final text = value.toString().trim();
+      if (text.isEmpty) return '';
+      return text;
+    }
     final serialized = _serializeForApi(value);
     if (_fieldKind(field) == _FieldKind.qr && serialized.trim().isNotEmpty) {
       return QrCodeUtils.normalizeScannedValue(serialized);
     }
     return serialized;
+  }
+
+  static String _serializeDateTimeForApi(dynamic value) {
+    if (value == null) return '';
+    if (value is DateTime) {
+      return _formatDateTimeForApi(value) ?? '';
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty) return '';
+    return normalizeJobFormDateTimeValue(text);
+  }
+
+  static String _serializeDateForApi(dynamic value) {
+    if (value == null) return '';
+    if (value is DateTime) {
+      return _formatDateForApi(value) ?? '';
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty) return '';
+    return normalizeJobFormDateValue(text);
   }
 
   static String _serializeForApi(dynamic value) {
@@ -347,6 +474,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
       _FieldKind.number => _numberField(field),
       _FieldKind.phone => _phoneField(field),
       _FieldKind.date => _dateField(field),
+      _FieldKind.dateTime => _dateTimeField(field),
       _FieldKind.radio => _radioField(field),
       _FieldKind.dropdown => _dropdownField(field),
       _FieldKind.checkbox => _checkboxField(field),
@@ -453,12 +581,49 @@ class DynamicFormViewState extends State<DynamicFormView> {
   }
 
   bool _hasSignature(String apiName) {
+    if (_signatureFiles[apiName]?.name.trim().isNotEmpty ?? false) return true;
+    if (_signaturePngBase64[apiName]?.trim().isNotEmpty ?? false) return true;
     final strokes = _signatureStrokes[apiName] ?? const [];
     return strokes.any((stroke) => stroke.length > 1);
   }
 
   Widget _signatureField(FormMetadataField field) {
-    final strokes = _signatureStrokes[field.apiName] ?? const [];
+    final apiName = field.apiName;
+    final strokes = _signatureStrokes[apiName] ?? const [];
+    final stored =
+        _signaturePngBase64[apiName] ?? _signatureFiles[apiName]?.name ?? '';
+    final display = parseSignatureDisplayValue(stored);
+    final isDrawing = _signatureDrawing[apiName] ?? false;
+    final showPreview = display.hasImage && !isDrawing;
+
+    if (showPreview) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _signaturePreview(display),
+          if (!field.isReadonly) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _signaturePngBase64.remove(apiName);
+                    _signatureFiles.remove(apiName);
+                    _signatureStrokes[apiName] = const [];
+                    _signatureDrawing[apiName] = false;
+                  });
+                  widget.onChanged?.call();
+                },
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Sign again'),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
     return FormField<bool>(
       initialValue: _hasSignature(field.apiName),
       validator: (_) {
@@ -474,13 +639,18 @@ class DynamicFormViewState extends State<DynamicFormView> {
             FormDigitalSignaturePad(
               strokes: strokes,
               readOnly: field.isReadonly,
-              onDrawingChanged: widget.onSignatureDrawingChanged,
+              onDrawingChanged: (drawing) {
+                _signatureDrawing[apiName] = drawing;
+                widget.onSignatureDrawingChanged?.call(drawing);
+                if (!drawing && mounted) setState(() {});
+              },
               onChanged: (updated) {
                 setState(() {
-                  _signatureStrokes[field.apiName] = updated;
-                  state.didChange(_hasSignature(field.apiName));
+                  _signatureStrokes[apiName] = updated;
+                  state.didChange(_hasSignature(apiName));
                 });
                 widget.onChanged?.call();
+                unawaited(_refreshSignaturePngCache(field, updated));
               },
             ),
             if (state.hasError)
@@ -494,6 +664,53 @@ class DynamicFormViewState extends State<DynamicFormView> {
           ],
         );
       },
+    );
+  }
+
+  Widget _signaturePreview(SignatureDisplaySource display) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 160,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          border: Border.all(color: AppColors.textFieldBorder, width: 1.2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: display.bytes != null
+            ? Image.memory(
+                display.bytes!,
+                height: 160,
+                width: double.infinity,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => Text(
+                  'Could not display signature image',
+                  style: AppFonts.bodySmall(color: AppColors.muted),
+                ),
+              )
+            : Image.network(
+                display.imageUrl!,
+                height: 160,
+                width: double.infinity,
+                fit: BoxFit.contain,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return const Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                },
+                errorBuilder: (_, __, ___) => Text(
+                  'Could not load signature image',
+                  style: AppFonts.bodySmall(color: AppColors.muted),
+                ),
+              ),
+      ),
     );
   }
 
@@ -520,15 +737,103 @@ class DynamicFormViewState extends State<DynamicFormView> {
     return null;
   }
 
-  bool _fieldAllowsDecimal(String fieldType) {
-    switch (fieldType) {
+  bool _fieldAllowsDecimal(FormMetadataField field) {
+    final type = field.fieldType.trim().toLowerCase();
+    switch (type) {
       case 'decimal':
       case 'currency':
       case 'amount':
+      case 'money':
+      case 'price':
+      case 'float':
+      case 'double':
+      case 'numeric':
         return true;
       default:
-        return false;
+        break;
     }
+    final api = field.apiName.trim().toLowerCase();
+    final label = field.label.trim().toLowerCase();
+    return api.contains('amount') ||
+        api.contains('currency') ||
+        api.contains('price') ||
+        label.contains('amount') ||
+        label.contains('currency') ||
+        label.contains('price');
+  }
+
+  List<String> _dropdownOptions(FormMetadataField field) {
+    final options = List<String>.from(field.options);
+    final selected = _choiceValues[field.apiName];
+    if (selected != null &&
+        selected.trim().isNotEmpty &&
+        !options.contains(selected)) {
+      options.insert(0, selected);
+    }
+    return options;
+  }
+
+  static String? _formatDateTimeForApi(DateTime? date) {
+    if (date == null) return null;
+    return formatJobFormDateTimeForApi(date);
+  }
+
+  static String? _formatDateForApi(DateTime? date) {
+    if (date == null) return null;
+    return formatJobFormDateForApi(date);
+  }
+
+  static DateTime? _parseDateTimeValue(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+
+    if (RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$').hasMatch(trimmed)) {
+      try {
+        final datePart = trimmed.substring(0, 10);
+        final timePart = trimmed.substring(11);
+        final parts = timePart.split(':');
+        final year = int.parse(datePart.substring(0, 4));
+        final month = int.parse(datePart.substring(5, 7));
+        final day = int.parse(datePart.substring(8, 10));
+        final hour = int.parse(parts[0]);
+        final minute = int.parse(parts[1]);
+        return DateTime(year, month, day, hour, minute);
+      } catch (_) {}
+    }
+
+    final iso = DateTime.tryParse(trimmed);
+    if (iso != null) return iso;
+
+    return _parseDateValue(trimmed);
+  }
+
+  static DateTime? _parseDateValue(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+
+    if (RegExp(r'^\d{8}$').hasMatch(trimmed)) {
+      try {
+        final year = int.parse(trimmed.substring(0, 4));
+        final month = int.parse(trimmed.substring(4, 6));
+        final day = int.parse(trimmed.substring(6, 8));
+        return DateTime(year, month, day);
+      } catch (_) {}
+    }
+
+    final iso = DateTime.tryParse(trimmed);
+    if (iso != null) return iso;
+
+    for (final format in [
+      DateFormat('MM/dd/yyyy'),
+      DateFormat('dd/MM/yyyy'),
+      DateFormat('yyyy-MM-dd'),
+      DateFormat('MM-dd-yyyy'),
+    ]) {
+      try {
+        return format.parseStrict(trimmed);
+      } catch (_) {}
+    }
+    return null;
   }
 
   Widget _phoneField(FormMetadataField field) {
@@ -565,7 +870,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
 
   Widget _numberField(FormMetadataField field) {
     final controller = _textControllers[field.apiName]!;
-    final allowDecimal = _fieldAllowsDecimal(field.fieldType);
+    final allowDecimal = _fieldAllowsDecimal(field);
 
     return AppTextField(
       controller: controller,
@@ -573,8 +878,14 @@ class DynamicFormViewState extends State<DynamicFormView> {
       readOnly: field.isReadonly,
       enabled: !field.isReadonly,
       keyboardType: allowDecimal
-          ? const TextInputType.numberWithOptions(decimal: true)
-          : TextInputType.number,
+          ? const TextInputType.numberWithOptions(
+              decimal: true,
+              signed: false,
+            )
+          : const TextInputType.numberWithOptions(
+              decimal: false,
+              signed: false,
+            ),
       inputFormatters: allowDecimal
           ? [
               FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
@@ -655,6 +966,104 @@ class DynamicFormViewState extends State<DynamicFormView> {
       onChanged: (_) => _notifyChanged(),
       validator: (value) => _textValidator(field, value),
     );
+  }
+
+  Widget _dateTimeField(FormMetadataField field) {
+    final selected = _dateValues[field.apiName];
+    final display = selected == null ? '' : _dateTimeFormat.format(selected);
+    return FormField<DateTime>(
+      initialValue: selected,
+      validator: (_) {
+        if (field.isRequired && _dateValues[field.apiName] == null) {
+          return '${field.label} is required';
+        }
+        return null;
+      },
+      builder: (state) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: field.isReadonly
+                  ? null
+                  : () => _pickDateTime(field, state),
+              child: Container(
+                height: 52,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: state.hasError
+                        ? AppColors.error
+                        : AppColors.textFieldBorder,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        display.isEmpty ? 'mm/dd/yyyy hh:mm' : display,
+                        style: AppFonts.bodyMedium(
+                          color: display.isEmpty
+                              ? AppColors.textFieldHint
+                              : AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.event_available_outlined,
+                      size: 20,
+                      color: AppColors.inkStrong,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (state.hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6, left: 4),
+                child: Text(
+                  state.errorText!,
+                  style: AppFonts.bodySmall(color: AppColors.error),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _pickDateTime(
+    FormMetadataField field,
+    FormFieldState<DateTime> state,
+  ) async {
+    final current = _dateValues[field.apiName] ?? DateTime.now();
+    final pickedDate = await showAppDatePickerDialog(
+      context,
+      initialDate: current,
+      helpText: field.label,
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(current),
+    );
+    if (pickedTime == null || !mounted) return;
+
+    final combined = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+    setState(() {
+      _dateValues[field.apiName] = combined;
+      state.didChange(combined);
+    });
+    _notifyChanged();
   }
 
   Widget _dateField(FormMetadataField field) {
@@ -787,10 +1196,11 @@ class DynamicFormViewState extends State<DynamicFormView> {
 
   Widget _dropdownField(FormMetadataField field) {
     final selected = _choiceValues[field.apiName];
+    final options = _dropdownOptions(field);
     return DropdownButtonFormField<String>(
-      value: field.options.contains(selected) ? selected : null,
+      value: selected != null && options.contains(selected) ? selected : null,
       decoration: InputDecoration(
-        hintText: field.placeholder ?? 'Choose from list...',
+        hintText: field.placeholder ?? 'Select ${field.label}',
         filled: true,
         fillColor: AppColors.white,
         contentPadding: const EdgeInsets.symmetric(
@@ -806,7 +1216,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
           borderSide: const BorderSide(color: AppColors.textFieldBorder),
         ),
       ),
-      items: field.options
+      items: options
           .map(
             (option) => DropdownMenuItem<String>(
               value: option,
@@ -1190,6 +1600,7 @@ enum _FieldKind {
   number,
   phone,
   date,
+  dateTime,
   radio,
   dropdown,
   checkbox,
@@ -1210,6 +1621,16 @@ _FieldKind _fieldKind(FormMetadataField field) {
 
   if (type != _FieldKind.text && type != _FieldKind.unsupported) return type;
 
+  if (_looksLikeDateTimeField(api, label, field.fieldType)) {
+    return _FieldKind.dateTime;
+  }
+  if (_looksLikeDateField(api, label, field.fieldType)) {
+    return _FieldKind.date;
+  }
+  if (_looksLikeCurrencyField(api, label, field.fieldType)) {
+    return _FieldKind.number;
+  }
+
   if (api.contains('qr') ||
       label.contains('qr code') ||
       label.contains('scan qr') ||
@@ -1217,6 +1638,71 @@ _FieldKind _fieldKind(FormMetadataField field) {
     return _FieldKind.qr;
   }
   return type;
+}
+
+bool _looksLikeDateTimeField(String api, String label, String fieldType) {
+  final type = fieldType.trim().toLowerCase();
+  if (type == 'datetime' || type == 'date_time') return true;
+  if (api.contains('date_&_time') ||
+      api.contains('date_time') ||
+      api.contains('datetime')) {
+    return true;
+  }
+  if (label.contains('date & time') || label.contains('date and time')) {
+    return true;
+  }
+  return false;
+}
+
+bool _looksLikeDateField(String api, String label, String fieldType) {
+  final type = fieldType.trim().toLowerCase();
+  if (type == 'datetime' || type == 'date_time') return false;
+  const dateTypes = {
+    'date',
+    'date_picker',
+    'datepicker',
+    'birth_date',
+    'birthdate',
+    'due_date',
+  };
+  if (dateTypes.contains(type)) return true;
+  if (api.contains('date_&_time') ||
+      api.contains('date_time') ||
+      api.contains('datetime')) {
+    return false;
+  }
+  if (api == 'dob' || api.endsWith('_date') || api.contains('due_date')) {
+    return true;
+  }
+  if (label.contains('date & time') || label.contains('date and time')) {
+    return false;
+  }
+  if (label.contains('due date') ||
+      label.contains('birth date') ||
+      label.contains('date of birth')) {
+    return true;
+  }
+  return false;
+}
+
+bool _looksLikeCurrencyField(String api, String label, String fieldType) {
+  final type = fieldType.trim().toLowerCase();
+  if (type == 'currency' ||
+      type == 'amount' ||
+      type == 'money' ||
+      type == 'price' ||
+      type == 'decimal' ||
+      type == 'float' ||
+      type == 'double' ||
+      type == 'numeric') {
+    return true;
+  }
+  return api.contains('amount') ||
+      api.contains('currency') ||
+      api.contains('price') ||
+      label.contains('amount') ||
+      label.contains('currency') ||
+      label.contains('price');
 }
 
 bool _looksLikeSignatureField(String api, String label) {
@@ -1247,20 +1733,34 @@ _FieldKind _normalizedType(String raw) {
     case 'decimal':
     case 'currency':
     case 'amount':
+    case 'money':
+    case 'price':
+    case 'float':
+    case 'double':
+    case 'numeric':
       return _FieldKind.number;
     case 'phone':
     case 'phone_number':
       return _FieldKind.phone;
     case 'date':
+    case 'date_picker':
+    case 'datepicker':
+    case 'birth_date':
+    case 'birthdate':
+    case 'due_date':
+      return _FieldKind.date;
     case 'datetime':
     case 'date_time':
-      return _FieldKind.date;
+      return _FieldKind.dateTime;
     case 'radio':
     case 'choice':
       return _FieldKind.radio;
     case 'dropdown':
     case 'select':
     case 'picklist':
+    case 'multi_select':
+    case 'multi-select':
+    case 'multiselect':
       return _FieldKind.dropdown;
     case 'checkbox':
     case 'boolean':

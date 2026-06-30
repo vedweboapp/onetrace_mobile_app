@@ -54,28 +54,31 @@ final class FormsApiClient {
     required int projectId,
     int page = 1,
     int pageSize = 20,
-    bool isActive = true,
+    bool? isActive = true,
   }) async {
     final out = <FormSummary>[];
     final seen = <int>{};
     var currentPage = page;
 
     while (true) {
+      final query = <String, dynamic>{
+        'project_id': projectId,
+        'page': currentPage,
+        'page_size': pageSize,
+      };
+      if (isActive != null) query['is_active'] = isActive;
+
       final response = await _dio.get<dynamic>(
         AppApiUrls.projectForms,
-        queryParameters: <String, dynamic>{
-          'project_id': projectId,
-          'page': currentPage,
-          'page_size': pageSize,
-          'is_active': isActive,
-        },
+        queryParameters: query,
       );
       final root = readApiMap(response.data);
       final rows = readApiRows(root);
       for (final map in rows) {
         final form = FormSummary.fromJson(map);
         if (form.id <= 0 || !seen.add(form.id)) continue;
-        if (isActive && !form.isActive) continue;
+        if (isActive == true && !form.isActive) continue;
+        if (isActive == false && form.isActive) continue;
         out.add(form);
       }
       if (!readApiHasNextPage(root) || rows.isEmpty) break;

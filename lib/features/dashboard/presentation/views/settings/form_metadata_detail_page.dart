@@ -117,7 +117,13 @@ class _FormMetadataDetailPageState
                 style: AppFonts.bodyMedium(color: AppColors.error),
               ),
               const SizedBox(height: 12),
-              OutlinedButton(onPressed: _load, child: const Text('Retry')),
+              OutlinedButton(
+                onPressed: _load,
+                child: Text(
+                  'Retry',
+                  style: AppFonts.labelLarge(color: AppColors.inkStrong),
+                ),
+              ),
             ],
           ),
         ),

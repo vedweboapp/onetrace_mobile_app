@@ -66,13 +66,7 @@ final class FormMetadataField {
   factory FormMetadataField.fromMap(Map<String, dynamic> map) {
     final properties = _readMap(map['properties']);
     final validation = _readMap(properties['validation_rules']);
-    final optionsRaw = map['options'];
-    final options = optionsRaw is List
-        ? optionsRaw
-            .map((e) => e?.toString().trim() ?? '')
-            .where((e) => e.isNotEmpty)
-            .toList(growable: false)
-        : const <String>[];
+    final options = parseFormFieldOptions(map);
 
     return FormMetadataField(
       id: _readInt(map['id']) ?? 0,
@@ -253,6 +247,68 @@ List<FormMetadataSection> filterOperativeFormSections(
     );
   }
   return filtered;
+}
+
+/// Dropdown / multi-select choices from metadata (`options`, `properties.choices`, …).
+List<String> parseFormFieldOptions(Map<String, dynamic> map) {
+  final fromRoot = _parseOptionsList(map['options']);
+  if (fromRoot.isNotEmpty) return fromRoot;
+
+  final properties = _readMap(map['properties']);
+  for (final key in const [
+    'options',
+    'choices',
+    'field_options',
+    'values',
+    'items',
+  ]) {
+    final parsed = _parseOptionsList(properties[key]);
+    if (parsed.isNotEmpty) return parsed;
+  }
+  return const [];
+}
+
+List<String> _parseOptionsList(dynamic raw) {
+  if (raw == null) return const [];
+  if (raw is List) {
+    return raw
+        .map(_optionLabel)
+        .where((label) => label.isNotEmpty)
+        .toList(growable: false);
+  }
+  if (raw is String) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return const [];
+    if (trimmed.contains(',')) {
+      return trimmed
+          .split(',')
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+    }
+    return [trimmed];
+  }
+  return const [];
+}
+
+String _optionLabel(dynamic entry) {
+  if (entry == null) return '';
+  if (entry is String) return entry.trim();
+  if (entry is Map) {
+    final map = Map<String, dynamic>.from(
+      entry.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    return _readString(map, const [
+          'label',
+          'name',
+          'text',
+          'title',
+          'display',
+        ]) ??
+        _readString(map, const ['value', 'id', 'key']) ??
+        '';
+  }
+  return entry.toString().trim();
 }
 
 int? _readInt(dynamic value) {

@@ -192,17 +192,6 @@ final class JobFormSubmissionRepository {
         );
       }
 
-      if (assignments.isEmpty) {
-        final linked = await _api.fetchJobLinkedForms(jobId);
-        assignments = JobFormAssignment.fromLinkedForms(linked);
-        if (kDebugMode && linked.isNotEmpty) {
-          JobCompletionDebugLog.info(
-            'submitted-forms fallback: ${linked.length} row(s) → '
-            '${assignments.length} assignment(s)',
-          );
-        }
-      }
-
       if (assignments.isNotEmpty) {
         await cacheJobFormLinks(jobId: jobId, assignments: assignments);
         JobCompletionDebugLog.api(

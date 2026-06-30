@@ -624,7 +624,7 @@ class _DottedBorderPainter extends CustomPainter {
       }
     }
   }
-
+ 
   @override
   bool shouldRepaint(_DottedBorderPainter old) =>
       old.color != color || old.borderRadius != borderRadius;

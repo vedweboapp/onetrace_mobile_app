@@ -39,4 +39,13 @@ abstract final class LocalStorageKeys {
 
   /// JSON: `"jobId"` -> true when the operative completed the job.
   static const employeeJobTimerCompleted = 'employee_job_timer_completed_v1';
+
+  /// JSON array of in-app notification objects for the signed-in user.
+  static const appNotifications = 'app_notifications_v1';
+
+  /// JSON array of job ids already seen for assignment notifications.
+  static const appKnownAssignedJobIds = 'app_known_assigned_job_ids_v1';
+
+  /// True after first assignment snapshot is stored (avoids notifying old jobs).
+  static const appAssignmentTrackingReady = 'app_assignment_tracking_ready_v1';
 }

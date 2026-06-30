@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/purchase_order_models.dart';
+import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
 import 'package:red5/features/dashboard/presentation/views/add_purchase_order_page.dart';
 import 'package:red5/features/dashboard/presentation/views/purchase_order_preview_page.dart';
+import 'package:red5/features/vendors/data/vendors_api_client.dart';
 
-class PurchaseOrderDetailPage extends StatefulWidget {
+class PurchaseOrderDetailPage extends ConsumerStatefulWidget {
   const PurchaseOrderDetailPage({super.key, required this.purchaseOrderId});
 
   static const pathPrefix = '/purchase-orders';
@@ -20,11 +25,11 @@ class PurchaseOrderDetailPage extends StatefulWidget {
   final String purchaseOrderId;
 
   @override
-  State<PurchaseOrderDetailPage> createState() =>
+  ConsumerState<PurchaseOrderDetailPage> createState() =>
       _PurchaseOrderDetailPageState();
 }
 
-class _PurchaseOrderDetailPageState extends State<PurchaseOrderDetailPage>
+class _PurchaseOrderDetailPageState extends ConsumerState<PurchaseOrderDetailPage>
     with SingleTickerProviderStateMixin {
   static const _labelGrey = Color(0xFF9CA3AF);
   static const _divider = Color(0xFFE5E7EB);
@@ -33,7 +38,10 @@ class _PurchaseOrderDetailPageState extends State<PurchaseOrderDetailPage>
 
   late final TabController _tabController;
   final _itemsSearchController = TextEditingController();
-  late final PurchaseOrderDetail _detail;
+  PurchaseOrderDetail? _detail;
+  String? _vendorDisplayName;
+  bool _loading = true;
+  String? _error;
 
   static final _displayDate = DateFormat('MMM d, yyyy');
   static final _qtyFormat = NumberFormat('#,##0.00');
@@ -42,10 +50,53 @@ class _PurchaseOrderDetailPageState extends State<PurchaseOrderDetailPage>
   @override
   void initState() {
     super.initState();
-    _detail = PurchaseOrderMockData.detailForId(widget.purchaseOrderId);
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
     _itemsSearchController.addListener(() => setState(() {}));
+    _loadDetail();
+  }
+
+  Future<void> _loadDetail() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final api = ref.read(purchaseOrdersApiClientProvider);
+      final detail = await api.fetchPurchaseOrderDetail(widget.purchaseOrderId);
+      final vendorName = await _resolveVendorDisplayName(detail);
+      if (!mounted) return;
+      setState(() {
+        _detail = detail;
+        _vendorDisplayName = vendorName;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load purchase order',
+        );
+      });
+    }
+  }
+
+  Future<String> _resolveVendorDisplayName(PurchaseOrderDetail detail) async {
+    final current = detail.vendorName.trim();
+    if (current.isNotEmpty && current != '—' && !current.startsWith('Vendor ')) {
+      return current;
+    }
+    final vendorId = detail.vendorId?.trim();
+    if (vendorId == null || vendorId.isEmpty) return current.isEmpty ? '—' : current;
+    try {
+      final vendor =
+          await ref.read(vendorsApiClientProvider).fetchVendorDetail(vendorId);
+      final name = vendor.name.trim();
+      if (name.isNotEmpty) return name;
+    } catch (_) {}
+    return current.isEmpty ? 'Vendor $vendorId' : current;
   }
 
   String _formatDate(DateTime? value) =>
@@ -65,7 +116,15 @@ class _PurchaseOrderDetailPageState extends State<PurchaseOrderDetailPage>
 
   String _formatGbp(double value) => _gbp.format(value);
 
-  void _onEdit() => context.push(AddPurchaseOrderPage.path);
+  void _onEdit() async {
+    final updated = await context.push<bool?>(
+      AddPurchaseOrderPage.pathForEdit(widget.purchaseOrderId),
+      extra: _detail,
+    );
+    if (updated == true && mounted) {
+      await _loadDetail();
+    }
+  }
 
   void _onSend() {
     context.showAppTopToast(
@@ -252,7 +311,7 @@ class _PurchaseOrderDetailPageState extends State<PurchaseOrderDetailPage>
       children: [
         _sectionTitle('Purchase Details'),
         _label('Vendor Name'),
-        _value(detail.vendorName),
+        _value(_vendorDisplayName ?? detail.vendorName),
         _label('Contact Person'),
         _value(detail.contactPerson),
         _label('Project Name'),
@@ -531,7 +590,49 @@ class _PurchaseOrderDetailPageState extends State<PurchaseOrderDetailPage>
 
   @override
   Widget build(BuildContext context) {
-    final detail = _detail;
+    if (_loading) {
+      return Scaffold(
+        backgroundColor: AppColors.white,
+        body: AppSkeletonScreenBody(
+          style: AppSkeletonScreenBodyStyle.listRows,
+        ),
+      );
+    }
+    if (_error != null || _detail == null) {
+      return Scaffold(
+        backgroundColor: AppColors.white,
+        appBar: AppBar(
+          backgroundColor: AppColors.white,
+          foregroundColor: AppColors.inkStrong,
+          leading: IconButton(
+            onPressed: () => context.pop(),
+            icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
+          ),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _error ?? 'Purchase order not found',
+                  textAlign: TextAlign.center,
+                  style: AppFonts.bodyMedium(color: const Color(0xFF666666)),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _loadDetail,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final detail = _detail!;
     final bottom = MediaQuery.paddingOf(context).bottom;
 
     return Scaffold(

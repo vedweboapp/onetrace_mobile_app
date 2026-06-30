@@ -28,11 +28,12 @@ final class EmployeeSiteMenuItem {
 abstract final class EmployeeSiteMenu {
   const EmployeeSiteMenu._();
 
-  /// More menu short card — Job sheet, Report, Site only.
+  /// More menu short card — Job sheet, Report, Site, Material Requests.
   static List<EmployeeSiteMenuSection> buildSections({
     VoidCallback? onJobSheet,
     VoidCallback? onReport,
     VoidCallback? onSite,
+    VoidCallback? onMaterialRequests,
   }) {
     return [
       EmployeeSiteMenuSection(
@@ -52,6 +53,11 @@ abstract final class EmployeeSiteMenu {
             label: 'Site',
             icon: Icons.location_on_outlined,
             onTap: onSite,
+          ),
+          EmployeeSiteMenuItem(
+            label: 'Material Requests',
+            icon: Icons.inventory_2_outlined,
+            onTap: onMaterialRequests,
           ),
         ],
       ),
@@ -170,7 +176,7 @@ class _EmployeeSiteShortCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 290, maxHeight: 260),
+        constraints: const BoxConstraints(maxWidth: 290, maxHeight: 320),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

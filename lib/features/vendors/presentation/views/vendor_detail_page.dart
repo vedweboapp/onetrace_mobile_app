@@ -6,6 +6,9 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/contacts/data/contact_models.dart';
+import 'package:red5/features/contacts/data/contacts_api_client.dart';
+import 'package:red5/features/contacts/presentation/views/contact_detail_page.dart';
 import 'package:red5/features/vendors/data/vendor_models.dart';
 import 'package:red5/features/vendors/data/vendors_api_client.dart';
 
@@ -29,6 +32,7 @@ class _VendorDetailPageState extends ConsumerState<VendorDetailPage>
   static const _labelGrey = Color(0xFF9CA3AF);
   static const _divider = Color(0xFFE5E7EB);
   static const _searchBg = Color(0xFFEFEEF0);
+  static const _metaMuted = Color(0xFF8B8B8B);
 
   late final TabController _tabController;
   final _contactSearchController = TextEditingController();
@@ -38,6 +42,10 @@ class _VendorDetailPageState extends ConsumerState<VendorDetailPage>
   bool _isLoading = true;
   bool _isDeleting = false;
   String? _error;
+
+  List<ContactModel> _contacts = const [];
+  bool _contactsLoading = false;
+  String? _contactsError;
 
   @override
   void initState() {
@@ -66,6 +74,7 @@ class _VendorDetailPageState extends ConsumerState<VendorDetailPage>
         _isLoading = false;
         _error = null;
       });
+      await _loadContactsForVendor(vendor);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -76,6 +85,229 @@ class _VendorDetailPageState extends ConsumerState<VendorDetailPage>
         );
       });
     }
+  }
+
+  Future<void> _loadContactsForVendor(VendorModel vendor) async {
+    setState(() {
+      _contactsLoading = true;
+      _contactsError = null;
+    });
+    try {
+      final contacts = await ref.read(contactsApiClientProvider).fetchVendorContacts(
+            vendorId: vendor.id,
+          );
+      if (!mounted) return;
+      setState(() {
+        _contacts = contacts;
+        _contactsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _contactsLoading = false;
+        _contactsError = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load contacts',
+        );
+      });
+    }
+  }
+
+  List<ContactModel> get _filteredContacts {
+    final q = _contactSearchController.text.trim().toLowerCase();
+    if (q.isEmpty) return _contacts;
+    return _contacts.where((contact) {
+      return contact.contactName.toLowerCase().contains(q) ||
+          contact.email.toLowerCase().contains(q) ||
+          contact.phone.toLowerCase().contains(q) ||
+          _contactAddressLine(contact).toLowerCase().contains(q);
+    }).toList();
+  }
+
+  String _contactAddressLine(ContactModel contact) {
+    final line1 = [contact.addressLine1, contact.addressLine2]
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .join(', ');
+    final cityStateZip = [
+      contact.city.trim(),
+      contact.state.trim(),
+      contact.postalCode.trim(),
+    ].where((s) => s.isNotEmpty).join(' ');
+    final parts = <String>[];
+    if (line1.isNotEmpty) parts.add(line1);
+    if (cityStateZip.isNotEmpty) parts.add(cityStateZip);
+    if (contact.country.trim().isNotEmpty) parts.add(contact.country.trim());
+    if (parts.isEmpty) return '—';
+    return parts.join(', ');
+  }
+
+  Widget _contactMeta(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: _metaMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text.trim().isEmpty ? '—' : text.trim(),
+              style: AppFonts.bodyMedium(color: _metaMuted).copyWith(
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _contactRow(ContactModel contact, VendorModel vendor) {
+    final id = contact.id.trim();
+    final canOpen = id.isNotEmpty;
+    return InkWell(
+      onTap: !canOpen
+          ? null
+          : () async {
+              await context.push(ContactDetailPage.pathFor(id));
+              if (mounted) await _loadContactsForVendor(vendor);
+            },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    contact.contactName.trim().isEmpty
+                        ? 'Contact'
+                        : contact.contactName,
+                    style: AppFonts.titleMedium(color: AppColors.inkStrong)
+                        .copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      height: 1.2,
+                    ),
+                  ),
+                  _contactMeta(Icons.mail_outline_rounded, contact.email),
+                  _contactMeta(Icons.phone_outlined, contact.phone),
+                  _contactMeta(
+                    Icons.place_outlined,
+                    _contactAddressLine(contact),
+                  ),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(left: 4, top: 2),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFD1D5DB),
+                size: 26,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _contactsTabBody(VendorModel vendor) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: _sectionTitle('Contacts'),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+          child: _searchBar(_contactSearchController, 'Search contacts...'),
+        ),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => _loadContactsForVendor(vendor),
+            color: const Color(0xFF121212),
+            child: _contactsLoading
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(height: 120),
+                      Center(
+                        child: AppSkeletonScreenBody(
+                          style: AppSkeletonScreenBodyStyle.listRows,
+                          listRowCount: 6,
+                        ),
+                      ),
+                    ],
+                  )
+                : _contactsError != null
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: MediaQuery.sizeOf(context).height * 0.25,
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              _contactsError!,
+                              textAlign: TextAlign.center,
+                              style: AppFonts.bodyMedium(color: _labelGrey),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Center(
+                            child: FilledButton(
+                              onPressed: () => _loadContactsForVendor(vendor),
+                              child: const Text('Retry'),
+                            ),
+                          ),
+                        ],
+                      )
+                    : _filteredContacts.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              SizedBox(
+                                height: MediaQuery.sizeOf(context).height * 0.3,
+                              ),
+                              Center(
+                                child: Text(
+                                  'No contacts linked to this vendor yet.',
+                                  style: AppFonts.bodyMedium(color: _labelGrey),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          )
+                        : ListView.separated(
+                            padding: EdgeInsets.zero,
+                            itemCount: _filteredContacts.length,
+                            separatorBuilder: (_, _) => const Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: Color(0xFFE3E3E4),
+                            ),
+                            itemBuilder: (context, index) {
+                              return _contactRow(
+                                _filteredContacts[index],
+                                vendor,
+                              );
+                            },
+                          ),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _confirmDelete() async {
@@ -441,12 +673,7 @@ class _VendorDetailPageState extends ConsumerState<VendorDetailPage>
               controller: _tabController,
               children: [
                 _overviewTab(vendor),
-                _emptyTab(
-                  title: 'Contacts',
-                  message: 'No contacts linked to this vendor yet.',
-                  searchController: _contactSearchController,
-                  searchHint: 'Search contacts...',
-                ),
+                _contactsTabBody(vendor),
                 _emptyTab(
                   title: 'Projects',
                   message: 'No projects linked to this vendor yet.',

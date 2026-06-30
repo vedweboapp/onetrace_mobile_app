@@ -101,6 +101,8 @@ class _EmployeeJobSafetyVerificationPageState
             );
       }
 
+      await ref.read(employeeJobRepositoryProvider).markJobStarted(jobId);
+
       ref.read(employeeJobSessionProvider.notifier).startJob(jobId);
       if (!mounted) return;
       context.pushReplacement(

@@ -1,23 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/utils/debounced_search.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/features/dashboard/data/purchase_order_models.dart';
+import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
+import 'package:red5/features/dashboard/presentation/purchase_order_list_refresh.dart';
 import 'package:red5/features/dashboard/presentation/views/purchase_order_detail_page.dart';
 
-/// Admin purchase order list (UI preview until PO API is available).
-class PurchaseOrdersListPage extends StatefulWidget {
+class PurchaseOrdersListPage extends ConsumerStatefulWidget {
   const PurchaseOrdersListPage({super.key});
 
   @override
-  State<PurchaseOrdersListPage> createState() => _PurchaseOrdersListPageState();
+  ConsumerState<PurchaseOrdersListPage> createState() =>
+      _PurchaseOrdersListPageState();
 }
 
-class _PurchaseOrdersListPageState extends State<PurchaseOrdersListPage> {
+class _PurchaseOrdersListPageState extends ConsumerState<PurchaseOrdersListPage> {
   final _searchController = TextEditingController();
   final _searchDebounce = DebouncedSearch();
+  final List<PurchaseOrderListItem> _orders = <PurchaseOrderListItem>[];
 
   static const _searchBg = Color(0xFFF5F5F5);
   static const _divider = Color(0xFFE8E8E8);
@@ -27,37 +33,69 @@ class _PurchaseOrdersListPageState extends State<PurchaseOrdersListPage> {
   static final _amountFormat = NumberFormat.currency(symbol: r'$');
   static final _dateFormat = DateFormat('MMM d, yyyy');
 
-  static final _allOrders = PurchaseOrderMockData.listItems;
-
-  List<PurchaseOrderListItem> _filtered = List.of(_allOrders);
+  bool _isLoading = false;
+  bool _isLoadingMore = false;
+  String? _error;
+  int _page = 1;
+  int _totalPages = 1;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _fetchOrders(reset: true);
   }
 
   void _onSearchChanged() {
     setState(() {});
-    _searchDebounce.schedule(_applySearch);
+    _searchDebounce.schedule(() => _fetchOrders(reset: true));
   }
 
-  void _applySearch() {
-    final query = _searchController.text.trim().toLowerCase();
-    setState(() {
-      if (query.isEmpty) {
-        _filtered = List.of(_allOrders);
-        return;
-      }
-      _filtered = _allOrders
-          .where(
-            (item) =>
-                item.id.toLowerCase().contains(query) ||
-                item.vendorName.toLowerCase().contains(query) ||
-                item.category.toLowerCase().contains(query),
-          )
-          .toList();
-    });
+  Future<void> _fetchOrders({bool reset = false}) async {
+    if (reset) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    } else {
+      if (_isLoadingMore || _page >= _totalPages) return;
+      setState(() => _isLoadingMore = true);
+    }
+
+    try {
+      final api = ref.read(purchaseOrdersApiClientProvider);
+      final nextPage = reset ? 1 : (_page + 1);
+      final result = await api.fetchPurchaseOrdersPage(
+        page: nextPage,
+        pageSize: PurchaseOrdersApiClient.defaultPageSize,
+        search: _searchController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        if (reset) {
+          _orders
+            ..clear()
+            ..addAll(result.items);
+        } else {
+          _orders.addAll(result.items);
+        }
+        _page = result.currentPage;
+        _totalPages = result.totalPages;
+        _isLoading = false;
+        _isLoadingMore = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+        _error = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load purchase orders',
+        );
+      });
+    }
   }
 
   @override
@@ -154,7 +192,7 @@ class _PurchaseOrdersListPageState extends State<PurchaseOrdersListPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      item.id,
+                      item.purchaseOrderNumber,
                       style: AppFonts.titleMedium(color: AppColors.inkStrong)
                           .copyWith(
                             fontWeight: FontWeight.w700,
@@ -274,20 +312,75 @@ class _PurchaseOrdersListPageState extends State<PurchaseOrdersListPage> {
     );
   }
 
+  Widget _errorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _error ?? 'Failed to load purchase orders',
+              textAlign: TextAlign.center,
+              style: AppFonts.bodyMedium(color: _muted),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => _fetchOrders(reset: true),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(purchaseOrderListRefreshTickProvider, (previous, next) {
+      if (previous != next) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _fetchOrders(reset: true);
+        });
+      }
+    });
+
     return ColoredBox(
       color: AppColors.white,
       child: Column(
         children: [
           _searchBar(),
           Expanded(
-            child: _filtered.isEmpty
+            child: _isLoading && _orders.isEmpty
+                ? const AppSkeletonScreenBody(
+                    style: AppSkeletonScreenBodyStyle.listRows,
+                  )
+                : _error != null && _orders.isEmpty
+                ? _errorState()
+                : _orders.isEmpty
                 ? _emptyState()
-                : ListView.builder(
-                    itemCount: _filtered.length,
-                    itemBuilder: (context, index) =>
-                        _orderTile(_filtered[index]),
+                : NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification.metrics.pixels >=
+                              notification.metrics.maxScrollExtent - 200 &&
+                          !_isLoadingMore &&
+                          _page < _totalPages) {
+                        _fetchOrders();
+                      }
+                      return false;
+                    },
+                    child: ListView.builder(
+                      itemCount: _orders.length + (_isLoadingMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index >= _orders.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return _orderTile(_orders[index]);
+                      },
+                    ),
                   ),
           ),
         ],

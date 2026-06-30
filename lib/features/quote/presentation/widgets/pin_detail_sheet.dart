@@ -425,6 +425,8 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
       return Text(
         _displayOrDash(value),
         textAlign: TextAlign.right,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
         style: AppFonts.bodySmall(color: _sheetInk).copyWith(
           fontSize: 13,
           fontWeight: FontWeight.w600,
@@ -433,6 +435,7 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
     }
 
     final statusChip = Container(
+      constraints: const BoxConstraints(maxWidth: 168),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: _statusBg(_status),
@@ -443,11 +446,15 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
         children: [
           Icon(_statusIcon(_status), size: 14, color: _statusFg(_status)),
           const SizedBox(width: 6),
-          Text(
-            _status,
-            style: AppFonts.labelMedium(color: _statusFg(_status)).copyWith(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          Flexible(
+            child: Text(
+              _status,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppFonts.labelMedium(color: _statusFg(_status)).copyWith(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -484,6 +491,8 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                         const SizedBox(height: 4),
                         Text(
                           subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: AppFonts.bodyMedium(color: _sheetMuted).copyWith(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
@@ -493,44 +502,70 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
                     ),
                   ),
                 ),
-                if (_isEditing) ...[
-                  TextButton(
-                    onPressed: _resetFormFromPin,
-                    child: Text('Cancel', style: TextStyle(color: _sheetMuted)),
-                  ),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFB70011),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                const SizedBox(width: 8),
+                if (_isEditing)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton(
+                        onPressed: _resetFormFromPin,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: Text(
+                          'Cancel',
+                          style: TextStyle(color: _sheetMuted),
+                        ),
                       ),
-                    ),
-                    onPressed: _saveChanges,
-                    child: const Text('Save'),
-                  ),
-                ] else ...[
-                  OutlinedButton.icon(
-                    onPressed: () => setState(() => _isEditing = true),
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: const Text('Edit'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.inkStrong,
-                      side: const BorderSide(color: Color(0xFFD9D9DC)),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFB70011),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          visualDensity: VisualDensity.compact,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: _saveChanges,
+                        child: const Text('Save'),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                    ],
+                  )
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => setState(() => _isEditing = true),
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: const Text('Edit'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.inkStrong,
+                          side: const BorderSide(color: Color(0xFFD9D9DC)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
                       ),
-                    ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded, size: 22),
+                        color: _sheetMuted,
+                        splashRadius: 22,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 36,
+                          minHeight: 36,
+                        ),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded, size: 22),
-                    color: _sheetMuted,
-                  ),
-                ],
               ],
             ),
           ),
@@ -539,6 +574,11 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
               controller: widget.scrollController,
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
               children: [
+                detailRow(
+                  Icons.folder_outlined,
+                  'Group',
+                  textValue(p.groupName),
+                ),
                 detailRow(
                   Icons.inventory_2_outlined,
                   'Product Name',

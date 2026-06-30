@@ -7,6 +7,8 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import 'package:red5/core/utils/phone_number_utils.dart';
 import 'package:red5/core/widgets/app_phone_text_field.dart';
+import 'package:red5/core/places/place_address.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
@@ -55,7 +57,7 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
 
   bool get _isEditing => widget.existing != null;
 
-  static const _countries = <String>[
+  static final _countries = <String>[
     'United States',
     'India',
     'United Kingdom',
@@ -517,79 +519,42 @@ class _AddContactPageState extends ConsumerState<AddContactPage> {
                       onCountryChanged: (c) => _phoneCountry = c,
                     ),
                     _sectionLabel('Address'),
-                    _label('Address Line 1'),
-                    const SizedBox(height: 8),
-                    AppTextField(
-                      controller: _address1,
-                      hintText: 'Street address',
-                    ),
-                    const SizedBox(height: 14),
-                    _label('Address Line 2'),
-                    const SizedBox(height: 8),
-                    AppTextField(
-                      controller: _address2,
-                      hintText: 'Suite, unit, etc. (optional)',
-                    ),
-                    const SizedBox(height: 14),
-                    _label('Country', required: true),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: _country,
-                      items: _countries
-                          .map(
-                            (country) => DropdownMenuItem<String>(
-                              value: country,
-                              child: Text(country),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _isSubmitting
-                          ? null
-                          : (value) =>
-                                setState(() => _country = value ?? _country),
-                      decoration: _dropdownDecoration(),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('City'),
-                              const SizedBox(height: 8),
-                              AppTextField(
-                                controller: _city,
-                                hintText: 'e.g. New York',
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label('State / Province'),
-                              const SizedBox(height: 8),
-                              AppTextField(
-                                controller: _state,
-                                hintText: 'e.g. NY',
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _label('Postal Code', required: true),
-                    const SizedBox(height: 8),
-                    AppTextField(
-                      controller: _postalCode,
-                      hintText: 'ZIP or Postal Code',
-                      validator: _postalCodeValidator,
-                      keyboardType: TextInputType.number,
+                    AppAddressFields(
+                      line1: _address1,
+                      line2: _address2,
+                      city: _city,
+                      state: _state,
+                      postalCode: _postalCode,
+                      enabled: !_isSubmitting,
+                      layout: AppAddressLayout.entityWithCountryDropdown,
+                      line2Hint: 'Suite, unit, etc. (optional)',
+                      cityHint: 'e.g. New York',
+                      stateHint: 'e.g. NY',
+                      postalCodeHint: 'ZIP or Postal Code',
+                      postalCodeLabel: 'Postal Code',
+                      postalCodeValidator: _postalCodeValidator,
+                      countryDropdownValue: _country,
+                      countryDropdownOptions: _countries,
+                      onCountryDropdownChanged: (value) =>
+                          setState(() => _country = value),
+                      dropdownDecoration: _dropdownDecoration(),
+                      labelBuilder: (text, {required = false}) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _label(text, required: required),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                      onCountryResolved: (country) {
+                        final matched =
+                            matchCountryOption(country, _countries) ?? country;
+                        setState(() {
+                          if (!_countries.contains(matched)) {
+                            _countries.insert(0, matched);
+                          }
+                          _country = matched;
+                        });
+                      },
                     ),
                   ],
                 ),

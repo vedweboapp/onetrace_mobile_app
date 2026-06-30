@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -7,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/employee_role/forms/data/signature_form_value.dart';
+
+export 'package:red5/employee_role/forms/data/signature_form_value.dart';
 
 /// Wins pan gestures over ancestor scrollables (e.g. [ListView]).
 class _EagerPanGestureRecognizer extends PanGestureRecognizer {
@@ -277,47 +279,4 @@ class _SignaturePainter extends CustomPainter {
     return oldDelegate.strokes != strokes ||
         oldDelegate.showPlaceholder != showPlaceholder;
   }
-}
-
-/// Restores saved signature stroke data from API / draft payloads.
-List<List<Offset>> strokesFromSignatureValue(String raw) {
-  final trimmed = raw.trim();
-  if (trimmed.isEmpty) return const [];
-
-  try {
-    final decoded = jsonDecode(trimmed);
-    if (decoded is! Map) return const [];
-    final strokes = decoded['strokes'];
-    if (strokes is! List) return const [];
-    return strokes.map((stroke) {
-      if (stroke is! List) return <Offset>[];
-      return stroke.map((point) {
-        if (point is! Map) return Offset.zero;
-        final x = (point['x'] as num?)?.toDouble() ?? 0;
-        final y = (point['y'] as num?)?.toDouble() ?? 0;
-        return Offset(x, y);
-      }).toList(growable: false);
-    }).toList(growable: false);
-  } catch (_) {
-    return const [];
-  }
-}
-
-/// Serializes signature strokes for form submission payloads.
-Map<String, dynamic>? signatureValueFromStrokes(List<List<Offset>> strokes) {
-  if (strokes.every((stroke) => stroke.length < 2)) return null;
-  return <String, dynamic>{
-    'signed': true,
-    'strokes': strokes
-        .where((stroke) => stroke.length >= 2)
-        .map(
-          (stroke) => stroke
-              .map((point) => <String, double>{
-                    'x': point.dx,
-                    'y': point.dy,
-                  })
-              .toList(growable: false),
-        )
-        .toList(growable: false),
-  };
 }

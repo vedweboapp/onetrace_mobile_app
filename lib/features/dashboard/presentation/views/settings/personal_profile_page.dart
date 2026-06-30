@@ -15,6 +15,7 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import 'package:red5/core/utils/phone_number_utils.dart';
 import 'package:red5/core/widgets/app_phone_text_field.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
@@ -1887,134 +1888,36 @@ class _PersonalProfilePageState extends ConsumerState<PersonalProfilePage>
         ],
         const SizedBox(height: 28),
         _sectionHeader('ADDRESS'),
-        _label('Address Line 1'),
-        AppTextField(
-          controller: _addr1Controller,
-          hintText: '',
+        AppAddressFields(
+          line1: _addr1Controller,
+          line2: _addr2Controller,
+          city: _cityController,
+          state: _stateController,
+          postalCode: _zipController,
           enabled: enabled,
+          layout: AppAddressLayout.profile,
           hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-        ),
-        const SizedBox(height: 14),
-        _label('Address Line 2'),
-        AppTextField(
-          controller: _addr2Controller,
-          hintText: '',
-          enabled: enabled,
-          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-        ),
-        const SizedBox(height: 14),
-        _label('City'),
-        AppTextField(
-          controller: _cityController,
-          hintText: '',
-          enabled: enabled,
-          hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-        ),
-        const SizedBox(height: 14),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('State'),
-                  AppTextField(
-                    controller: _stateController,
-                    hintText: '',
-                    enabled: enabled,
-                    hintStyle: const TextStyle(
-                      color: Colors.transparent,
-                      height: 0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('ZIP Code'),
-                  AppTextField(
-                    controller: _zipController,
-                    hintText: '',
-                    keyboardType: TextInputType.text,
-                    enabled: enabled,
-                    hintStyle: const TextStyle(
-                      color: Colors.transparent,
-                      height: 0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          labelBuilder: (text, {required = false}) => _label(text),
+          onPlaceSelected: (_) {
+            if (mounted) setState(() {});
+          },
         ),
         if (_editable) ...[
           _addRowButton(label: 'Add Address', onPressed: _addAddressBlock),
           if (_showExtraAddress) ...[
             const SizedBox(height: 20),
-            _label('Address Line 1'),
-            AppTextField(
-              controller: _extraAddr1,
-              hintText: '',
+            AppAddressFields(
+              line1: _extraAddr1,
+              line2: _extraAddr2,
+              city: _extraCity,
+              state: _extraState,
+              postalCode: _extraZip,
+              layout: AppAddressLayout.profile,
               hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-            ),
-            const SizedBox(height: 14),
-            _label('Address Line 2'),
-            AppTextField(
-              controller: _extraAddr2,
-              hintText: '',
-              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-            ),
-            const SizedBox(height: 14),
-            _label('City'),
-            AppTextField(
-              controller: _extraCity,
-              hintText: '',
-              hintStyle: const TextStyle(color: Colors.transparent, height: 0),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('State'),
-                      AppTextField(
-                        controller: _extraState,
-                        hintText: '',
-                        hintStyle: const TextStyle(
-                          color: Colors.transparent,
-                          height: 0,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('ZIP Code'),
-                      AppTextField(
-                        controller: _extraZip,
-                        hintText: '',
-                        keyboardType: TextInputType.text,
-                        hintStyle: const TextStyle(
-                          color: Colors.transparent,
-                          height: 0,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              labelBuilder: (text, {required = false}) => _label(text),
+              onPlaceSelected: (_) {
+                if (mounted) setState(() {});
+              },
             ),
           ],
         ],
@@ -2106,3 +2009,4 @@ class _AppearanceButton extends StatelessWidget {
     );
   }
 }
+

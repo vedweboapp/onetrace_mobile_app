@@ -31,6 +31,7 @@ import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/features/dashboard/data/zoho_integration_api_client.dart';
 import 'package:red5/features/vendors/data/vendors_api_client.dart';
+import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -121,10 +122,32 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
           Headers.acceptHeader: Headers.jsonContentType,
           Headers.contentTypeHeader: Headers.jsonContentType,
         },
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 300,
       ),
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return VendorsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<PurchaseOrdersApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.purchaseOrdersBaseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 300,
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return PurchaseOrdersApiClient(dio: dio);
   });
 
   sl.registerLazySingleton<ZohoIntegrationApiClient>(() {
@@ -171,10 +194,13 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
         sendTimeout: const Duration(seconds: 30),
+        followRedirects: true,
         headers: const {
           Headers.acceptHeader: Headers.jsonContentType,
           Headers.contentTypeHeader: Headers.jsonContentType,
         },
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 300,
       ),
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));

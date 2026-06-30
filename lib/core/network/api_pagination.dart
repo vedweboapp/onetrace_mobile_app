@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:red5/core/network/api_int_parsing.dart';
 
 /// Default list page size for paginated REST endpoints.
@@ -19,12 +21,25 @@ class ApiPageMeta {
 }
 
 Map<String, dynamic> readApiMap(dynamic raw) {
-  if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is Map) {
+    return Map<String, dynamic>.from(
+      raw.map((k, v) => MapEntry(k.toString(), v)),
+    );
+  }
+  if (raw is String && raw.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(
+          decoded.map((k, v) => MapEntry(k.toString(), v)),
+        );
+      }
+    } catch (_) {}
+  }
   return const <String, dynamic>{};
 }
 
-/// Reads list rows from common API envelope shapes (`data`, `results`, nested pagination).
-List<Map<String, dynamic>> readApiRows(Map<String, dynamic> root) {
+List<Map<String, dynamic>>? _readApiRowsFromListKeys(Map<String, dynamic> root) {
   for (final key in const ['data', 'results', 'items']) {
     final raw = root[key];
     if (raw is List) {
@@ -34,17 +49,37 @@ List<Map<String, dynamic>> readApiRows(Map<String, dynamic> root) {
           .toList();
     }
   }
+  return null;
+}
 
-  final pagination = readApiMap(root['pagination']);
-  for (final key in const ['data', 'results']) {
-    final nested = pagination[key];
-    if (nested is List) {
-      return nested
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
+/// Pagination block from root or nested under `data.pagination`.
+Map<String, dynamic> readApiPaginationBlock(Map<String, dynamic> root) {
+  final nested = readApiMap(readApiMap(root['data'])['pagination']);
+  if (nested.isNotEmpty) return nested;
+  return readApiMap(root['pagination']);
+}
+
+/// Reads list rows from common API envelope shapes (`data`, `results`, nested pagination).
+List<Map<String, dynamic>> readApiRows(Map<String, dynamic> root) {
+  final direct = _readApiRowsFromListKeys(root);
+  if (direct != null) return direct;
+
+  final data = root['data'];
+  if (data is Map) {
+    final dataMap = Map<String, dynamic>.from(
+      data.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    final nested = _readApiRowsFromListKeys(dataMap);
+    if (nested != null) return nested;
+
+    final fromDataPagination = _readApiRowsFromListKeys(
+      readApiMap(dataMap['pagination']),
+    );
+    if (fromDataPagination != null) return fromDataPagination;
   }
+
+  final fromPagination = _readApiRowsFromListKeys(readApiPaginationBlock(root));
+  if (fromPagination != null) return fromPagination;
 
   return const <Map<String, dynamic>>[];
 }
@@ -55,16 +90,64 @@ Map<String, dynamic> readApiEntityBody(Map<String, dynamic> root) {
   return data.isNotEmpty ? data : root;
 }
 
+/// Entity from create/update responses when `data` is an object or a list.
+Map<String, dynamic> readApiMutationEntityBody(
+  Map<String, dynamic> root, {
+  Map<String, dynamic>? matchPayload,
+}) {
+  final data = root['data'];
+  if (data is Map) return readApiMap(data);
+
+  if (data is List && data.isNotEmpty) {
+    final rows = data
+        .whereType<Map>()
+        .map(
+          (row) => Map<String, dynamic>.from(
+            row.map((k, v) => MapEntry(k.toString(), v)),
+          ),
+        )
+        .toList();
+    if (rows.isEmpty) return readApiEntityBody(root);
+
+    if (matchPayload != null) {
+      final email = matchPayload['email']?.toString().trim().toLowerCase();
+      if (email != null && email.isNotEmpty) {
+        for (final row in rows) {
+          final rowEmail = row['email']?.toString().trim().toLowerCase();
+          if (rowEmail == email) return row;
+        }
+      }
+
+      final name = matchPayload['name']?.toString().trim().toLowerCase();
+      if (name != null && name.isNotEmpty) {
+        for (final row in rows) {
+          final rowName = row['name']?.toString().trim().toLowerCase();
+          if (rowName == name) return row;
+        }
+      }
+    }
+
+    rows.sort((a, b) {
+      final idA = readApiIntFromMap(a, const ['id']) ?? 0;
+      final idB = readApiIntFromMap(b, const ['id']) ?? 0;
+      return idB.compareTo(idA);
+    });
+    return rows.first;
+  }
+
+  return readApiEntityBody(root);
+}
+
 bool readApiHasNextPage(Map<String, dynamic> root) {
   final next = root['next'];
   if (next != null && next.toString().trim().isNotEmpty) return true;
-  final pagination = readApiMap(root['pagination']);
+  final pagination = readApiPaginationBlock(root);
   final pagNext = pagination['next'];
   return pagNext != null && pagNext.toString().trim().isNotEmpty;
 }
 
 ApiPageMeta readApiPageMeta(Map<String, dynamic> root, {required int page}) {
-  final pagination = readApiMap(root['pagination']);
+  final pagination = readApiPaginationBlock(root);
   final currentPage =
       readApiIntFromMap(pagination, const ['current_page']) ??
       readApiIntFromMap(root, const ['current_page', 'page']) ??

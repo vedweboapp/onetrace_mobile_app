@@ -24,8 +24,12 @@ import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_feature_flags.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
+import 'package:red5/core/models/named_id_option.dart';
 import 'package:red5/features/dashboard/presentation/widgets/pin_status_delete_dialog.dart';
 import 'package:red5/features/dashboard/presentation/widgets/pin_status_form_sheet.dart';
+import 'package:red5/features/forms/data/form_models.dart';
+import 'package:red5/features/forms/data/form_picker_utils.dart';
+import 'package:red5/features/forms/data/forms_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 /// Route payload for [DrawingCanvasPage]. Use [toExtra] with GoRouter and
@@ -147,6 +151,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   List<GroupItemOption> _groupOptions = const <GroupItemOption>[];
   List<CompositeItemOption> _productOptions = const <CompositeItemOption>[];
   final Map<int, String> _abbreviationByCompositeItemId = <int, String>{};
+  final Map<int, int> _installationTypeByCompositeItemId = <int, int>{};
   int? _selectedGroupId;
   int? _selectedCompositeItemId;
 
@@ -221,7 +226,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   String? _projectId;
   String? _levelId;
   bool _isSubmitting = false;
-  bool _isFetchingRemoteDrawing = false;
+  bool _isDrawingLoading = true;
   String? _remoteDrawingError;
   double? _activeContentAspectRatio;
   Rect? _lastObservedContentRect;
@@ -312,28 +317,34 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   Future<void> _initializeDrawingAndMarkup() async {
-    await _ensureDrawingSourceReady();
     if (!mounted) return;
-    await _refreshActiveContentAspectRatio();
-    if (!mounted) return;
-    if (_isPdfFile) {
-      final path = (_activeFilePath ?? '').trim();
-      if (_pdfMetadataCache == null && path.isNotEmpty) {
-        await _loadPdfMetadata(path);
+    setState(() => _isDrawingLoading = true);
+    try {
+      await _ensureDrawingSourceReady();
+      if (!mounted) return;
+      await _refreshActiveContentAspectRatio();
+      if (!mounted) return;
+      if (_isPdfFile) {
+        final path = (_activeFilePath ?? '').trim();
+        if (_pdfMetadataCache == null && path.isNotEmpty) {
+          await _loadPdfMetadata(path);
+        }
+      }
+      if (!mounted) return;
+      await _loadSavedLevelMarkup();
+      if (!mounted) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      _realignMarkupFromApiSources();
+      if (!mounted) return;
+      await _hydratePinAbbreviationsForLoadedPlots();
+      if (!mounted) return;
+      await _restoreGroupProductSelectionFromLoadedPins();
+    } finally {
+      if (mounted) {
+        setState(() => _isDrawingLoading = false);
       }
     }
-    if (!mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        await _loadSavedLevelMarkup();
-        if (!mounted) return;
-        _realignMarkupFromApiSources();
-        if (_isPdfFile && _pdfController != null) {
-          setState(() {});
-        }
-      });
-    });
   }
 
   /// Re-applies plot/pin positions after the letterboxed content rect is known.
@@ -447,10 +458,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     if (_hasFile) return;
     final remote = (widget.remoteDrawingUrl ?? '').trim();
     if (remote.isEmpty) return;
-    setState(() {
-      _isFetchingRemoteDrawing = true;
-      _remoteDrawingError = null;
-    });
+    setState(() => _remoteDrawingError = null);
     try {
       final api = ref.read(quoteProjectApiClientProvider);
       final path = await api.downloadDrawingForLocalEdit(remote);
@@ -462,16 +470,12 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         if (!_uploadedPdfPaths.any((p) => _pdfStorageKey(p) == k)) {
           _uploadedPdfPaths.add(k);
         }
-        _isFetchingRemoteDrawing = false;
         _remoteDrawingError = null;
       });
       _initPdfControllerForActivePath();
-      unawaited(_refreshActiveContentAspectRatio());
-      if (mounted) setState(() {});
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _isFetchingRemoteDrawing = false;
         _remoteDrawingError = ApiResponseMessage.fromAnyError(
           e,
           genericFallback: 'Could not download drawing for editing',
@@ -609,8 +613,26 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     });
   }
 
+  Widget _buildDrawingLoadingPlaceholder() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Loading drawing…',
+          style: AppFonts.bodySmall(color: AppColors.muted),
+        ),
+      ],
+    );
+  }
+
   Widget _buildDrawingPreview() {
-    if (_isFetchingRemoteDrawing) {
+    if (_isDrawingLoading) {
       return Container(
         width: double.infinity,
         height: double.infinity,
@@ -619,23 +641,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: const Color(0xFFDADADD)),
         ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 28,
-                height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Loading drawing…',
-                style: AppFonts.bodySmall(color: AppColors.muted),
-              ),
-            ],
-          ),
-        ),
+        child: Center(child: _buildDrawingLoadingPlaceholder()),
       );
     }
     if (_remoteDrawingError != null) {
@@ -1684,10 +1690,13 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
             pdfPoint: pdfPoint,
             productName: product,
             abbreviation: abbreviation,
-            status: 'In Progress',
-            statusId: _statusIdByName('In Progress'),
+            status: _defaultPinStatusName(),
+            statusId: _defaultPinStatusId(),
             groupId: selectedGroupId,
             compositeItemId: selectedCompositeItemId,
+            installationTypeId:
+                _installationTypeIdForCompositeItem(selectedCompositeItemId),
+            groupName: group,
             quantity: 1,
             blockName: _blockController.text.trim(),
             levelName: _levelController.text.trim(),
@@ -1732,6 +1741,18 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return bestHit;
   }
 
+  /// 1-based pin label across every plot region on this level (not per area).
+  int _globalPinDisplayNumber({
+    required int regionIndex,
+    required int pinIndex,
+  }) {
+    var prior = 0;
+    for (var r = 0; r < regionIndex && r < _regions.length; r++) {
+      prior += _regions[r].pins.length;
+    }
+    return prior + pinIndex + 1;
+  }
+
   Future<void> _openPinDetailSheet({
     required int regionIndex,
     required int pinIndex,
@@ -1745,6 +1766,25 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       _selectedPinIndex = pinIndex;
     });
 
+    final resolvedInstallationTypeId =
+        currentPin.installationTypeId ??
+        _installationTypeIdForCompositeItem(currentPin.compositeItemId) ??
+        await _resolveInstallationTypeForPin(currentPin);
+
+    if (resolvedInstallationTypeId != null &&
+        currentPin.installationTypeId == null &&
+        mounted) {
+      setState(() {
+        final pins = List<_CanvasPin>.from(_regions[regionIndex].pins);
+        if (pinIndex >= 0 && pinIndex < pins.length) {
+          pins[pinIndex] = pins[pinIndex].copyWith(
+            installationTypeId: resolvedInstallationTypeId,
+          );
+          _regions[regionIndex] = _regions[regionIndex].copyWith(pins: pins);
+        }
+      });
+    }
+
     final result = await showModalBottomSheet<_PinSheetResult>(
       context: context,
       isScrollControlled: true,
@@ -1755,14 +1795,24 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       isDismissible: true,
       enableDrag: true,
       builder: (ctx) => _PinDetailBottomSheet(
-        pinNumber: pinIndex + 1,
-        pin: currentPin,
+        pinNumber: _globalPinDisplayNumber(
+          regionIndex: regionIndex,
+          pinIndex: pinIndex,
+        ),
+        pin: currentPin.copyWith(
+          installationTypeId:
+              resolvedInstallationTypeId ?? currentPin.installationTypeId,
+        ),
+        installationTypeId: resolvedInstallationTypeId,
+        projectId: _projectId,
         pinStatuses: _pinStatuses,
         onCreatePinStatus: _createPinStatus,
         onEditPinStatus: _editPinStatus,
         onDeletePinStatus: _deletePinStatus,
         levelId: _levelId,
         levelLabel: _levelController.text.trim(),
+        groupLabel: _groupLabelForPin(currentPin),
+        productOptionLabel: _productOptionLabelForPin(currentPin),
       ),
     );
     unfocusPrimary();
@@ -1947,6 +1997,48 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       if (abbr.isNotEmpty) {
         _abbreviationByCompositeItemId[product.id] = abbr;
       }
+      final installationTypeId = product.installationTypeId;
+      if (installationTypeId != null) {
+        _installationTypeByCompositeItemId[product.id] = installationTypeId;
+      }
+    }
+  }
+
+  int? _installationTypeIdForCompositeItem(int? compositeItemId) {
+    if (compositeItemId == null) return null;
+    for (final product in _productOptions) {
+      if (product.id == compositeItemId) {
+        return product.installationTypeId;
+      }
+    }
+    return _installationTypeByCompositeItemId[compositeItemId];
+  }
+
+  Future<int?> _resolveInstallationTypeForPin(_CanvasPin pin) async {
+    final cached = pin.installationTypeId ??
+        _installationTypeIdForCompositeItem(pin.compositeItemId);
+    if (cached != null) return cached;
+
+    final itemId = pin.compositeItemId;
+    if (itemId == null) return null;
+
+    final api = ref.read(quoteProjectApiClientProvider);
+    final groupId = pin.groupId;
+    if (groupId != null) {
+      try {
+        final products = await api.fetchCompositeItems(groupId: groupId);
+        _cacheCompositeItemAbbreviations(products);
+        final resolved = _installationTypeIdForCompositeItem(itemId);
+        if (resolved != null) return resolved;
+      } catch (_) {
+        // Fall through to single-item lookup.
+      }
+    }
+
+    try {
+      return await api.fetchItemInstallationTypeId(itemId);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -1978,25 +2070,82 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return _abbreviationFromLabel(pin.productName);
   }
 
+  String _groupLabelForPin(_CanvasPin pin) {
+    final stored = pin.groupName.trim();
+    if (stored.isNotEmpty) return stored;
+    for (final group in _groupOptions) {
+      if (group.id == pin.groupId) return group.name;
+    }
+    final id = pin.groupId;
+    return id != null ? 'Group #$id' : '';
+  }
+
+  String _productOptionLabelForPin(_CanvasPin pin) {
+    final name = pin.productName.trim();
+    if (name.isNotEmpty) {
+      final abbr = _pinDisplayAbbreviation(pin);
+      if (abbr.isNotEmpty && !name.startsWith('$abbr ·')) {
+        return '$abbr · $name';
+      }
+      return name;
+    }
+    for (final item in _productOptions) {
+      if (item.id == pin.compositeItemId) {
+        final abbr = item.abbreviation.trim();
+        return abbr.isNotEmpty ? '$abbr · ${item.name}' : item.name;
+      }
+    }
+    final id = pin.compositeItemId;
+    return id != null ? 'Product #$id' : '';
+  }
+
   Future<void> _hydratePinAbbreviationsForLoadedPlots() async {
     final groupIds = <int>{};
     for (final region in _regions) {
       for (final pin in region.pins) {
-        if (pin.abbreviation.trim().isNotEmpty) continue;
         final gid = pin.groupId;
-        if (gid != null) groupIds.add(gid);
+        if (gid == null) continue;
+        final needsAbbrev = pin.abbreviation.trim().isEmpty;
+        final needsInstallType =
+            pin.installationTypeId == null && pin.compositeItemId != null;
+        if (needsAbbrev || needsInstallType) groupIds.add(gid);
       }
     }
-    if (groupIds.isEmpty) return;
     final api = ref.read(quoteProjectApiClientProvider);
-    for (final groupId in groupIds) {
-      try {
-        final products = await api.fetchCompositeItems(groupId: groupId);
-        _cacheCompositeItemAbbreviations(products);
-      } catch (_) {
-        // Abbreviations are cosmetic; ignore lookup failures.
+    if (groupIds.isNotEmpty) {
+      for (final groupId in groupIds) {
+        try {
+          final products = await api.fetchCompositeItems(groupId: groupId);
+          _cacheCompositeItemAbbreviations(products);
+        } catch (_) {
+          // Abbreviations / installation types are best-effort.
+        }
       }
     }
+
+    final itemIdsNeedingType = <int>{};
+    for (final region in _regions) {
+      for (final pin in region.pins) {
+        if (pin.installationTypeId != null || pin.compositeItemId == null) {
+          continue;
+        }
+        if (_installationTypeIdForCompositeItem(pin.compositeItemId) != null) {
+          continue;
+        }
+        itemIdsNeedingType.add(pin.compositeItemId!);
+      }
+    }
+    for (final itemId in itemIdsNeedingType) {
+      try {
+        final typeId = await api.fetchItemInstallationTypeId(itemId);
+        if (typeId != null) {
+          _installationTypeByCompositeItemId[itemId] = typeId;
+        }
+      } catch (_) {
+        // Ignore per-item lookup failures.
+      }
+    }
+
     if (!mounted) return;
     var changed = false;
     final nextRegions = <_PlotRegion>[];
@@ -2004,18 +2153,32 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       var regionChanged = false;
       final nextPins = <_CanvasPin>[];
       for (final pin in region.pins) {
-        if (pin.abbreviation.trim().isNotEmpty) {
-          nextPins.add(pin);
-          continue;
+        var next = pin;
+        var pinChanged = false;
+
+        if (pin.abbreviation.trim().isEmpty) {
+          final abbr = _abbreviationForCompositeItem(pin.compositeItemId);
+          if (abbr.isNotEmpty) {
+            next = next.copyWith(abbreviation: abbr);
+            pinChanged = true;
+          }
         }
-        final abbr = _abbreviationForCompositeItem(pin.compositeItemId);
-        if (abbr.isEmpty) {
-          nextPins.add(pin);
-          continue;
+
+        if (next.installationTypeId == null && next.compositeItemId != null) {
+          final typeId = _installationTypeIdForCompositeItem(
+            next.compositeItemId,
+          );
+          if (typeId != null) {
+            next = next.copyWith(installationTypeId: typeId);
+            pinChanged = true;
+          }
         }
-        regionChanged = true;
-        changed = true;
-        nextPins.add(pin.copyWith(abbreviation: abbr));
+
+        if (pinChanged) {
+          regionChanged = true;
+          changed = true;
+        }
+        nextPins.add(next);
       }
       nextRegions.add(regionChanged ? region.copyWith(pins: nextPins) : region);
     }
@@ -2221,9 +2384,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                     _readNestedAbbreviation(p['composite_item']) ??
                     '');
             final productName = _readPinProductName(p);
+            final groupName = _readPinGroupName(p);
             final formName = _readPinFormName(p);
             final formId = _readPinFormId(p);
-            final attachmentNames = _readPinAttachments(p);
+            final attachments = _readPinAttachments(p);
             final description = _readStringFromPinMap(
               p,
               const ['description', 'remarks', 'notes'],
@@ -2250,7 +2414,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                         ? p['group'] as int
                         : int.tryParse('${p['group'] ?? ''}')) ??
                     _readNestedId(p['group']),
+                groupName: groupName,
                 compositeItemId: compositeItemId,
+                installationTypeId: _readPinInstallationTypeId(p) ??
+                    _installationTypeIdForCompositeItem(compositeItemId),
                 quantity:
                     (p['quantity'] is int
                         ? p['quantity'] as int
@@ -2264,7 +2431,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 description: description,
                 formName: formName,
                 formId: formId,
-                attachmentNames: attachmentNames,
+                attachments: attachments,
                 serverPinId: serverPinId,
               ),
             );
@@ -2297,8 +2464,6 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         }
       });
       if (mounted) setState(() {});
-      unawaited(_hydratePinAbbreviationsForLoadedPlots());
-      unawaited(_restoreGroupProductSelectionFromLoadedPins());
     } catch (_) {
       // keep UI editable even if preload fails
     }
@@ -2516,13 +2681,34 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return lines;
   }
 
+  static const String _defaultPinStatusLabel = 'To Do';
+
+  bool _statusNameMatchesToDo(String name) {
+    final normalized = name.trim().toLowerCase();
+    return normalized == 'to do' ||
+        normalized == 'todo' ||
+        normalized.contains('to do');
+  }
+
+  String _defaultPinStatusName() {
+    for (final s in _pinStatuses) {
+      final name = s.statusName.trim();
+      if (name.isNotEmpty && _statusNameMatchesToDo(name)) {
+        return name;
+      }
+    }
+    return _defaultPinStatusLabel;
+  }
+
+  int _defaultPinStatusId() => _statusIdByName(_defaultPinStatusName());
+
   String _statusNameById(int? statusId) {
-    if (statusId == null) return 'In Progress';
+    if (statusId == null) return _defaultPinStatusName();
     for (final s in _pinStatuses) {
       final parsed = int.tryParse(s.id);
       if (parsed == statusId) return s.statusName;
     }
-    return 'In Progress';
+    return _defaultPinStatusName();
   }
 
   int _statusIdByName(String statusName) {
@@ -2573,16 +2759,24 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           if (pin.levelName.trim().isNotEmpty)
             'level_name': pin.levelName.trim(),
           if (pin.zoneName.trim().isNotEmpty) 'plot_name': pin.zoneName.trim(),
-          if (pin.formId != null) 'form_id': pin.formId,
+          if (pin.formId != null) ...{
+            'form_id': pin.formId,
+            'project_form_id': pin.formId,
+          },
           if (pin.formName.trim().isNotEmpty) 'form_name': pin.formName.trim(),
+          if (pin.formId != null && pin.formName.trim().isNotEmpty)
+            'form': <String, dynamic>{
+              'id': pin.formId,
+              'name': pin.formName.trim(),
+            },
           'quantity': pin.quantity < 1 ? 1 : pin.quantity,
           if (pin.variation.trim().isNotEmpty)
             'variation': pin.variation.toLowerCase() == 'yes',
           'description': pin.description.trim(),
           'dropped_at': pin.droppedAt.toUtc().toIso8601String(),
           'attachments': [
-            for (final name in pin.attachmentNames)
-              <String, dynamic>{'name': name},
+            for (final attachment in pin.attachments)
+              _pinAttachmentPayload(attachment),
           ],
         });
       }
@@ -2768,7 +2962,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       clipBehavior: Clip.hardEdge,
       children: [
         Positioned.fill(child: _buildDrawingPreview()),
-        Positioned.fill(child: overlays),
+        if (!_isDrawingLoading) Positioned.fill(child: overlays),
       ],
     );
   }
@@ -2799,7 +2993,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   return const SizedBox.shrink();
                 }
                 final pinWidget = PinView(
-                  number: i + 1,
+                  number: _globalPinDisplayNumber(regionIndex: r, pinIndex: i),
                   abbreviation: abbr,
                   size: pinSize,
                   pointerHeight: pointerH,
@@ -2840,7 +3034,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 return const SizedBox.shrink();
               }
               final pinWidget = PinView(
-                number: selectedPin + 1,
+                number: _globalPinDisplayNumber(
+                  regionIndex: selectedRegion,
+                  pinIndex: selectedPin,
+                ),
                 abbreviation: abbr,
                 size: pinSize,
                 pointerHeight: pointerH,
@@ -3468,53 +3665,65 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                                   child: _buildCanvasStack(),
                                 ),
                         ),
-                        Positioned(
-                          right: 12,
-                          bottom: 74,
-                          child: Column(
-                            children: [
-                              InkWell(
-                                onTap: () => _zoomBy(1.2),
-                                borderRadius: BorderRadius.circular(10),
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: AppColors.white,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: const Color(0xFFE2E2E4),
-                                    ),
-                                  ),
-                                  child: const Icon(
-                                    Icons.add,
-                                    color: AppColors.inkStrong,
-                                  ),
+                        if (_isDrawingLoading)
+                          Positioned.fill(
+                            child: AbsorbPointer(
+                              child: ColoredBox(
+                                color: const Color(0xFFF3F3F4),
+                                child: Center(
+                                  child: _buildDrawingLoadingPlaceholder(),
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              InkWell(
-                                onTap: () => _zoomBy(1 / 1.2),
-                                borderRadius: BorderRadius.circular(10),
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: AppColors.white,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: const Color(0xFFE2E2E4),
+                            ),
+                          )
+                        else
+                          Positioned(
+                            right: 12,
+                            bottom: 74,
+                            child: Column(
+                              children: [
+                                InkWell(
+                                  onTap: () => _zoomBy(1.2),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: const Color(0xFFE2E2E4),
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.add,
+                                      color: AppColors.inkStrong,
                                     ),
                                   ),
-                                  child: const Icon(
-                                    Icons.remove,
-                                    color: AppColors.inkStrong,
+                                ),
+                                const SizedBox(height: 8),
+                                InkWell(
+                                  onTap: () => _zoomBy(1 / 1.2),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: const Color(0xFFE2E2E4),
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.remove,
+                                      color: AppColors.inkStrong,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
                       ],
                     );
                   },
@@ -3808,7 +4017,7 @@ String _readPinProductName(Map<String, dynamic> p) {
     const ['item_name', 'product_name', 'name', 'title'],
   );
   if (direct.isNotEmpty) return direct;
-  for (final key in const ['item', 'composite_item']) {
+  for (final key in const ['item', 'composite_item', 'item_key']) {
     final nested = _asStringKeyedMap(p[key]);
     if (nested == null) continue;
     final name = _readStringFromPinMap(
@@ -3818,6 +4027,20 @@ String _readPinProductName(Map<String, dynamic> p) {
     if (name.isNotEmpty) return name;
   }
   return '';
+}
+
+String _readPinGroupName(Map<String, dynamic> p) {
+  final direct = _readStringFromPinMap(
+    p,
+    const ['group_name', 'group_label'],
+  );
+  if (direct.isNotEmpty) return direct;
+  final nested = _asStringKeyedMap(p['group']);
+  if (nested == null) return '';
+  return _readStringFromPinMap(
+    nested,
+    const ['name', 'group_name', 'title', 'label'],
+  );
 }
 
 String _readPinBlockName(Map<String, dynamic> p, String fallback) {
@@ -3941,6 +4164,18 @@ String? _readNestedAbbreviation(dynamic value) {
   return null;
 }
 
+int? _readPinInstallationTypeId(Map<String, dynamic> map) {
+  final direct = readInstallationTypeId(map);
+  if (direct != null) return direct;
+  for (final key in const ['item', 'composite_item', 'item_key']) {
+    final nested = _asStringKeyedMap(map[key]);
+    if (nested == null) continue;
+    final id = readInstallationTypeId(nested);
+    if (id != null) return id;
+  }
+  return null;
+}
+
 String _readPinFormName(Map<String, dynamic> map) {
   for (final key in const [
     'form_name',
@@ -3991,10 +4226,10 @@ int? _readPinFormId(Map<String, dynamic> map) {
   return int.tryParse('${direct ?? ''}');
 }
 
-List<String> _readPinAttachments(Map<String, dynamic> map) {
+List<_PinAttachment> _readPinAttachments(Map<String, dynamic> map) {
   final raw = map['attachments'] ?? map['files'] ?? map['attachment'];
-  if (raw is! List) return const <String>[];
-  final out = <String>[];
+  if (raw is! List) return const <_PinAttachment>[];
+  final out = <_PinAttachment>[];
   for (final entry in raw) {
     if (entry is Map) {
       final nested = Map<String, dynamic>.from(
@@ -4003,15 +4238,48 @@ List<String> _readPinAttachments(Map<String, dynamic> map) {
       final name = nested['name']?.toString().trim() ??
           nested['file_name']?.toString().trim() ??
           nested['filename']?.toString().trim() ??
-          nested['url']?.toString().trim() ??
           '';
-      if (name.isNotEmpty) out.add(name);
+      final url = nested['url']?.toString().trim() ??
+          nested['file_url']?.toString().trim();
+      final idRaw = nested['id'];
+      final id = idRaw is int
+          ? idRaw
+          : (idRaw is num ? idRaw.toInt() : int.tryParse('${idRaw ?? ''}'));
+      final resolvedName = name.isNotEmpty
+          ? name
+          : (url != null && url.isNotEmpty
+                ? url.split('/').last
+                : '');
+      if (resolvedName.isEmpty) continue;
+      out.add(
+        _PinAttachment(
+          name: resolvedName,
+          url: url?.isNotEmpty == true ? url : null,
+          serverId: id,
+        ),
+      );
     } else {
       final text = entry.toString().trim();
-      if (text.isNotEmpty) out.add(text);
+      if (text.isNotEmpty) out.add(_PinAttachment(name: text));
     }
   }
   return out;
+}
+
+Map<String, dynamic> _pinAttachmentPayload(_PinAttachment attachment) {
+  final payload = <String, dynamic>{'name': attachment.name};
+  if (attachment.serverId != null) payload['id'] = attachment.serverId;
+  final url = attachment.url?.trim();
+  if (url != null && url.isNotEmpty) payload['url'] = url;
+  final path = attachment.localPath?.trim();
+  if (path != null && path.isNotEmpty) {
+    final file = File(path);
+    if (file.existsSync()) {
+      payload['file'] = base64Encode(file.readAsBytesSync());
+      payload['filename'] = attachment.name;
+    }
+  }
+  return payload;
 }
 
 class _PinTrianglePainter extends CustomPainter {
@@ -4277,6 +4545,20 @@ class _CanvasLine {
   final Offset end;
 }
 
+class _PinAttachment {
+  const _PinAttachment({
+    required this.name,
+    this.localPath,
+    this.url,
+    this.serverId,
+  });
+
+  final String name;
+  final String? localPath;
+  final String? url;
+  final int? serverId;
+}
+
 class _CanvasPin {
   const _CanvasPin({
     required this.offset,
@@ -4286,6 +4568,7 @@ class _CanvasPin {
     required this.status,
     this.statusId,
     this.groupId,
+    this.groupName = '',
     this.compositeItemId,
     required this.quantity,
     required this.blockName,
@@ -4296,7 +4579,8 @@ class _CanvasPin {
     required this.description,
     this.formName = '',
     this.formId,
-    this.attachmentNames = const <String>[],
+    this.installationTypeId,
+    this.attachments = const <_PinAttachment>[],
     this.serverPinId,
     this.contentNormX,
     this.contentNormY,
@@ -4316,6 +4600,7 @@ class _CanvasPin {
   final String status;
   final int? statusId;
   final int? groupId;
+  final String groupName;
   final int? compositeItemId;
   final int quantity;
   final String blockName;
@@ -4326,8 +4611,12 @@ class _CanvasPin {
   final String description;
   final String formName;
   final int? formId;
-  final List<String> attachmentNames;
+  final int? installationTypeId;
+  final List<_PinAttachment> attachments;
   final int? serverPinId;
+
+  List<String> get attachmentNames =>
+      attachments.map((attachment) => attachment.name).toList(growable: false);
 
   _CanvasPin copyWith({
     Offset? offset,
@@ -4337,6 +4626,7 @@ class _CanvasPin {
     String? status,
     int? statusId,
     int? groupId,
+    String? groupName,
     int? compositeItemId,
     int? quantity,
     String? blockName,
@@ -4347,7 +4637,8 @@ class _CanvasPin {
     String? description,
     String? formName,
     int? formId,
-    List<String>? attachmentNames,
+    int? installationTypeId,
+    List<_PinAttachment>? attachments,
     int? serverPinId,
     double? contentNormX,
     double? contentNormY,
@@ -4362,6 +4653,7 @@ class _CanvasPin {
       status: status ?? this.status,
       statusId: statusId ?? this.statusId,
       groupId: groupId ?? this.groupId,
+      groupName: groupName ?? this.groupName,
       compositeItemId: compositeItemId ?? this.compositeItemId,
       quantity: quantity ?? this.quantity,
       blockName: blockName ?? this.blockName,
@@ -4372,7 +4664,8 @@ class _CanvasPin {
       description: description ?? this.description,
       formName: formName ?? this.formName,
       formId: formId ?? this.formId,
-      attachmentNames: attachmentNames ?? this.attachmentNames,
+      installationTypeId: installationTypeId ?? this.installationTypeId,
+      attachments: attachments ?? this.attachments,
       serverPinId: serverPinId ?? this.serverPinId,
     );
   }
@@ -4392,7 +4685,7 @@ class _PinSheetResult {
   final bool removePin;
 }
 
-class _PinDetailBottomSheet extends StatefulWidget {
+class _PinDetailBottomSheet extends ConsumerStatefulWidget {
   const _PinDetailBottomSheet({
     required this.pinNumber,
     required this.pin,
@@ -4400,24 +4693,33 @@ class _PinDetailBottomSheet extends StatefulWidget {
     required this.onCreatePinStatus,
     required this.onEditPinStatus,
     required this.onDeletePinStatus,
+    this.installationTypeId,
+    this.projectId,
     this.levelId,
     this.levelLabel,
+    this.groupLabel = '',
+    this.productOptionLabel = '',
   });
 
   final int pinNumber;
   final _CanvasPin pin;
+  final int? installationTypeId;
+  final String? projectId;
   final List<PinStatusItem> pinStatuses;
   final Future<PinStatusItem?> Function() onCreatePinStatus;
   final Future<PinStatusItem?> Function(PinStatusItem) onEditPinStatus;
   final Future<bool> Function(PinStatusItem) onDeletePinStatus;
   final String? levelId;
   final String? levelLabel;
+  final String groupLabel;
+  final String productOptionLabel;
 
   @override
-  State<_PinDetailBottomSheet> createState() => _PinDetailBottomSheetState();
+  ConsumerState<_PinDetailBottomSheet> createState() =>
+      _PinDetailBottomSheetState();
 }
 
-class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
+class _PinDetailBottomSheetState extends ConsumerState<_PinDetailBottomSheet> {
   late final TextEditingController _productController;
   late final TextEditingController _descriptionController;
   late final TextEditingController _qtyController;
@@ -4427,8 +4729,14 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   late String _status;
   late String _variation;
   bool _isEditing = false;
-  late List<String> _attachmentNames;
+  late List<_PinAttachment> _attachments;
   int? _linkedFormId;
+  String _linkedFormName = '';
+  List<NamedIdOption> _formOptions = const [];
+  List<FormSummary> _matchedProjectForms = const [];
+  bool _isLoadingForms = false;
+  bool _formsLoadAttempted = false;
+  int? _installationTypeId;
   late List<PinStatusItem> _pinStatusCatalog;
 
   static const List<String> _fallbackStatuses = <String>[
@@ -4474,8 +4782,148 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     _variation = _variationOptions.contains(widget.pin.variation)
         ? widget.pin.variation
         : _variationOptions.first;
-    _attachmentNames = List<String>.from(widget.pin.attachmentNames);
+    _attachments = List<_PinAttachment>.from(widget.pin.attachments);
     _linkedFormId = widget.pin.formId;
+    _linkedFormName = widget.pin.formName.trim();
+    _installationTypeId =
+        widget.installationTypeId ?? widget.pin.installationTypeId;
+    unawaited(_bootstrapForms());
+  }
+
+  Future<void> _bootstrapForms() async {
+    await _resolveInstallationTypeId();
+    await _loadProjectForms();
+  }
+
+  Future<void> _resolveInstallationTypeId() async {
+    if (_installationTypeId != null) return;
+
+    final pin = widget.pin;
+    final itemId = pin.compositeItemId;
+    if (itemId == null) return;
+
+    final api = ref.read(quoteProjectApiClientProvider);
+    final groupId = pin.groupId;
+    if (groupId != null) {
+      try {
+        final items = await api.fetchCompositeItems(groupId: groupId);
+        for (final item in items) {
+          if (item.id == itemId && item.installationTypeId != null) {
+            if (!mounted) return;
+            setState(() => _installationTypeId = item.installationTypeId);
+            return;
+          }
+        }
+      } catch (_) {
+        // Fall through to single-item lookup.
+      }
+    }
+
+    try {
+      final id = await api.fetchItemInstallationTypeId(itemId);
+      if (!mounted || id == null) return;
+      setState(() => _installationTypeId = id);
+    } catch (_) {
+      // Form filter stays empty when type cannot be resolved.
+    }
+  }
+
+  int? get _effectiveInstallationTypeId =>
+      _installationTypeId ?? widget.installationTypeId;
+
+  Future<void> _loadProjectForms() async {
+    final projectId = int.tryParse((widget.projectId ?? '').trim());
+    if (projectId == null) {
+      setState(() => _formsLoadAttempted = true);
+      return;
+    }
+    setState(() {
+      _isLoadingForms = true;
+      _formsLoadAttempted = true;
+    });
+    try {
+      final rows = await ref
+          .read(formsApiClientProvider)
+          .fetchProjectForms(projectId: projectId);
+      if (!mounted) return;
+      final installationTypeId = _effectiveInstallationTypeId;
+      final filtered = rows.matchingInstallationType(installationTypeId);
+      setState(() {
+        _applyFilteredFormOptions(filtered);
+        _isLoadingForms = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _matchedProjectForms = const [];
+        _formOptions = const [];
+        _isLoadingForms = false;
+      });
+    }
+  }
+
+  FormSummary? _findProjectFormForId(int? formId) {
+    if (formId == null) return null;
+    for (final form in _matchedProjectForms) {
+      if (form.id == formId || form.templateFormId == formId) {
+        return form;
+      }
+    }
+    return null;
+  }
+
+  void _linkProjectForm(FormSummary form) {
+    _linkedFormId = form.id;
+    _linkedFormName = form.name;
+  }
+
+  void _syncLinkedFormFromMatches() {
+    final existingId = _linkedFormId ?? widget.pin.formId;
+    final matched = _findProjectFormForId(existingId);
+    if (matched != null) {
+      _linkProjectForm(matched);
+      return;
+    }
+
+    _linkedFormId = null;
+    _linkedFormName = '';
+
+    if (_matchedProjectForms.length == 1) {
+      _linkProjectForm(_matchedProjectForms.first);
+    }
+  }
+
+  void _applyFilteredFormOptions(List<FormSummary> filtered) {
+    _matchedProjectForms = filtered;
+    _formOptions = filtered.toActivePickerOptions();
+    _syncLinkedFormFromMatches();
+    _ensureLinkedFormOption();
+
+    if (_linkedFormId != null &&
+        !_formOptions.any((option) => option.id == _linkedFormId)) {
+      _linkedFormId = null;
+      _linkedFormName = '';
+      _syncLinkedFormFromMatches();
+      _ensureLinkedFormOption();
+    }
+  }
+
+  void _ensureLinkedFormOption() {
+    final linkedId = _linkedFormId;
+    if (linkedId == null) return;
+    if (_formOptions.any((option) => option.id == linkedId)) return;
+
+    final matched = _findProjectFormForId(linkedId);
+    if (matched == null) {
+      _linkedFormId = null;
+      _linkedFormName = '';
+      return;
+    }
+
+    _formOptions = [
+      ..._formOptions,
+      matched.toPickerOption,
+    ];
   }
 
   @override
@@ -4491,6 +4939,11 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
             ? _statusOptions.first
             : widget.pin.status;
       }
+    }
+    if (widget.installationTypeId != oldWidget.installationTypeId) {
+      _installationTypeId =
+          widget.installationTypeId ?? widget.pin.installationTypeId;
+      unawaited(_bootstrapForms());
     }
   }
 
@@ -4521,8 +4974,10 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     _variation = _variationOptions.contains(pin.variation)
         ? pin.variation
         : _variationOptions.first;
-    _attachmentNames = List<String>.from(pin.attachmentNames);
+    _attachments = List<_PinAttachment>.from(pin.attachments);
     _linkedFormId = pin.formId;
+    _linkedFormName = pin.formName.trim();
+    _ensureLinkedFormOption();
   }
 
   Future<void> _pickAttachments() async {
@@ -4544,11 +4999,142 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
       for (final file in result.files) {
         final name = file.name.trim();
         if (name.isEmpty) continue;
-        if (!_attachmentNames.contains(name)) {
-          _attachmentNames.add(name);
-        }
+        final duplicate = _attachments.any(
+          (attachment) =>
+              attachment.name == name &&
+              attachment.localPath == file.path?.trim(),
+        );
+        if (duplicate) continue;
+        _attachments.add(
+          _PinAttachment(
+            name: name,
+            localPath: file.path?.trim(),
+          ),
+        );
       }
     });
+  }
+
+  void _onFormSelected(int? formId) {
+    setState(() {
+      _linkedFormId = formId;
+      if (formId == null) {
+        _linkedFormName = '';
+        return;
+      }
+      for (final option in _formOptions) {
+        if (option.id == formId) {
+          _linkedFormName = option.name;
+          return;
+        }
+      }
+      _linkedFormName = 'Form #$formId';
+    });
+  }
+
+  Widget _formDropdownField() {
+    if (_isLoadingForms) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (_formOptions.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceHigh,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: Text(
+          _effectiveInstallationTypeId == null
+              ? 'Item installation type required to link a form'
+              : 'No project form matches this installation type',
+          style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+
+    if (_formOptions.length == 1) {
+      final label = _resolvedFormLabel().isNotEmpty
+          ? _resolvedFormLabel()
+          : _formOptions.first.name;
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceHigh,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: Text(
+          label,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    final selectedId = _formOptions.any((option) => option.id == _linkedFormId)
+        ? _linkedFormId
+        : null;
+
+    return DropdownButtonFormField<int?>(
+      isExpanded: true,
+      value: selectedId,
+      hint: const Text('Select form'),
+      iconEnabledColor: AppColors.inkStrong,
+      borderRadius: BorderRadius.circular(12),
+      items: [
+        const DropdownMenuItem<int?>(
+          value: null,
+          child: Text('None'),
+        ),
+        ..._formOptions.map(
+          (option) => DropdownMenuItem<int?>(
+            value: option.id,
+            child: Text(
+              option.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
+      onChanged: _onFormSelected,
+      decoration: const InputDecoration(
+        isDense: true,
+        filled: true,
+        fillColor: AppColors.white,
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: AppColors.borderLight),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: AppColors.borderLight),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: AppColors.textFieldFocusBorder),
+        ),
+      ),
+    );
   }
 
   int? _statusIdByNameLocal(String statusName) {
@@ -4923,53 +5509,64 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     return Text(
       _displayOrDash(value),
       textAlign: align,
+      maxLines: 3,
+      overflow: TextOverflow.ellipsis,
       style: _sheetValueStyle,
     );
   }
 
-  Widget _linkedFormTrailing(
-    String formName,
-    int? formId, {
-    bool alignStart = false,
-  }) {
+  String _formDisplayLabel(String formName, int? formId) {
     final label = formName.trim();
-    if (label.isEmpty && formId == null) {
-      return _detailTextValue('No form linked');
+    if (label.isNotEmpty) return label;
+    if (formId != null) {
+      final matched = _findProjectFormForId(formId);
+      if (matched != null && matched.name.trim().isNotEmpty) {
+        return matched.name.trim();
+      }
+      for (final option in _formOptions) {
+        if (option.id == formId) return option.name;
+      }
+      return 'Form #$formId';
     }
-    final display = label.isNotEmpty
-        ? label
-        : (formId != null ? 'Form #$formId' : 'Linked form');
-    return Align(
-      alignment: alignStart ? Alignment.centerLeft : Alignment.centerRight,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: AppColors.brandPrimaryContainer,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: AppColors.brandPrimary.withValues(alpha: 0.25),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.assignment_outlined,
-              size: 16,
-              color: AppColors.brandPrimary,
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                display,
-                style: AppFonts.labelMedium(color: AppColors.inkStrong)
-                    .copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    if (_formOptions.length == 1) return _formOptions.first.name;
+    return '';
+  }
+
+  String _resolvedFormLabel() {
+    if (_isLoadingForms) return '';
+    if (_matchedProjectForms.isEmpty) return '';
+
+    final linked = _linkedFormName.trim();
+    if (linked.isNotEmpty) return linked;
+
+    final linkedId = _linkedFormId;
+    if (linkedId != null) {
+      final matched = _findProjectFormForId(linkedId);
+      if (matched != null) return matched.name;
+    }
+
+    if (_matchedProjectForms.length == 1) {
+      return _matchedProjectForms.first.name;
+    }
+
+    return '';
+  }
+
+  Widget _formViewTrailing() {
+    if (_isLoadingForms) {
+      return const SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+
+    final label = _resolvedFormLabel();
+    if (label.isNotEmpty) {
+      return _detailTextValue(label);
+    }
+
+    return _detailTextValue('—');
   }
 
   Widget _descriptionTrailing(String text) {
@@ -5001,14 +5598,14 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   }
 
   Widget _attachmentsTrailing({required bool editing}) {
-    if (_attachmentNames.isEmpty && !editing) {
+    if (_attachments.isEmpty && !editing) {
       return _detailTextValue('No attachments');
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (_attachmentNames.isNotEmpty && !editing)
+        if (_attachments.isNotEmpty && !editing)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Container(
@@ -5018,22 +5615,22 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                '${_attachmentNames.length} file${_attachmentNames.length == 1 ? '' : 's'} attached',
+                '${_attachments.length} file${_attachments.length == 1 ? '' : 's'} attached',
                 style: AppFonts.labelSmall(color: const Color(0xFF0B6E99))
                     .copyWith(fontWeight: FontWeight.w700),
               ),
             ),
           ),
-        if (_attachmentNames.isNotEmpty)
+        if (_attachments.isNotEmpty)
           Wrap(
             spacing: 6,
             runSpacing: 6,
             alignment: WrapAlignment.end,
             children: [
-              for (var i = 0; i < _attachmentNames.length; i++)
+              for (var i = 0; i < _attachments.length; i++)
                 InputChip(
                   label: Text(
-                    _attachmentNames[i],
+                    _attachments[i].name,
                     style: AppFonts.labelSmall(color: AppColors.inkStrong)
                         .copyWith(fontWeight: FontWeight.w600),
                   ),
@@ -5041,7 +5638,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
                       ? const Icon(Icons.close_rounded, size: 16)
                       : null,
                   onDeleted: editing
-                      ? () => setState(() => _attachmentNames.removeAt(i))
+                      ? () => setState(() => _attachments.removeAt(i))
                       : null,
                   backgroundColor: const Color(0xFFF3F3F4),
                   side: const BorderSide(color: Color(0xFFE3E3E5)),
@@ -5050,7 +5647,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
             ],
           ),
         if (editing) ...[
-          if (_attachmentNames.isNotEmpty) const SizedBox(height: 8),
+          if (_attachments.isNotEmpty) const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _pickAttachments,
             icon: const Icon(Icons.attach_file_rounded, size: 18),
@@ -5128,6 +5725,7 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
     final item = _statusItemByNameLocal(_status);
     final labelColor = _statusLabelColor(item);
     return Container(
+      constraints: const BoxConstraints(maxWidth: 168),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: labelColor.withValues(alpha: 0.18),
@@ -5138,11 +5736,15 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
         children: [
           Icon(Icons.timelapse, size: 14, color: labelColor),
           const SizedBox(width: 6),
-          Text(
-            _status,
-            style: AppFonts.labelMedium(color: labelColor).copyWith(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          Flexible(
+            child: Text(
+              _status,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppFonts.labelMedium(color: labelColor).copyWith(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -5151,14 +5753,16 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
   }
 
   List<Widget> _buildViewModeChildren(_CanvasPin pin) {
-    final productTitle = _productController.text.trim().isNotEmpty
-        ? _productController.text.trim()
-        : (pin.productName.trim().isNotEmpty
-            ? pin.productName.trim()
-            : 'Pin ${widget.pinNumber}');
+    final productTitle = widget.productOptionLabel.trim().isNotEmpty
+        ? widget.productOptionLabel.trim()
+        : (_productController.text.trim().isNotEmpty
+            ? _productController.text.trim()
+            : (pin.productName.trim().isNotEmpty
+                ? pin.productName.trim()
+                : 'Pin ${widget.pinNumber}'));
+    final groupTitle = widget.groupLabel.trim();
     final qty = int.tryParse(_qtyController.text.trim()) ?? pin.quantity;
     final plotName = _zoneController.text.trim();
-    final formName = widget.pin.formName.trim();
     final descriptionText = _descriptionController.text.trim();
 
     return [
@@ -5180,6 +5784,8 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
                 const SizedBox(height: 4),
                 Text(
                   productTitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: AppFonts.bodyMedium(
                     color: _sheetMuted,
                   ).copyWith(fontWeight: FontWeight.w500, fontSize: 14),
@@ -5187,31 +5793,52 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
               ],
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: () => setState(() => _isEditing = true),
-            icon: const Icon(Icons.edit_outlined, size: 16),
-            label: const Text('Edit'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.inkStrong,
-              side: const BorderSide(color: Color(0xFFD9D9DC)),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+          const SizedBox(width: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _isEditing = true),
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text('Edit'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.inkStrong,
+                  side: const BorderSide(color: Color(0xFFD9D9DC)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
               ),
-            ),
-          ),
-          IconButton(
-            onPressed: () => _closePinSheet(),
-            icon: const Icon(Icons.close_rounded, size: 22),
-            color: _sheetMuted,
-            splashRadius: 22,
+              IconButton(
+                onPressed: () => _closePinSheet(),
+                icon: const Icon(Icons.close_rounded, size: 22),
+                color: _sheetMuted,
+                splashRadius: 22,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 36,
+                  minHeight: 36,
+                ),
+              ),
+            ],
           ),
         ],
       ),
       const SizedBox(height: 8),
+      if (groupTitle.isNotEmpty)
+        _detailRow(
+          icon: Icons.folder_outlined,
+          label: 'Group',
+          trailing: _detailTextValue(groupTitle),
+        ),
       _detailRow(
         icon: Icons.inventory_2_outlined,
-        label: 'Product Name',
+        label: 'Product',
         trailing: _detailTextValue(productTitle),
       ),
       _detailRow(
@@ -5253,9 +5880,9 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
         trailing: _attachmentsTrailing(editing: false),
       ),
       _detailRow(
-        icon: Icons.assignment_outlined,
-        label: 'Linked Form',
-        trailing: _linkedFormTrailing(formName, _linkedFormId),
+        icon: Icons.apps_rounded,
+        label: 'Form',
+        trailing: _formViewTrailing(),
       ),
       _detailRow(
         icon: Icons.layers_outlined,
@@ -5360,6 +5987,46 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
       ),
       const Divider(height: 1, thickness: 1, color: Color(0xFFE3E3E5)),
       const SizedBox(height: 16),
+      if (widget.groupLabel.trim().isNotEmpty) ...[
+        _sheetFieldLabel('Group'),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceHigh,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.borderLight),
+          ),
+          child: Text(
+            widget.groupLabel.trim(),
+            style: AppFonts.bodyMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(height: 18),
+      ],
+      if (widget.productOptionLabel.trim().isNotEmpty) ...[
+        _sheetFieldLabel('Selected product'),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceHigh,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.borderLight),
+          ),
+          child: Text(
+            widget.productOptionLabel.trim(),
+            style: AppFonts.bodyMedium(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(height: 18),
+      ],
       _sheetFieldLabel('Product name'),
       const SizedBox(height: 6),
       _editTextField(controller: _productController, hint: 'Product name'),
@@ -5475,25 +6142,9 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _sheetFieldLabel('Linked Form'),
+                _sheetFieldLabel('Form'),
                 const SizedBox(height: 6),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 14,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceHigh,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.borderLight),
-                  ),
-                  child: _linkedFormTrailing(
-                    pin.formName,
-                    _linkedFormId,
-                    alignStart: true,
-                  ),
-                ),
+                _formDropdownField(),
               ],
             ),
           ),
@@ -5584,9 +6235,9 @@ class _PinDetailBottomSheetState extends State<_PinDetailBottomSheet> {
                   zoneName: _zoneController.text.trim(),
                   variation: _variation,
                   description: _descriptionController.text.trim(),
-                  formName: pin.formName,
+                  formName: _linkedFormName.trim(),
                   formId: _linkedFormId,
-                  attachmentNames: List<String>.from(_attachmentNames),
+                  attachments: List<_PinAttachment>.from(_attachments),
                 ),
               ),
             );

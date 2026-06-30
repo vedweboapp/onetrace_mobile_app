@@ -6,6 +6,7 @@ import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/company_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/forms_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/integration_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/installation_type_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/job_status_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/metadata_settings_widgets.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
@@ -111,6 +112,12 @@ class _MetadataSettingsPageState extends State<MetadataSettingsPage> {
                   title: 'Project Type',
                   moduleLabel: 'Project',
                   onTap: () => context.push(ProjectTypeSettingsPage.path),
+                ),
+                SystemMetadataRow(
+                  icon: Icons.build_circle_outlined,
+                  title: 'Installation Type',
+                  moduleLabel: 'Project',
+                  onTap: () => context.push(InstallationTypeSettingsPage.path),
                 ),
                 SystemMetadataRow(
                   icon: Icons.work_outline_rounded,

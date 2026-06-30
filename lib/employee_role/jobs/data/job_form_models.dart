@@ -2,6 +2,111 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'package:red5/employee_role/forms/data/signature_form_value.dart';
+
+/// `yyyy-MM-dd` wire format for date-only fields (no time).
+bool isJobFormDateFieldType(String? fieldType) {
+  if (isJobFormDateTimeFieldType(fieldType)) return false;
+  switch (fieldType?.trim().toLowerCase()) {
+    case 'date':
+    case 'date_picker':
+    case 'datepicker':
+    case 'birth_date':
+    case 'birthdate':
+    case 'due_date':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/// `yyyy-MM-ddTHH:mm` wire format for date & time fields.
+bool isJobFormDateTimeFieldType(String? fieldType) {
+  switch (fieldType?.trim().toLowerCase()) {
+    case 'datetime':
+    case 'date_time':
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool isJobFormDateTimeWireValue(String raw) {
+  return RegExp(r'^\d{4}-\d{2}-\d{2}T').hasMatch(raw.trim());
+}
+
+/// Dashed date-only values, e.g. `2026-06-25` or legacy `20260625`.
+bool isJobFormDateWireValue(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return false;
+  if (isJobFormDateTimeWireValue(trimmed)) return false;
+  if (RegExp(r'^\d{8}$').hasMatch(trimmed)) return true;
+  return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(trimmed);
+}
+
+String formatJobFormDateForApi(DateTime date) {
+  final y = date.year.toString().padLeft(4, '0');
+  final m = date.month.toString().padLeft(2, '0');
+  final d = date.day.toString().padLeft(2, '0');
+  return '$y-$m-$d';
+}
+
+String formatJobFormDateTimeForApi(DateTime date) {
+  final datePart = formatJobFormDateForApi(date);
+  final h = date.hour.toString().padLeft(2, '0');
+  final min = date.minute.toString().padLeft(2, '0');
+  return '${datePart}T$h:$min';
+}
+
+/// Strips timestamp and normalizes to `yyyy-MM-dd` for date-only submit-form.
+String normalizeJobFormDateValue(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+
+  if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(trimmed)) return trimmed;
+
+  if (RegExp(r'^\d{8}$').hasMatch(trimmed)) {
+    final year = int.parse(trimmed.substring(0, 4));
+    final month = int.parse(trimmed.substring(4, 6));
+    final day = int.parse(trimmed.substring(6, 8));
+    return formatJobFormDateForApi(DateTime(year, month, day));
+  }
+
+  final parsed = DateTime.tryParse(trimmed);
+  if (parsed != null) {
+    return formatJobFormDateForApi(parsed);
+  }
+
+  final dateOnly = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(trimmed);
+  if (dateOnly != null) {
+    final year = int.tryParse(dateOnly.group(1)!);
+    final month = int.tryParse(dateOnly.group(2)!);
+    final day = int.tryParse(dateOnly.group(3)!);
+    if (year != null && month != null && day != null) {
+      return formatJobFormDateForApi(DateTime(year, month, day));
+    }
+  }
+
+  return trimmed;
+}
+
+/// Keeps time and normalizes to `yyyy-MM-ddTHH:mm` for datetime submit-form.
+String normalizeJobFormDateTimeValue(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+
+  if (RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$').hasMatch(trimmed)) {
+    return trimmed;
+  }
+
+  final parsed = DateTime.tryParse(trimmed);
+  if (parsed != null) {
+    return formatJobFormDateTimeForApi(parsed);
+  }
+
+  return trimmed;
+}
+
 /// Link between a job and a form template (`job_form_id` for submit API).
 @immutable
 final class JobFormAssignment {
@@ -93,22 +198,136 @@ final class JobFormFieldValue {
   const JobFormFieldValue({
     required this.fieldId,
     required this.value,
+    this.localFilePath,
+    this.fieldType,
   });
 
   final int fieldId;
   final String value;
+
+  /// Local image/signature file uploaded as multipart `values[n][value]`.
+  final String? localFilePath;
+
+  /// Metadata `field_type` (e.g. `image_upload`, `signature`) for multipart submit.
+  final String? fieldType;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'field_id': fieldId,
         'value': value,
       };
 
+  Map<String, dynamic> toDbJson() => <String, dynamic>{
+        ...toJson(),
+        if (localFilePath != null && localFilePath!.trim().isNotEmpty)
+          'local_file_path': localFilePath,
+        if (fieldType != null && fieldType!.trim().isNotEmpty)
+          'field_type': fieldType,
+      };
+
   factory JobFormFieldValue.fromJson(Map<String, dynamic> map) {
+    final fieldType = map['field_type']?.toString();
+    var value = map['value']?.toString() ?? '';
+    if (isJobFormDateFieldType(fieldType)) {
+      value = normalizeJobFormDateValue(value);
+    } else if (isJobFormDateTimeFieldType(fieldType) ||
+        isJobFormDateTimeWireValue(value)) {
+      value = normalizeJobFormDateTimeValue(value);
+    } else if (isJobFormDateWireValue(value)) {
+      value = normalizeJobFormDateValue(value);
+    }
     return JobFormFieldValue(
       fieldId: _readInt(map['field_id']) ?? 0,
-      value: map['value']?.toString() ?? '',
+      value: value,
+      localFilePath: map['local_file_path']?.toString(),
+      fieldType: fieldType,
     );
   }
+}
+
+/// File-backed answers sent as multipart `values[n][field_id|field_type|value]`.
+bool isJobFormAttachmentFieldType(String? fieldType) {
+  switch (fieldType?.trim().toLowerCase()) {
+    case 'image_upload':
+    case 'image':
+    case 'file':
+    case 'file_upload':
+    case 'signature':
+    case 'digital_signature':
+    case 'sign':
+    case 'esign':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/// Scalar JSON rows vs file rows (website: scalars in `values`, files appended).
+({List<JobFormFieldValue> scalars, List<JobFormFieldValue> attachments})
+    splitJobFormValuesForSubmit(List<JobFormFieldValue> values) {
+  final scalars = <JobFormFieldValue>[];
+  final attachments = <JobFormFieldValue>[];
+  for (final row in values) {
+    final hasFile = row.localFilePath?.trim().isNotEmpty ?? false;
+    if (isJobFormAttachmentFieldType(row.fieldType) || hasFile) {
+      if (hasFile) attachments.add(row);
+      continue;
+    }
+    scalars.add(row);
+  }
+  return (scalars: scalars, attachments: attachments);
+}
+
+@immutable
+final class JobFormSubmitRequestParts {
+  const JobFormSubmitRequestParts({
+    required this.formFields,
+    required this.attachments,
+    required this.scalarValues,
+  });
+
+  final Map<String, dynamic> formFields;
+  final List<JobFormFieldValue> attachments;
+  final List<JobFormFieldValue> scalarValues;
+}
+
+JobFormSubmitRequestParts buildJobFormSubmitRequestParts({
+  required int jobFormId,
+  required String status,
+  required List<JobFormFieldValue> values,
+  String? remarks,
+}) {
+  final prepared = prepareJobFormValuesForApi(values);
+  final split = splitJobFormValuesForSubmit(prepared);
+  final preparedRemarks = prepareJobFormRemarksForApi(remarks);
+  return JobFormSubmitRequestParts(
+    scalarValues: split.scalars,
+    attachments: split.attachments,
+    formFields: <String, dynamic>{
+      'job_form_id': jobFormId,
+      'status': status,
+      if (preparedRemarks != null) 'remarks': preparedRemarks,
+      'values': encodeJobFormValuesField(split.scalars),
+    },
+  );
+}
+
+JobFormSubmitRequestParts buildJobFormUpdateRequestParts({
+  required String status,
+  required List<JobFormFieldValue> values,
+  String? remarks,
+}) {
+  final prepared = prepareJobFormValuesForApi(values);
+  final split = splitJobFormValuesForSubmit(prepared);
+  final preparedRemarks = prepareJobFormRemarksForApi(remarks);
+  return JobFormSubmitRequestParts(
+    scalarValues: split.scalars,
+    attachments: split.attachments,
+    formFields: <String, dynamic>{
+      'status': status,
+      if (preparedRemarks != null) 'remarks': preparedRemarks,
+      'values': encodeJobFormValuesField(split.scalars),
+    },
+  );
 }
 
 @immutable
@@ -125,22 +344,19 @@ final class JobFormSubmitPayload {
   final String? remarks;
   final List<JobFormFieldValue> values;
 
-  /// Wire body for `POST /jobs/{id}/submit-form/` (form-urlencoded).
-  Map<String, dynamic> toFormBody() {
-    final preparedValues = prepareJobFormValuesForApi(values);
-    final preparedRemarks = prepareJobFormRemarksForApi(remarks);
-    return <String, dynamic>{
-      'job_form_id': jobFormId,
-      'status': status,
-      if (preparedRemarks != null) 'remarks': preparedRemarks,
-      'values': encodeJobFormValuesField(preparedValues),
-    };
-  }
+  /// Wire body for `POST /jobs/{id}/submit-form/` (scalar `values` JSON string).
+  Map<String, dynamic> toFormBody() =>
+      buildJobFormSubmitRequestParts(
+        jobFormId: jobFormId,
+        status: status,
+        values: values,
+        remarks: remarks,
+      ).formFields;
 
   Map<String, dynamic> toJson() => toFormBody();
 }
 
-/// Each stored answer and remarks are `varchar(100)` on the API.
+/// Each stored answer is `varchar(100)` on the API (filename for signatures/images).
 const int kJobFormApiValueMaxLength = 100;
 
 /// API expects `values` as a JSON string (backend calls `json.loads` on it).
@@ -155,7 +371,13 @@ List<JobFormFieldValue> prepareJobFormValuesForApi(
       .map(
         (row) => JobFormFieldValue(
           fieldId: row.fieldId,
-          value: clampJobFormFieldValueForApi(row.value),
+          value: clampJobFormFieldValueForApi(
+            row.value,
+            fieldId: row.fieldId,
+            fieldType: row.fieldType,
+          ),
+          localFilePath: row.localFilePath,
+          fieldType: row.fieldType,
         ),
       )
       .where((row) => row.fieldId > 0 && row.value.trim().isNotEmpty)
@@ -168,9 +390,27 @@ String? prepareJobFormRemarksForApi(String? remarks) {
   return clampJobFormFieldValueForApi(trimmed);
 }
 
-String clampJobFormFieldValueForApi(String raw) {
+String clampJobFormFieldValueForApi(
+  String raw, {
+  int fieldId = 0,
+  String? fieldType,
+}) {
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return '';
+  if (isJobFormDateFieldType(fieldType)) {
+    return normalizeJobFormDateValue(trimmed);
+  }
+  if (isJobFormDateTimeFieldType(fieldType) ||
+      isJobFormDateTimeWireValue(trimmed)) {
+    return normalizeJobFormDateTimeValue(trimmed);
+  }
+  if (isJobFormDateWireValue(trimmed)) {
+    return normalizeJobFormDateValue(trimmed);
+  }
+  if (isSignaturePngBase64Payload(trimmed)) {
+    return fieldId > 0 ? signatureFilenameForField(fieldId) : 'signed';
+  }
+  if (isSignatureApiPayload(trimmed)) return trimmed;
   if (trimmed.length <= kJobFormApiValueMaxLength) return trimmed;
 
   if (trimmed.startsWith('{')) {
@@ -228,15 +468,12 @@ final class JobFormUpdatePayload {
   final String? remarks;
   final List<JobFormFieldValue> values;
 
-  Map<String, dynamic> toFormBody() {
-    final preparedValues = prepareJobFormValuesForApi(values);
-    final preparedRemarks = prepareJobFormRemarksForApi(remarks);
-    return <String, dynamic>{
-      'status': status,
-      if (preparedRemarks != null) 'remarks': preparedRemarks,
-      'values': encodeJobFormValuesField(preparedValues),
-    };
-  }
+  Map<String, dynamic> toFormBody() =>
+      buildJobFormUpdateRequestParts(
+        status: status,
+        values: values,
+        remarks: remarks,
+      ).formFields;
 
   Map<String, dynamic> toJson() => toFormBody();
 }
@@ -282,7 +519,7 @@ final class CachedJobFormSubmission {
         'job_form_id': jobFormId,
         'status': status,
         'remarks': remarks,
-        'values_json': jsonEncode(values.map((v) => v.toJson()).toList()),
+        'values_json': jsonEncode(values.map((v) => v.toDbJson()).toList()),
         'sync_status': syncStatus.name,
         'server_submission_id': serverSubmissionId,
         'last_error': lastError,
@@ -347,6 +584,47 @@ final class JobLinkedFormSummary {
   final String? status;
 
   bool get isSubmitted => status?.trim().toLowerCase() == 'submitted';
+
+  /// Parses `GET /jobs/{id}/` → `data.forms[]` for operative form picker display.
+  static List<JobLinkedFormSummary> listFromJobRaw(Map<String, dynamic> raw) {
+    for (final key in const [
+      'forms',
+      'job_forms',
+      'linked_forms',
+      'submitted_forms',
+      'job_form_links',
+    ]) {
+      final parsed = _parseLinkedFormsList(raw[key]);
+      if (parsed.isNotEmpty) return parsed;
+    }
+
+    final jobMeta = raw['job_meta'];
+    if (jobMeta is Map) {
+      final meta = Map<String, dynamic>.from(
+        jobMeta.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      for (final key in const ['forms', 'job_forms', 'linked_forms']) {
+        final parsed = _parseLinkedFormsList(meta[key]);
+        if (parsed.isNotEmpty) return parsed;
+      }
+    }
+
+    return const [];
+  }
+
+  static List<JobLinkedFormSummary> _parseLinkedFormsList(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <JobLinkedFormSummary>[];
+    for (final row in raw) {
+      if (row is! Map) continue;
+      final map = Map<String, dynamic>.from(
+        row.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final parsed = tryFromMap(map);
+      if (parsed != null) out.add(parsed);
+    }
+    return out;
+  }
 
   static JobLinkedFormSummary? tryFromMap(Map<String, dynamic> map) {
     final nestedForm = map['form'];

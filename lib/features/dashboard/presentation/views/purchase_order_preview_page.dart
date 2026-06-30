@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/purchase_order_models.dart';
+import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
 import 'package:red5/features/dashboard/presentation/views/purchase_order_detail_page.dart';
 
-class PurchaseOrderPreviewPage extends StatelessWidget {
+class PurchaseOrderPreviewPage extends ConsumerStatefulWidget {
   const PurchaseOrderPreviewPage({super.key, required this.purchaseOrderId});
 
   static const pathSuffix = '/preview';
@@ -18,8 +22,51 @@ class PurchaseOrderPreviewPage extends StatelessWidget {
 
   final String purchaseOrderId;
 
+  @override
+  ConsumerState<PurchaseOrderPreviewPage> createState() =>
+      _PurchaseOrderPreviewPageState();
+}
+
+class _PurchaseOrderPreviewPageState
+    extends ConsumerState<PurchaseOrderPreviewPage> {
+  PurchaseOrderDetail? _detail;
+  bool _loading = true;
+  String? _error;
+
   static final _usd = NumberFormat.currency(symbol: r'$');
   static final _displayDate = DateFormat('MMM d, yyyy');
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetail();
+  }
+
+  Future<void> _loadDetail() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final api = ref.read(purchaseOrdersApiClientProvider);
+      final detail =
+          await api.fetchPurchaseOrderDetail(widget.purchaseOrderId);
+      if (!mounted) return;
+      setState(() {
+        _detail = detail;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = ApiResponseMessage.fromAnyError(
+          e,
+          genericFallback: 'Failed to load purchase order',
+        );
+      });
+    }
+  }
 
   Widget _actionButton({
     required String label,
@@ -302,7 +349,48 @@ class PurchaseOrderPreviewPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final detail = PurchaseOrderMockData.detailForId(purchaseOrderId);
+    if (_loading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF3F4F6),
+        body: AppSkeletonScreenBody(
+          style: AppSkeletonScreenBodyStyle.listRows,
+        ),
+      );
+    }
+    if (_error != null || _detail == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF3F4F6),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFFF3F4F6),
+          foregroundColor: AppColors.inkStrong,
+          leading: IconButton(
+            onPressed: () => context.pop(),
+            icon: const Icon(Icons.arrow_back, color: AppColors.inkStrong),
+          ),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _error ?? 'Purchase order not found',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _loadDetail,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final detail = _detail!;
     final bottom = MediaQuery.paddingOf(context).bottom;
 
     return Scaffold(

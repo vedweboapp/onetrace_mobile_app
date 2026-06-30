@@ -7,6 +7,7 @@ abstract final class JobWritePayload {
   static Map<String, dynamic> build({    required String title,
     String? description,
     int? assignedWorker,
+    int? salesperson,
     DateTime? startDate,
     DateTime? endDate,
     String? comments,
@@ -28,6 +29,7 @@ abstract final class JobWritePayload {
       if (description != null && description.trim().isNotEmpty)
         'description': description.trim(),
       if (assignedWorker != null) 'assigned_worker': assignedWorker,
+      if (salesperson != null) 'salesperson': salesperson,
       if (startDate != null) 'start_date': startDate.toUtc().toIso8601String(),
       if (endDate != null) 'end_date': endDate.toUtc().toIso8601String(),
       if (comments != null && comments.trim().isNotEmpty)

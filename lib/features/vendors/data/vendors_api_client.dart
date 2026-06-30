@@ -39,10 +39,10 @@ final class VendorsApiClient {
       extra['type'] = typeFilter;
     }
     if (isActive != null) {
-      extra['is_active'] = isActive;
+      extra['is_active'] = isActive.toString();
     }
 
-    final response = await _dio.get<Map<String, dynamic>>(
+    final response = await _dio.get<dynamic>(
       AppApiUrls.vendors,
       queryParameters: buildListQuery(
         page: page,
@@ -51,7 +51,7 @@ final class VendorsApiClient {
         extra: extra.isEmpty ? null : extra,
       ),
     );
-    final root = response.data ?? const <String, dynamic>{};
+    final root = readApiMap(response.data);
     final rows = readApiRows(root);
     final vendors = rows.map(VendorModel.fromJson).toList();
     final meta = readApiPageMeta(root, page: page);
@@ -64,36 +64,136 @@ final class VendorsApiClient {
   }
 
   Future<VendorModel> fetchVendorDetail(String id) async {
-    final response = await _dio.get<Map<String, dynamic>>(
-      AppApiUrls.vendorsById(id),
-    );
-    final root = response.data ?? const <String, dynamic>{};
-    return VendorModel.fromJson(readApiEntityBody(root));
+    final response = await _dio.get<dynamic>(AppApiUrls.vendorsById(id));
+    final root = readApiMap(response.data);
+    return VendorModel.fromJson(readApiMutationEntityBody(root));
   }
 
   Future<VendorModel> createVendor(Map<String, dynamic> payload) async {
-    final response = await _dio.post<Map<String, dynamic>>(
+    final response = await _dio.post<dynamic>(
       AppApiUrls.vendors,
       data: payload,
+      options: Options(
+        headers: const <String, dynamic>{
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
     );
-    final root = response.data ?? const <String, dynamic>{};
-    return VendorModel.fromJson(readApiEntityBody(root));
+    final root = readApiMap(response.data);
+    final body = readApiMutationEntityBody(root, matchPayload: payload);
+    return VendorModel.fromJson(body);
+  }
+
+  Future<VendorModel> updateVendor(
+    String id,
+    Map<String, dynamic> payload, {
+    bool partial = false,
+  }) async {
+    final response = partial
+        ? await _dio.patch<dynamic>(
+            AppApiUrls.vendorsById(id),
+            data: payload,
+            options: Options(
+              headers: const <String, dynamic>{
+                Headers.acceptHeader: Headers.jsonContentType,
+                Headers.contentTypeHeader: Headers.jsonContentType,
+              },
+            ),
+          )
+        : await _dio.put<dynamic>(
+            AppApiUrls.vendorsById(id),
+            data: payload,
+            options: Options(
+              headers: const <String, dynamic>{
+                Headers.acceptHeader: Headers.jsonContentType,
+                Headers.contentTypeHeader: Headers.jsonContentType,
+              },
+            ),
+          );
+    final root = readApiMap(response.data);
+    final body = readApiMutationEntityBody(root, matchPayload: payload);
+    return VendorModel.fromJson(body);
   }
 
   Future<void> deleteVendor(String id) async {
     await _dio.delete<void>(AppApiUrls.vendorsById(id));
   }
 
-  /// `GET /api/v1/vendor-type/` — options for the create-vendor type dropdown.
-  Future<List<VendorTypeOption>> fetchVendorTypes() async {
-    final response = await _dio.get<Map<String, dynamic>>(
+  Future<VendorTypeOption> fetchVendorTypeDetail(int id) async {
+    final response = await _dio.get<dynamic>(AppApiUrls.vendorTypeById('$id'));
+    final root = readApiMap(response.data);
+    return VendorTypeOption.fromJson(readApiMutationEntityBody(root));
+  }
+
+  Future<VendorTypeOption> createVendorType(Map<String, dynamic> payload) async {
+    final response = await _dio.post<dynamic>(
       AppApiUrls.vendorTypes,
-      queryParameters: const <String, dynamic>{
-        'page': 1,
-        'page_size': 500,
-      },
+      data: payload,
+      options: Options(
+        headers: const <String, dynamic>{
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
     );
-    final root = response.data ?? const <String, dynamic>{};
+    final root = readApiMap(response.data);
+    final body = readApiMutationEntityBody(root, matchPayload: payload);
+    return VendorTypeOption.fromJson(body);
+  }
+
+  Future<VendorTypeOption> updateVendorType(
+    int id,
+    Map<String, dynamic> payload, {
+    bool partial = false,
+  }) async {
+    final response = partial
+        ? await _dio.patch<dynamic>(
+            AppApiUrls.vendorTypeById('$id'),
+            data: payload,
+            options: Options(
+              headers: const <String, dynamic>{
+                Headers.acceptHeader: Headers.jsonContentType,
+                Headers.contentTypeHeader: Headers.jsonContentType,
+              },
+            ),
+          )
+        : await _dio.put<dynamic>(
+            AppApiUrls.vendorTypeById('$id'),
+            data: payload,
+            options: Options(
+              headers: const <String, dynamic>{
+                Headers.acceptHeader: Headers.jsonContentType,
+                Headers.contentTypeHeader: Headers.jsonContentType,
+              },
+            ),
+          );
+    final root = readApiMap(response.data);
+    final body = readApiMutationEntityBody(root, matchPayload: payload);
+    return VendorTypeOption.fromJson(body);
+  }
+
+  Future<void> deleteVendorType(int id) async {
+    await _dio.delete<void>(AppApiUrls.vendorTypeById('$id'));
+  }
+
+  /// `GET /api/v1/vendor-type/` — searchable options for create-vendor type picker.
+  Future<List<VendorTypeOption>> fetchVendorTypes({
+    int page = 1,
+    int pageSize = 100,
+    String? search,
+    bool isActive = true,
+  }) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.vendorTypes,
+      queryParameters: buildListQuery(
+        page: page,
+        pageSize: pageSize,
+        search: search,
+        extra: <String, dynamic>{'is_active': isActive.toString()},
+      ),
+    );
+    final root = readApiMap(response.data);
     final rows = readApiRows(root);
     final seen = <int>{};
     final options = <VendorTypeOption>[];

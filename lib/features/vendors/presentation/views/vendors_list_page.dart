@@ -65,6 +65,7 @@ class _VendorsListPageState extends ConsumerState<VendorsListPage> {
         page: nextPage,
         pageSize: VendorsApiClient.defaultPageSize,
         search: _searchController.text.trim(),
+        isActive: true,
       );
       if (!mounted) return;
       setState(() {

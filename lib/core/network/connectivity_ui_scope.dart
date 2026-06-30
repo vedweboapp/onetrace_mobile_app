@@ -6,6 +6,7 @@ import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/widgets/connectivity_status_banner.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/employee_role/offline/operative_sync_coordinator.dart';
 
 /// Wraps the app shell and shows global offline / back-online UI.
 final class ConnectivityUiScope extends ConsumerStatefulWidget {
@@ -89,6 +90,7 @@ final class _ConnectivityUiScopeState extends ConsumerState<ConnectivityUiScope>
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(operativeSyncBootstrapProvider);
     final topInset = MediaQuery.paddingOf(context).top;
 
     return Stack(

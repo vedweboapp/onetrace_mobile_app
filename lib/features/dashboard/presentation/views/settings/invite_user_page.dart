@@ -9,6 +9,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/utils/phone_number_utils.dart';
 import 'package:red5/core/widgets/app_phone_text_field.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/data/invite_user_service.dart';
@@ -425,77 +426,30 @@ class _InviteUserPageState extends ConsumerState<InviteUserPage> {
                         ),
                       ),
                       _sectionHeader('ADDRESS'),
-                      _label('Address Line 1'),
-                      AppTextField(
-                        controller: _addr1Controller,
-                        hintText: 'Street address',
+                      AppAddressFields(
+                        line1: _addr1Controller,
+                        line2: _addr2Controller,
+                        city: _cityController,
+                        state: _stateController,
+                        postalCode: _pincodeController,
+                        countryController: _countryController,
                         enabled: !submitting,
+                        layout: AppAddressLayout.settings,
                         textStyle: fieldTextStyle,
-                        validator: (v) => _required(v, 'Address line 1'),
-                      ),
-                      const SizedBox(height: 14),
-                      _label('Address Line 2'),
-                      AppTextField(
-                        controller: _addr2Controller,
-                        hintText: 'Suite, unit, etc. (optional)',
-                        enabled: !submitting,
-                        textStyle: fieldTextStyle,
-                      ),
-                      const SizedBox(height: 14),
-                      _label('Country'),
-                      AppTextField(
-                        controller: _countryController,
-                        hintText: 'Enter country',
-                        enabled: !submitting,
-                        textStyle: fieldTextStyle,
-                        validator: (v) => _required(v, 'Country'),
-                      ),
-                      const SizedBox(height: 14),
-                      _label('City'),
-                      AppTextField(
-                        controller: _cityController,
-                        hintText: 'Enter city',
-                        enabled: !submitting,
-                        textStyle: fieldTextStyle,
-                        validator: (v) => _required(v, 'City'),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('State'),
-                                AppTextField(
-                                  controller: _stateController,
-                                  hintText: 'Enter state',
-                                  enabled: !submitting,
-                                  textStyle: fieldTextStyle,
-                                  validator: (v) => _required(v, 'State'),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('Pincode'),
-                                AppTextField(
-                                  controller: _pincodeController,
-                                  hintText: 'Enter pincode',
-                                  keyboardType: TextInputType.text,
-                                  enabled: !submitting,
-                                  textStyle: fieldTextStyle,
-                                  validator: (v) => _required(v, 'Pincode'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                        line1Hint: 'Start typing an address',
+                        line2Hint: 'Suite, unit, etc. (optional)',
+                        countryHint: 'Enter country',
+                        cityHint: 'Enter city',
+                        stateHint: 'Enter state',
+                        postalCodeHint: 'Enter pincode',
+                        postalCodeLabel: 'Pincode',
+                        line1Validator: (v) => _required(v, 'Address line 1'),
+                        countryValidator: (v) => _required(v, 'Country'),
+                        cityValidator: (v) => _required(v, 'City'),
+                        stateValidator: (v) => _required(v, 'State'),
+                        postalCodeValidator: (v) => _required(v, 'Pincode'),
+                        labelBuilder: (text, {required = false}) =>
+                            _label(text),
                       ),
                       const SizedBox(height: 24),
                       Container(

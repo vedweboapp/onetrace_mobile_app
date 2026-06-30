@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/employee_role/data/app_role.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_qr_scan_page.dart';
+import 'package:red5/employee_role/offline/operative_sync_scope.dart';
 import 'package:red5/employee_role/presentation/widgets/role_home_scaffold.dart';
 
 enum EmployeeShellTab {
@@ -52,10 +53,11 @@ class TechnicianHomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RoleHomeScaffold(
-      role: AppRole.technician,
-      initialNavPageIndex: initialNavPageIndex,
-      primaryActions: [
+    return OperativeSyncScope(
+      child: RoleHomeScaffold(
+        role: AppRole.technician,
+        initialNavPageIndex: initialNavPageIndex,
+        primaryActions: [
         const RoleActionItem(
           title: 'Assigned Jobs',
           subtitle: 'View job cards, materials, forms, and QR tasks.',
@@ -73,6 +75,7 @@ class TechnicianHomePage extends StatelessWidget {
           icon: Icons.timeline_rounded,
         ),
       ],
+      ),
     );
   }
 }

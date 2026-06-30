@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/storage/local_storage.dart';
+import 'package:red5/employee_role/jobs/data/assigned_jobs_filter.dart';
 import 'package:red5/employee_role/projects/data/employee_project_detail.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
 import 'package:red5/features/quote/data/project_read.dart';
@@ -9,18 +11,22 @@ import 'package:red5/features/quote/data/quote_project_api_client.dart';
 final employeeProjectRepositoryProvider = Provider<EmployeeProjectRepository>((
   ref,
 ) {
-  return EmployeeProjectRepository(sl<QuoteProjectApiClient>());
+  return EmployeeProjectRepository(
+    sl<QuoteProjectApiClient>(),
+    sl<LocalStorage>(),
+  );
 });
 
 final class EmployeeProjectRepository {
-  EmployeeProjectRepository(this._api);
+  EmployeeProjectRepository(this._api, this._storage);
 
   final QuoteProjectApiClient _api;
+  final LocalStorage _storage;
   static final _dateFormat = DateFormat('MMM d, yyyy');
 
   Future<List<EmployeeProjectSummary>> fetchProjects() async {
     final rows = await _api.fetchAllProjects();
-    final allJobs = await _api.fetchAllJobs();
+    final allJobs = await _fetchAssignedJobs();
     final jobsByProject = <int, List<JobRead>>{};
     for (final job in allJobs) {
       final projectId = job.project;
@@ -28,6 +34,7 @@ final class EmployeeProjectRepository {
       jobsByProject.putIfAbsent(projectId, () => <JobRead>[]).add(job);
     }
     return rows
+        .where((project) => jobsByProject.containsKey(project.id))
         .map(
           (project) => _mapSummary(
             project,
@@ -72,10 +79,18 @@ final class EmployeeProjectRepository {
   }
 
   Future<List<JobRead>> _fetchJobsForProject(int projectId) async {
-    final allJobs = await _api.fetchAllJobs();
+    final allJobs = await _fetchAssignedJobs();
     return allJobs
         .where((job) => job.project == projectId)
         .toList(growable: false);
+  }
+
+  Future<List<JobRead>> _fetchAssignedJobs() {
+    return AssignedJobsFilter.fetchAssignedJobs(
+      storage: _storage,
+      fetchAll: ({assignedWorker}) =>
+          _api.fetchAllJobs(assignedWorker: assignedWorker),
+    );
   }
 
   EmployeeProjectSummary _mapSummary(

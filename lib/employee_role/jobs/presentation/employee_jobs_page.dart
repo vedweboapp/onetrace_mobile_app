@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:red5/core/notifications/widgets/notification_bell_button.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
@@ -10,6 +11,7 @@ import 'package:red5/employee_role/jobs/application/employee_job_session_control
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
+import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
@@ -88,18 +90,33 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
         ),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: controller.load,
+            onRefresh: controller.refresh,
             child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
               children: [
+                if (state.isRefreshing)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: LinearProgressIndicator(
+                      minHeight: 2,
+                      backgroundColor: AppColors.borderLight,
+                      color: AppColors.inkStrong,
+                    ),
+                  ),
                 const _FilterFields(),
                 const SizedBox(height: 18),
+                if (state.isShowingCachedData)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: _OfflineJobsBanner(),
+                  ),
                 if (state.isLoading && state.jobs.isEmpty)
                   const AppSkeletonProjectsListBody(
                     includeSearchAndFilters: false,
                     cardCount: 5,
                   )
-                else if (state.errorMessage != null)
+                else if (state.errorMessage != null && state.jobs.isEmpty)
                   _JobsErrorState(
                     message: state.errorMessage!,
                     onRetry: controller.load,
@@ -139,11 +156,7 @@ class _JobsHeader extends StatelessWidget {
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 22),
           ),
           const Spacer(),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            onPressed: () {},
-            icon: const Icon(Icons.notifications_none_rounded, size: 21),
-          ),
+          const NotificationBellButton(iconSize: 21),
           IconButton(
             visualDensity: VisualDensity.compact,
             onPressed: onSettings,
@@ -724,6 +737,37 @@ class _JobsErrorState extends StatelessWidget {
   }
 }
 
+class _OfflineJobsBanner extends StatelessWidget {
+  const _OfflineJobsBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded, size: 18, color: Color(0xFFC2410C)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Showing saved jobs. Updates will appear when you are back online.',
+              style: AppFonts.bodySmall(color: const Color(0xFF9A3412)).copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _JobsEmptyState extends StatelessWidget {
   const _JobsEmptyState();
 
@@ -777,6 +821,8 @@ class _EmployeeJobsBottomNav extends StatelessWidget {
               onJobSheet: () => context.push(EmployeeJobSheetPage.path),
               onReport: () => context.push(EmployeeReportsPage.path),
               onSite: () => context.push(EmployeeSitesPage.path),
+              onMaterialRequests: () =>
+                  context.push(EmployeeMaterialRequestsPage.path),
             ),
           ),
         ],

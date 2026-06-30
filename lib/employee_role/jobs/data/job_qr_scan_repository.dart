@@ -5,6 +5,8 @@ import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/utils/qr_code_utils.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_forms_api_client.dart';
 import 'package:red5/employee_role/jobs/data/qr_code_details_models.dart';
+import 'package:red5/employee_role/offline/operative_offline_store.dart';
+import 'package:red5/employee_role/offline/operative_sync_models.dart';
 import 'package:red5/features/dashboard/data/qr_codes_api_client.dart';
 
 final jobQrScanRepositoryProvider = Provider<JobQrScanRepository>((ref) {
@@ -12,6 +14,7 @@ final jobQrScanRepositoryProvider = Provider<JobQrScanRepository>((ref) {
     qrCodesApi: sl<QrCodesApiClient>(),
     jobFormsApi: sl<EmployeeJobFormsApiClient>(),
     connectivity: sl<ConnectivityService>(),
+    syncQueue: ref.read(operativeSyncQueueProvider),
   );
 });
 
@@ -20,11 +23,13 @@ final class JobQrScanResult {
     required this.details,
     required this.registeredWithJob,
     required this.qrCode,
+    this.queuedOffline = false,
   });
 
   final QrCodeJobDetails details;
   final bool registeredWithJob;
   final String qrCode;
+  final bool queuedOffline;
 }
 
 final class JobQrScanRepository {
@@ -32,13 +37,16 @@ final class JobQrScanRepository {
     required QrCodesApiClient qrCodesApi,
     required EmployeeJobFormsApiClient jobFormsApi,
     required ConnectivityService connectivity,
+    required OperativeSyncQueue syncQueue,
   })  : _qrCodesApi = qrCodesApi,
         _jobFormsApi = jobFormsApi,
-        _connectivity = connectivity;
+        _connectivity = connectivity,
+        _syncQueue = syncQueue;
 
   final QrCodesApiClient _qrCodesApi;
   final EmployeeJobFormsApiClient _jobFormsApi;
   final ConnectivityService _connectivity;
+  final OperativeSyncQueue _syncQueue;
 
   /// Registers the scan on a job (`POST .../scan-qr/`) and loads public details.
   ///
@@ -47,13 +55,30 @@ final class JobQrScanRepository {
   Future<JobQrScanResult> processScan({
     required String qrCode,
     int? jobId,
+    bool fromSync = false,
   }) async {
     final normalized = QrCodeUtils.normalizeScannedValue(qrCode);
     if (normalized.isEmpty) {
       throw ArgumentError('QR code is empty');
     }
-    if (!_connectivity.isOnline) {
-      throw const JobQrScanOfflineException();
+    if (!_connectivity.isOnline && !fromSync) {
+      await _syncQueue.enqueue(
+        type: OperativeSyncOperationType.qrScan,
+        payload: <String, dynamic>{
+          'qrCode': normalized,
+          if (jobId != null) 'jobId': jobId,
+        },
+      );
+      return JobQrScanResult(
+        details: QrCodeJobDetails(
+          jobId: jobId ?? 0,
+          title: jobId != null ? 'Job $jobId' : 'Queued scan',
+          qrCode: normalized,
+        ),
+        registeredWithJob: jobId != null && jobId > 0,
+        qrCode: normalized,
+        queuedOffline: true,
+      );
     }
 
     var registered = false;
@@ -67,7 +92,7 @@ final class JobQrScanRepository {
     QrCodeJobDetails details;
     try {
       details = await _qrCodesApi.fetchQrCodeDetails(normalized);
-    } on DioException catch (error) {
+    } on DioException {
       if (registered && activeJobId != null && activeJobId > 0) {
         details = QrCodeJobDetails(
           jobId: activeJobId,

@@ -14,6 +14,7 @@ import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.d
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
 import 'package:red5/features/dashboard/presentation/widgets/level_drawing_thumbnail.dart';
 import 'package:red5/features/dashboard/presentation/widgets/project_jobs_tab.dart';
+import 'package:red5/features/dashboard/presentation/widgets/project_forms_tab.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 String? _absoluteDrawingFileUrl(String drawingFileFromApi) {
@@ -58,11 +59,15 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
   final List<_DrawingItem> _drawings = <_DrawingItem>[];
   bool _isLoadingDrawings = false;
   String? _drawingsError;
+  QuoteSummary? _resolvedProject;
+
+  QuoteSummary get project => _resolvedProject ?? widget.project;
 
   @override
   void initState() {
     super.initState();
     _loadProjectDrawings();
+    Future.microtask(_loadProjectFromApi);
   }
 
   @override
@@ -71,8 +76,38 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
     super.dispose();
   }
 
-  Future<void> _loadProjectDrawings() async {
+  Future<void> _loadProjectFromApi() async {
     final projectId = widget.project.id.trim();
+    if (projectId.isEmpty) return;
+    try {
+      final read = await ref
+          .read(quoteProjectApiClientProvider)
+          .fetchProjectById(projectId);
+      if (!mounted) return;
+      final siteName = read.primarySiteName;
+      setState(() {
+        _resolvedProject = QuoteSummary(
+          id: projectId,
+          quoteName: read.name,
+          quoteNumber: widget.project.quoteNumber,
+          clientName: read.clientName ?? widget.project.clientName,
+          projectName: siteName == '—' ? widget.project.projectName : siteName,
+          description: read.description ?? widget.project.description,
+          startDate:
+              read.startDate?.toIso8601String().split('T').first ??
+              widget.project.startDate,
+          endDate:
+              read.endDate?.toIso8601String().split('T').first ??
+              widget.project.endDate,
+        );
+      });
+    } catch (_) {
+      // Keep list/summary fallback when detail fetch fails.
+    }
+  }
+
+  Future<void> _loadProjectDrawings() async {
+    final projectId = project.id.trim();
     if (projectId.isEmpty) return;
     setState(() {
       _isLoadingDrawings = true;
@@ -168,11 +203,11 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
   }
 
   Widget _overviewTab() {
-    final description = (widget.project.description ?? '').trim().isEmpty
+    final description = (project.description ?? '').trim().isEmpty
         ? 'Project details will appear here once description data is available.'
-        : widget.project.description!.trim();
-    final start = _displayDate(widget.project.startDate);
-    final end = _displayDate(widget.project.endDate);
+        : project.description!.trim();
+    final start = _displayDate(project.startDate);
+    final end = _displayDate(project.endDate);
 
     final showReadMore = description.length > 140;
     final descText = _expandedDescription || !showReadMore
@@ -189,7 +224,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
           _label('PROJECT NAME'),
           const SizedBox(height: 4),
           Text(
-            widget.project.quoteName,
+            project.quoteName,
             style: AppFonts.titleMedium(
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w600, fontSize: 18),
@@ -346,7 +381,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
   Future<void> _openUploadDrawing() async {
     final result = await context.push<dynamic>(
       UploadDrawingPage.path,
-      extra: <String, dynamic>{'projectId': widget.project.id},
+      extra: <String, dynamic>{'projectId': project.id},
     );
     if (!mounted) return;
     if (result is! Map) return;
@@ -369,8 +404,8 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
 
     final args = DrawingCanvasArgs.fromUploadResult(
       map,
-      projectName: widget.project.quoteName,
-      projectId: widget.project.id,
+      projectName: project.quoteName,
+      projectId: project.id,
     );
     if (args.title.trim().isEmpty || (args.filePath ?? '').trim().isEmpty) {
       return;
@@ -386,8 +421,8 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
         filePath: item.localFilePath,
         remoteDrawingUrl: item.remoteDrawingUrl,
         levelName: item.levelName,
-        projectName: widget.project.quoteName,
-        projectId: (item.projectId ?? widget.project.id).trim(),
+        projectName: project.quoteName,
+        projectId: (item.projectId ?? project.id).trim(),
         levelId: item.levelId,
       ),
     );
@@ -584,11 +619,11 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.project.quoteName;
+    final title = project.quoteName;
 
     return DefaultTabController(
-      initialIndex: widget.initialTabIndex.clamp(0, 8),
-      length: 9,
+      initialIndex: widget.initialTabIndex.clamp(0, 9),
+      length: 10,
       child: Scaffold(
         backgroundColor: const Color(0xFFF7F7F8),
         appBar: AppBar(
@@ -626,6 +661,7 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               ).copyWith(fontWeight: FontWeight.w600, fontSize: 14),
               tabs: const [
                 Tab(text: 'Overview'),
+                Tab(text: 'Forms'),
                 Tab(text: 'Jobs'),
                 Tab(text: 'Job Sheet'),
                 Tab(text: 'Approval'),
@@ -640,14 +676,19 @@ class _ProjectDetailsPageState extends ConsumerState<ProjectDetailsPage> {
               child: TabBarView(
                 children: [
                   _overviewTab(),
+                  ProjectFormsTab(
+                    projectId: project.id,
+                    projectName:
+                        project.projectName ?? project.quoteName,
+                  ),
                   ProjectJobsTab(
                     key: ValueKey(
-                      'jobs-${widget.project.id}-${widget.jobsRefreshToken ?? 'base'}',
+                      'jobs-${project.id}-${widget.jobsRefreshToken ?? 'base'}',
                     ),
-                    projectId: widget.project.id,
+                    projectId: project.id,
                     projectName:
-                        widget.project.projectName ?? widget.project.quoteName,
-                    clientName: widget.project.clientName,
+                        project.projectName ?? project.quoteName,
+                    clientName: project.clientName,
                     refreshToken: widget.jobsRefreshToken,
                   ),
                   _placeholderTab('Job Sheet'),

@@ -89,7 +89,8 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
   ProjectOption? _selectedProject;
   ClientOption? _selectedClient;
   SiteModel? _selectedSite;
-  UserProfileModel? _selectedWorker;
+  UserProfileModel? _selectedTechnician;
+  UserProfileModel? _selectedSalesPerson;
   NamedIdOption? _selectedJobStatus;
   List<NamedIdOption> _selectedForms = const [];
   NamedIdOption? _selectedQrCode;
@@ -503,7 +504,19 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
       final workerId = job.assignedWorker.toString();
       for (final w in _workers) {
         if (w.id == workerId) {
-          setState(() => _selectedWorker = w);
+          setState(() => _selectedTechnician = w);
+          break;
+        }
+      }
+    }
+
+    final salesPersonId = _readUserFkId(
+      job.raw['salesperson'] ?? job.raw['sales_person'],
+    );
+    if (salesPersonId != null) {
+      for (final w in _workers) {
+        if (w.id == salesPersonId) {
+          setState(() => _selectedSalesPerson = w);
           break;
         }
       }
@@ -710,9 +723,49 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
 
   static String _userLabel(UserProfileModel user) {
     final name = '${user.firstName} ${user.lastName}'.trim();
-    if (name.isNotEmpty) return name;
-    final email = user.email.trim();
-    return email.isNotEmpty ? email : 'User #${user.id}';
+    final role = (user.roleDetail?.roleName ?? user.role).trim();
+    final base = name.isNotEmpty
+        ? name
+        : (user.email.trim().isNotEmpty ? user.email.trim() : 'User #${user.id}');
+    if (role.isEmpty) return base;
+    return '$base · $role';
+  }
+
+  static String? _readUserFkId(dynamic value) {
+    if (value is Map) {
+      final id = value['id'];
+      if (id is int) return id.toString();
+      if (id != null) return id.toString().trim();
+    }
+    if (value is int) return value.toString();
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  static bool _userMatchesRole(UserProfileModel user, List<String> keywords) {
+    final role = (user.roleDetail?.roleName ?? user.role).trim().toLowerCase();
+    if (role.isEmpty) return false;
+    return keywords.any((keyword) => role.contains(keyword));
+  }
+
+  List<UserProfileModel> _technicianOptions() {
+    final filtered = _workers
+        .where(
+          (user) => _userMatchesRole(
+            user,
+            const ['technician', 'operative', 'worker'],
+          ),
+        )
+        .toList(growable: false);
+    return filtered.isNotEmpty ? filtered : _workers;
+  }
+
+  List<UserProfileModel> _salesPersonOptions() {
+    final filtered = _workers
+        .where((user) => _userMatchesRole(user, const ['sales']))
+        .toList(growable: false);
+    return filtered.isNotEmpty ? filtered : _workers;
   }
 
   static String _userInitials(UserProfileModel user) {
@@ -817,7 +870,8 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     return JobWritePayload.build(
       title: _jobTitleController.text,
       description: _descriptionController.text,
-      assignedWorker: int.tryParse(_selectedWorker?.id ?? ''),
+      assignedWorker: int.tryParse(_selectedTechnician?.id ?? ''),
+      salesperson: int.tryParse(_selectedSalesPerson?.id ?? ''),
       startDate: _startDate,
       endDate: _scheduleDate,
       jobStatus: _selectedJobStatus?.id,
@@ -878,14 +932,19 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
 
   String get _selectedFormsLabel => formatNamedIdSelectionLabel(_selectedForms);
 
-  Future<void> _pickWorker() async {
-    if (_workers.isEmpty) {
+  Future<void> _pickUser({
+    required List<UserProfileModel> candidates,
+    required String title,
+    required ValueChanged<UserProfileModel?> onPicked,
+    bool allowClear = false,
+  }) async {
+    if (candidates.isEmpty) {
       context.showTopSnackBar(
-        const SnackBar(content: Text('No workers available to assign.')),
+        SnackBar(content: Text('No users available for $title.')),
       );
       return;
     }
-    final picked = await showModalBottomSheet<UserProfileModel>(
+    final picked = await showModalBottomSheet<UserProfileModel?>(
       context: context,
       backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
@@ -899,13 +958,19 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'Assigned worker',
+                  title,
                   style: AppFonts.titleMedium(
                     color: AppColors.inkStrong,
                   ).copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
-              ..._workers.map((w) {
+              if (allowClear)
+                ListTile(
+                  leading: const Icon(Icons.person_off_outlined),
+                  title: const Text('None'),
+                  onTap: () => Navigator.pop(ctx, null),
+                ),
+              ...candidates.map((w) {
                 return ListTile(
                   leading: CircleAvatar(
                     backgroundColor: const Color(0xFFD4E4F7),
@@ -929,7 +994,25 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
         );
       },
     );
-    if (picked != null) setState(() => _selectedWorker = picked);
+    if (!mounted) return;
+    onPicked(picked);
+  }
+
+  Future<void> _pickTechnician() async {
+    await _pickUser(
+      candidates: _technicianOptions(),
+      title: 'Assign technician',
+      onPicked: (picked) => setState(() => _selectedTechnician = picked),
+    );
+  }
+
+  Future<void> _pickSalesPerson() async {
+    await _pickUser(
+      candidates: _salesPersonOptions(),
+      title: 'Assign sales person',
+      allowClear: true,
+      onPicked: (picked) => setState(() => _selectedSalesPerson = picked),
+    );
   }
 
   void _addMaterialLine() {
@@ -952,9 +1035,9 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
     setState(() => _attemptedSubmit = true);
     final form = _formKey.currentState;
     if (form == null || !form.validate()) return;
-    if (_selectedWorker == null) {
+    if (_selectedTechnician == null) {
       context.showTopSnackBar(
-        const SnackBar(content: Text('Please assign a worker.')),
+        const SnackBar(content: Text('Please assign a technician.')),
       );
       return;
     }
@@ -1034,7 +1117,7 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
           'quoteNumber': '—',
           'projectName': _projectNameController.text.trim(),
           'clientName': _clientNameController.text.trim(),
-          'initialTabIndex': 1,
+          'initialTabIndex': 2,
           'jobsRefreshToken': DateTime.now().millisecondsSinceEpoch.toString(),
         },
       );
@@ -1399,7 +1482,8 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
-    final worker = _selectedWorker;
+    final technician = _selectedTechnician;
+    final salesPerson = _selectedSalesPerson;
 
     return Scaffold(
       backgroundColor: _pageBg,
@@ -1532,18 +1616,39 @@ class _AddJobPageState extends ConsumerState<AddJobPage> {
               validator: (v) => v == null ? 'Job status is required' : null,
             ),
             _sectionTitle('SCHEDULE'),
-            _label('Assigned Worker', required: true),
+            _label('Technician', required: true),
             _pickerField(
-              value: worker == null ? '' : _userLabel(worker),
-              placeholder: _isLoadingWorkers ? 'Loading...' : 'Select worker',
-              onTap: _isLoadingWorkers ? () {} : _pickWorker,
-              leading: worker == null
+              value: technician == null ? '' : _userLabel(technician),
+              placeholder:
+                  _isLoadingWorkers ? 'Loading...' : 'Select technician',
+              onTap: _isLoadingWorkers ? () {} : _pickTechnician,
+              leading: technician == null
                   ? null
                   : CircleAvatar(
                       radius: 18,
                       backgroundColor: const Color(0xFFD4E4F7),
                       child: Text(
-                        _userInitials(worker),
+                        _userInitials(technician),
+                        style: AppFonts.labelSmall(
+                          color: AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w700, fontSize: 11),
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 14),
+            _label('Sales Person'),
+            _pickerField(
+              value: salesPerson == null ? '' : _userLabel(salesPerson),
+              placeholder:
+                  _isLoadingWorkers ? 'Loading...' : 'Select sales person (optional)',
+              onTap: _isLoadingWorkers ? () {} : _pickSalesPerson,
+              leading: salesPerson == null
+                  ? null
+                  : CircleAvatar(
+                      radius: 18,
+                      backgroundColor: const Color(0xFFE8F5E9),
+                      child: Text(
+                        _userInitials(salesPerson),
                         style: AppFonts.labelSmall(
                           color: AppColors.inkStrong,
                         ).copyWith(fontWeight: FontWeight.w700, fontSize: 11),

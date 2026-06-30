@@ -29,13 +29,21 @@ abstract final class UserRoleNavigation {
 
   /// Admin → dashboard; technician, manager, site (and other non-admin) → employee home.
   static AppShell shellForRoleName(String? roleName) {
-    if (_isAdminRoleName(roleName)) return AppShell.admin;
+    if (isAdminRoleName(roleName)) return AppShell.admin;
     return AppShell.employee;
   }
 
-  static bool _isAdminRoleName(String? roleName) {
+  static const Set<String> _adminRoleNames = {
+    'admin',
+    'administrator',
+    'ceo',
+  };
+
+  /// Whether [`roleName`] should use the admin dashboard shell.
+  static bool isAdminRoleName(String? roleName) {
     final normalized = roleName?.trim().toLowerCase() ?? '';
-    return normalized == 'admin' || normalized == 'administrator';
+    if (normalized.isEmpty) return false;
+    return _adminRoleNames.contains(normalized);
   }
 
   static String homePathForShell(AppShell shell) {

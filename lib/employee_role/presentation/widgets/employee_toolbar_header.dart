@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:red5/core/notifications/widgets/notification_bell_button.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 
@@ -39,12 +40,7 @@ class EmployeeToolbarHeader extends StatelessWidget {
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 24),
           ),
           const Spacer(),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            onPressed: () {},
-            icon: const Icon(Icons.notifications_none_rounded),
-            color: AppColors.inkStrong,
-          ),
+          const NotificationBellButton(),
           IconButton(
             visualDensity: VisualDensity.compact,
             onPressed: onSettingsPressed,

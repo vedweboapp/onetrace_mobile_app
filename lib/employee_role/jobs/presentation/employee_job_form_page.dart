@@ -13,6 +13,7 @@ import 'package:red5/employee_role/forms/presentation/widgets/dynamic_form_view.
 import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/application/job_form_submission_sync_listener.dart';
+import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_qr_scan_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/qr_code_details_sheet.dart';
@@ -240,7 +241,7 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
             jobId: jobId,
             formTemplateId: widget.formId,
             jobFormId: jobFormId,
-            values: formState.collectApiValues(),
+            values: await formState.collectApiValuesAsync(),
             remarks: remarksText.isEmpty ? null : remarksText,
             assignments: job?.formAssignments ?? const [],
           );
@@ -268,7 +269,8 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
 
     setState(() => _isSubmitting = true);
     try {
-      final values = dynamicForm?.collectApiValues() ?? const [];
+      final values =
+          await dynamicForm?.collectApiValuesAsync() ?? const <JobFormFieldValue>[];
       final remarks = _remarksController.text.trim();
       final job = ref.read(employeeJobDetailControllerProvider).job;
       final jobFormId = await _resolveJobFormId(jobId);

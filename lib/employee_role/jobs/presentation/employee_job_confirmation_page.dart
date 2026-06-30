@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
@@ -36,15 +37,18 @@ class _EmployeeJobConfirmationPageState
     setState(() => _isCompleting = true);
     try {
       JobCompletionDebugLog.banner('Complete job started | jobId=$activeJobId');
+      final isOnline = ref.read(connectivityServiceProvider).isOnline;
 
-      JobCompletionDebugLog.step('Step 1/2 — Reload job (GET /jobs/$activeJobId/)');
-      await ref
-          .read(employeeJobDetailControllerProvider.notifier)
-          .load(jobId: activeJobId);
-      final job = ref.read(employeeJobDetailControllerProvider).job;
-      JobCompletionDebugLog.info(
-        'formAssignments: ${job?.formAssignments.map((a) => 'form=${a.formId}→job_form=${a.jobFormId}').join(', ') ?? 'none'}',
-      );
+      if (isOnline) {
+        JobCompletionDebugLog.step('Step 1/2 — Reload job (GET /jobs/$activeJobId/)');
+        await ref
+            .read(employeeJobDetailControllerProvider.notifier)
+            .load(jobId: activeJobId);
+        final job = ref.read(employeeJobDetailControllerProvider).job;
+        JobCompletionDebugLog.info(
+          'formAssignments: ${job?.formAssignments.map((a) => 'form=${a.formId}→job_form=${a.jobFormId}').join(', ') ?? 'none'}',
+        );
+      }
 
       JobCompletionDebugLog.step('Step 2/2 — Mark job completed (PUT /jobs/$activeJobId/)');
       final completedJob =
@@ -55,13 +59,25 @@ class _EmployeeJobConfirmationPageState
 
       JobCompletionDebugLog.info('Refresh local job list');
       ref.read(employeeJobSessionProvider.notifier).completeJob(activeJobId);
-      await ref.read(employeeJobsControllerProvider.notifier).load();
-      await ref
-          .read(employeeJobDetailControllerProvider.notifier)
-          .load(jobId: activeJobId);
+      if (isOnline) {
+        await ref.read(employeeJobsControllerProvider.notifier).load();
+        await ref
+            .read(employeeJobDetailControllerProvider.notifier)
+            .load(jobId: activeJobId);
+      }
 
       JobCompletionDebugLog.banner('Complete job finished successfully');
       if (!mounted) return;
+      if (!isOnline) {
+        context.showTopSnackBar(
+          const SnackBar(
+            content: Text(
+              'Job completed offline. Changes will sync when you are back online.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
       TechnicianHomePage.go(context, tab: EmployeeShellTab.jobs);
     } catch (e) {
       if (!mounted) return;

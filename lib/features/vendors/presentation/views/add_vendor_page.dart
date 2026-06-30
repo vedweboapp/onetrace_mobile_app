@@ -4,10 +4,50 @@ import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/places/place_address.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
 import 'package:red5/features/vendors/data/vendor_models.dart';
 import 'package:red5/features/vendors/data/vendors_api_client.dart';
+import 'package:red5/features/vendors/presentation/widgets/vendor_type_picker_sheet.dart';
+
+class _VendorAddressDraft {
+  _VendorAddressDraft({this.isPrimary = false});
+
+  final address1 = TextEditingController();
+  final address2 = TextEditingController();
+  final city = TextEditingController();
+  final state = TextEditingController();
+  final pincode = TextEditingController();
+  String country = 'India';
+  bool isPrimary;
+
+  void dispose() {
+    for (final c in [address1, address2, city, state, pincode]) {
+      c.dispose();
+    }
+  }
+
+  VendorAddressModel? toModel() {
+    if (address1.text.trim().isEmpty &&
+        city.text.trim().isEmpty &&
+        state.text.trim().isEmpty &&
+        pincode.text.trim().isEmpty) {
+      return null;
+    }
+    return VendorAddressModel(
+      addressLine1: address1.text,
+      addressLine2: address2.text,
+      city: city.text,
+      state: state.text,
+      country: country,
+      pincode: pincode.text,
+      isPrimary: isPrimary,
+    );
+  }
+}
 
 class AddVendorPage extends ConsumerStatefulWidget {
   const AddVendorPage({super.key});
@@ -28,20 +68,12 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
   final _vendorName = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
-  final _address1 = TextEditingController();
-  final _address2 = TextEditingController();
-  final _city = TextEditingController();
-  final _state = TextEditingController();
-  final _pincode = TextEditingController();
 
-  String _country = 'India';
+  final List<_VendorAddressDraft> _addresses = [_VendorAddressDraft(isPrimary: true)];
   bool _submitting = false;
-  bool _typesLoading = true;
-  String? _typesError;
-  List<VendorTypeOption> _vendorTypes = const [];
   VendorTypeOption? _selectedType;
 
-  static const _countries = [
+  static final _countries = <String>[
     'India',
     'United States',
     'United Kingdom',
@@ -53,53 +85,70 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
     color: AppColors.inkStrong,
   ).copyWith(fontSize: 15, fontWeight: FontWeight.w600);
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadVendorTypes());
-  }
-
-  Future<void> _loadVendorTypes() async {
-    setState(() {
-      _typesLoading = true;
-      _typesError = null;
-    });
-    try {
-      final types = await ref.read(vendorsApiClientProvider).fetchVendorTypes();
-      if (!mounted) return;
-      setState(() {
-        _vendorTypes = types;
-        _selectedType = types.isEmpty ? null : types.first;
-        _typesLoading = false;
-        _typesError = types.isEmpty ? 'No vendor types available' : null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _typesLoading = false;
-        _typesError = ApiResponseMessage.fromAnyError(
-          e,
-          genericFallback: 'Failed to load vendor types',
-        );
-      });
-    }
+  Future<void> _pickVendorType() async {
+    final picked = await showVendorTypePickerSheet(
+      context: context,
+      selected: _selectedType,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _selectedType = picked);
   }
 
   @override
   void dispose() {
-    for (final c in [
-      _vendorName,
-      _email,
-      _phone,
-      _address1,
-      _address2,
-      _city,
-      _state,
-      _pincode,
-    ]) {
+    for (final c in [_vendorName, _email, _phone]) {
       c.dispose();
     }
+    for (final address in _addresses) {
+      address.dispose();
+    }
     super.dispose();
+  }
+
+  void _addAddress() {
+    setState(() => _addresses.add(_VendorAddressDraft()));
+  }
+
+  void _removeAddress(int index) {
+    if (_addresses.length <= 1) return;
+    setState(() {
+      final removed = _addresses.removeAt(index);
+      final wasPrimary = removed.isPrimary;
+      removed.dispose();
+      if (wasPrimary && _addresses.isNotEmpty) {
+        _addresses.first.isPrimary = true;
+      }
+    });
+  }
+
+  void _setPrimaryAddress(int index) {
+    setState(() {
+      for (var i = 0; i < _addresses.length; i++) {
+        _addresses[i].isPrimary = i == index;
+      }
+    });
+  }
+
+  List<VendorAddressModel> _buildAddressModels() {
+    final models = <VendorAddressModel>[];
+    for (final draft in _addresses) {
+      final model = draft.toModel();
+      if (model != null) models.add(model);
+    }
+    if (models.isEmpty) return models;
+    if (!models.any((a) => a.isPrimary)) {
+      models[0] = VendorAddressModel(
+        id: models[0].id,
+        addressLine1: models[0].addressLine1,
+        addressLine2: models[0].addressLine2,
+        city: models[0].city,
+        state: models[0].state,
+        country: models[0].country,
+        pincode: models[0].pincode,
+        isPrimary: true,
+      );
+    }
+    return models;
   }
 
   Future<void> _create() async {
@@ -113,6 +162,15 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
       return;
     }
 
+    final addressModels = _buildAddressModels();
+    if (addressModels.isEmpty) {
+      context.showAppTopToast(
+        title: 'At least one address is required',
+        type: AppTopToastType.error,
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
     try {
       final payload = VendorWritePayload.build(
@@ -120,17 +178,7 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
         email: _email.text,
         phone: _phone.text,
         type: _selectedType!.id,
-        addresses: [
-          VendorAddressModel(
-            addressLine1: _address1.text,
-            addressLine2: _address2.text,
-            city: _city.text,
-            state: _state.text,
-            country: _country,
-            pincode: _pincode.text,
-            isPrimary: true,
-          ),
-        ],
+        addresses: addressModels,
       );
       await ref.read(vendorsApiClientProvider).createVendor(payload);
       if (!mounted) return;
@@ -221,17 +269,6 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
     );
   }
 
-  Widget _halfRow({required Widget left, required Widget right}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: left),
-        const SizedBox(width: 12),
-        Expanded(child: right),
-      ],
-    );
-  }
-
   InputDecoration _dropdownDecoration() {
     return InputDecoration(
       filled: true,
@@ -245,6 +282,91 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
         borderRadius: BorderRadius.circular(8),
         borderSide: const BorderSide(color: AppColors.textFieldBorder),
       ),
+    );
+  }
+
+  Widget _addressBlock(int index, _VendorAddressDraft draft) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_addresses.length > 1) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Address ${index + 1}',
+                  style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              if (_addresses.length > 1)
+                IconButton(
+                  onPressed: () => _removeAddress(index),
+                  icon: const Icon(Icons.delete_outline, color: Color(0xFFDC2626)),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          CheckboxListTile(
+            value: draft.isPrimary,
+            onChanged: (_) => _setPrimaryAddress(index),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(
+              'Primary address',
+              style: AppFonts.bodyMedium(color: _labelGrey).copyWith(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        AppAddressFields(
+          line1: draft.address1,
+          line2: draft.address2,
+          city: draft.city,
+          state: draft.state,
+          postalCode: draft.pincode,
+          layout: AppAddressLayout.entityWithCountryDropdown,
+          borderRadius: 8,
+          countryDropdownValue: draft.country,
+          countryDropdownOptions: _countries,
+          onCountryDropdownChanged: (v) => setState(() => draft.country = v),
+          dropdownDecoration: _dropdownDecoration(),
+          dropdownValueStyle: _dropdownValueStyle,
+          line1Validator: (v) =>
+              v == null || v.trim().isEmpty ? 'Required' : null,
+          cityValidator: (v) =>
+              v == null || v.trim().isEmpty ? 'Required' : null,
+          stateValidator: (v) =>
+              v == null || v.trim().isEmpty ? 'Required' : null,
+          postalCodeValidator: (v) =>
+              v == null || v.trim().isEmpty ? 'Required' : null,
+          labelBuilder: (text, {required = false}) => required
+              ? _requiredLabel(text)
+              : _optionalLabel(text),
+          onCountryResolved: (country) {
+            final matched =
+                matchCountryOption(country, _countries) ?? country;
+            setState(() {
+              if (!_countries.contains(matched)) {
+                _countries.insert(0, matched);
+              }
+              draft.country = matched;
+            });
+          },
+        ),
+        if (index < _addresses.length - 1)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8, top: 4),
+            child: Divider(height: 1, color: Color(0xFFE5E7EB)),
+          ),
+      ],
     );
   }
 
@@ -279,7 +401,7 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
           width: double.infinity,
           height: 50,
           child: FilledButton(
-            onPressed: _submitting || _typesLoading ? null : _create,
+            onPressed: _submitting ? null : _create,
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF111111),
               foregroundColor: AppColors.white,
@@ -321,50 +443,84 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
                         v == null || v.trim().isEmpty ? 'Required' : null,
                   ),
                   _requiredLabel('Vendor Type'),
-                  if (_typesLoading)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 14),
-                      child: LinearProgressIndicator(minHeight: 2),
-                    )
-                  else if (_typesError != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _typesError!,
-                            style: AppFonts.bodySmall(
-                              color: const Color(0xFFDC2626),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: _loadVendorTypes,
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: DropdownButtonFormField<VendorTypeOption>(
-                        value: _selectedType,
-                        items: _vendorTypes
-                            .map(
-                              (type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type.name, style: _dropdownValueStyle),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: FormField<VendorTypeOption>(
+                      validator: (_) =>
+                          _selectedType == null ? 'Required' : null,
+                      builder: (field) {
+                        final hasValue = _selectedType != null;
+                        final type = _selectedType;
+                        final chipBg =
+                            type != null ? parseHexColor(type.bgColor ?? '') : null;
+                        final chipFg =
+                            type != null ? parseHexColor(type.textColor ?? '') : null;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            InkWell(
+                              onTap: _pickVendorType,
+                              borderRadius: BorderRadius.circular(8),
+                              child: InputDecorator(
+                                decoration: _dropdownDecoration().copyWith(
+                                  errorText: field.errorText,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: hasValue && chipBg != null
+                                          ? Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 10,
+                                                  vertical: 6,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: chipBg,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  type!.name,
+                                                  style: _dropdownValueStyle
+                                                      .copyWith(
+                                                    color: chipFg ??
+                                                        AppColors.inkStrong,
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          : Text(
+                                              hasValue
+                                                  ? type!.name
+                                                  : 'Search vendor type',
+                                              style: hasValue
+                                                  ? _dropdownValueStyle
+                                                  : AppFonts.bodyMedium(
+                                                      color: AppColors
+                                                          .textFieldHint,
+                                                    ).copyWith(
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
+                                            ),
+                                    ),
+                                    const Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      color: AppColors.muted,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            )
-                            .toList(),
-                        onChanged: (value) =>
-                            setState(() => _selectedType = value),
-                        isExpanded: true,
-                        decoration: _dropdownDecoration(),
-                        validator: (v) => v == null ? 'Required' : null,
-                      ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
+                  ),
                 ],
               ),
             ),
@@ -409,53 +565,15 @@ class _AddVendorPageState extends ConsumerState<AddVendorPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _sectionHeading('ADDRESS'),
-                  _optionalLabel('Address Line 1'),
-                  _textField(_address1, hint: 'Address line 1'),
-                  _optionalLabel('Address Line 2'),
-                  _textField(_address2, hint: 'Address line 2'),
-                  _optionalLabel('Country'),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
-                    child: DropdownButtonFormField<String>(
-                      value: _country,
-                      items: _countries
-                          .map(
-                            (c) => DropdownMenuItem(
-                              value: c,
-                              child: Text(c, style: _dropdownValueStyle),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) {
-                        if (v != null) setState(() => _country = v);
-                      },
-                      isExpanded: true,
-                      decoration: _dropdownDecoration(),
+                  for (var i = 0; i < _addresses.length; i++)
+                    _addressBlock(i, _addresses[i]),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _addAddress,
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Add another address'),
                     ),
-                  ),
-                  _halfRow(
-                    left: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _optionalLabel('City'),
-                        _textField(_city, hint: 'City'),
-                      ],
-                    ),
-                    right: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _optionalLabel('State / Province'),
-                        _textField(_state, hint: 'State'),
-                      ],
-                    ),
-                  ),
-                  _requiredLabel('Pincode'),
-                  _textField(
-                    _pincode,
-                    hint: 'Pincode',
-                    keyboardType: TextInputType.number,
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Required' : null,
                   ),
                 ],
               ),

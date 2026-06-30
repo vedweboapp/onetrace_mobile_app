@@ -7,6 +7,8 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 import 'package:red5/core/utils/phone_number_utils.dart';
 import 'package:red5/core/widgets/app_phone_text_field.dart';
+import 'package:red5/core/places/place_address.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
@@ -52,7 +54,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
   String? _loadEditError;
   ClientModel? _resolvedEdit;
 
-  static const _countries = <String>[
+  static final _countries = <String>[
     'United States',
     'India',
     'United Kingdom',
@@ -382,53 +384,27 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                 onCountryChanged: (c) => _phoneCountry = c,
               ),
               _sectionLabel('Address'),
-              Text(
-                'Address Line 1',
-                style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: _address1,
-                hintText: 'Street address',
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Address Line 2',
-                style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: _address2,
-                hintText: 'Suite, unit, etc. (optional)',
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Country *',
-                style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                key: ValueKey<String>(_country),
-                initialValue: _countries.contains(_country) ? _country : _countries.first,
-                items: _countries
-                    .map(
-                      (c) => DropdownMenuItem<String>(
-                        value: c,
-                        child: Text(c),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (v) => setState(() => _country = v ?? _countries.first),
-                decoration: const InputDecoration(
+              AppAddressFields(
+                line1: _address1,
+                line2: _address2,
+                city: _city,
+                state: _state,
+                postalCode: _postalCode,
+                layout: AppAddressLayout.entityWithCountryDropdown,
+                borderRadius: 10,
+                line2Hint: 'Suite, unit, etc. (optional)',
+                cityHint: 'e.g. New York',
+                stateHint: 'e.g. NY',
+                postalCodeHint: 'ZIP or Postal Code',
+                postalCodeLabel: 'Postal Code',
+                postalCodeValidator: _postalCodeValidator,
+                countryDropdownValue: _countries.contains(_country)
+                    ? _country
+                    : _countries.first,
+                countryDropdownOptions: _countries,
+                onCountryDropdownChanged: (v) =>
+                    setState(() => _country = v),
+                dropdownDecoration: const InputDecoration(
                   filled: true,
                   fillColor: AppColors.white,
                   contentPadding:
@@ -438,67 +414,24 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                     borderSide: BorderSide(color: Color(0xFFE0E0E0)),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'City',
-                          style: AppFonts.bodySmall(color: AppColors.inkStrong)
-                              .copyWith(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        AppTextField(
-                          controller: _city,
-                          hintText: 'e.g. New York',
-                        ),
-                      ],
-                    ),
+                labelBuilder: (text, {required = false}) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    required ? '$text *' : text,
+                    style: AppFonts.bodySmall(color: AppColors.inkStrong)
+                        .copyWith(fontWeight: FontWeight.w700, fontSize: 13),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'State / Province',
-                          style: AppFonts.bodySmall(color: AppColors.inkStrong)
-                              .copyWith(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        AppTextField(
-                          controller: _state,
-                          hintText: 'e.g. NY',
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Postal Code *',
-                style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
                 ),
-              ), 
-              const SizedBox(height: 8), 
-              AppTextField(
-                controller: _postalCode,
-                hintText: 'ZIP or Postal Code',
-                validator: _postalCodeValidator,
-                keyboardType: TextInputType.number,
+                onCountryResolved: (country) {
+                  final matched =
+                      matchCountryOption(country, _countries) ?? country;
+                  setState(() {
+                    if (!_countries.contains(matched)) {
+                      _countries.insert(0, matched);
+                    }
+                    _country = matched;
+                  });
+                },
               ),
               const SizedBox(height: 18),
               SizedBox(

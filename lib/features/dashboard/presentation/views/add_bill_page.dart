@@ -8,6 +8,7 @@ import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_date_picker_dialog.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/clients/data/client_models.dart';
@@ -488,46 +489,21 @@ class _AddBillPageState extends ConsumerState<AddBillPage> {
     required TextEditingController country,
     required TextEditingController state,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _fieldLabel('Address Line 1'),
-        _textField(line1, hint: 'Address line 1'),
-        _fieldLabel('Address Line 2'),
-        _textField(line2, hint: 'Address line 2'),
-        _halfRow(
-          left: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('City'),
-              _textField(city, hint: 'City'),
-            ],
-          ),
-          right: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('Zip Code'),
-              _textField(zip, hint: 'Zip'),
-            ],
-          ),
-        ),
-        _halfRow(
-          left: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('Country'),
-              _textField(country, hint: 'Country'),
-            ],
-          ),
-          right: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _fieldLabel('State'),
-              _textField(state, hint: 'State'),
-            ],
-          ),
-        ),
-      ],
+    return AppAddressFields(
+      line1: line1,
+      line2: line2,
+      city: city,
+      state: state,
+      postalCode: zip,
+      countryController: country,
+      layout: AppAddressLayout.billing,
+      borderRadius: 8,
+      postalCodeHint: 'Zip',
+      line2Hint: 'Address line 2',
+      labelBuilder: (text, {required = false}) => _fieldLabel(text),
+      onPlaceSelected: (_) {
+        if (mounted) setState(() {});
+      },
     );
   }
 

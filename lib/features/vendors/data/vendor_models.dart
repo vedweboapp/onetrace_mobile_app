@@ -61,9 +61,11 @@ class VendorAddressModel {
   }
 
   Map<String, dynamic> toCreateJson() {
+    final line1 = addressLine1.trim();
+    final line2 = addressLine2.trim();
     return <String, dynamic>{
-      'address_line_1': addressLine1.trim(),
-      if (addressLine2.trim().isNotEmpty) 'address_line_2': addressLine2.trim(),
+      'address_line_1': line1,
+      'address_line_2': line2,
       'city': city.trim(),
       'state': state.trim(),
       'country': country.trim(),
@@ -74,6 +76,15 @@ class VendorAddressModel {
         'longitude': longitude!.trim(),
       'is_primary': isPrimary,
     };
+  }
+
+  bool get hasCreateFields {
+    return addressLine1.trim().isNotEmpty ||
+        addressLine2.trim().isNotEmpty ||
+        city.trim().isNotEmpty ||
+        state.trim().isNotEmpty ||
+        country.trim().isNotEmpty ||
+        pincode.trim().isNotEmpty;
   }
 }
 
@@ -157,11 +168,17 @@ class VendorTypeOption {
     required this.id,
     required this.name,
     this.code,
+    this.bgColor,
+    this.textColor,
+    this.isActive = true,
   });
 
   final int id;
   final String name;
   final String? code;
+  final String? bgColor;
+  final String? textColor;
+  final bool isActive;
 
   factory VendorTypeOption.fromJson(Map<String, dynamic> json) {
     final id = _readInt(json['id']) ?? 0;
@@ -174,7 +191,37 @@ class VendorTypeOption {
         ]) ??
         'Type $id';
     final code = _readString(json, const ['code', 'slug', 'type']);
-    return VendorTypeOption(id: id, name: name, code: code);
+    final bgColor = _readString(json, const ['bg_color', 'background_color']);
+    final textColor = _readString(json, const ['text_color', 'color']);
+    return VendorTypeOption(
+      id: id,
+      name: name,
+      code: code,
+      bgColor: bgColor,
+      textColor: textColor,
+      isActive: _readBool(json['is_active']) ?? true,
+    );
+  }
+}
+
+/// Builds `POST /vendor-type/` and `PUT /vendor-type/{id}/` bodies.
+abstract final class VendorTypeWritePayload {
+  const VendorTypeWritePayload._();
+
+  static Map<String, dynamic> build({
+    required String name,
+    String? bgColor,
+    String? textColor,
+    bool isActive = true,
+  }) {
+    return <String, dynamic>{
+      'name': name.trim(),
+      if (bgColor != null && bgColor.trim().isNotEmpty)
+        'bg_color': bgColor.trim(),
+      if (textColor != null && textColor.trim().isNotEmpty)
+        'text_color': textColor.trim(),
+      'is_active': isActive,
+    };
   }
 }
 
@@ -189,12 +236,17 @@ abstract final class VendorWritePayload {
     required int type,
     required List<VendorAddressModel> addresses,
   }) {
+    final addressPayload = addresses
+        .where((address) => address.hasCreateFields)
+        .map((address) => address.toCreateJson())
+        .toList(growable: false);
+
     return <String, dynamic>{
       'name': name.trim(),
       'email': email.trim(),
       if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
       'type': type,
-      'addresses': addresses.map((a) => a.toCreateJson()).toList(growable: false),
+      'addresses': addressPayload,
     };
   }
 }

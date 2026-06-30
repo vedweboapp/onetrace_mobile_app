@@ -44,7 +44,12 @@ final class ProjectRead {
   static ProjectRead? tryFromMap(Map<String, dynamic> map) {
     final id = _readInt(map['id']);
     if (id == null) return null;
-    final name = _readString(map, const ['name', 'project_name', 'title']) ??
+    final name = _readString(map, const [
+      'name',
+      'project_name',
+      'quote_name',
+      'title',
+    ]) ??
         'Project $id';
 
     final clientRaw = map['client'];

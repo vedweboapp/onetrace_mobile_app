@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,12 +13,15 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/core/widgets/app_user_avatar.dart';
+import 'package:red5/core/notifications/app_notifications_controller.dart';
+import 'package:red5/core/notifications/widgets/notification_bell_button.dart';
 import 'package:red5/employee_role/data/app_role.dart';
 import 'package:red5/employee_role/data/role_session.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
+import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
@@ -24,6 +29,7 @@ import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
 import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
+import 'package:red5/employee_role/projects/application/employee_projects_controller.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/employee_projects_list_content.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
@@ -49,15 +55,19 @@ class RoleHomeScaffold extends ConsumerStatefulWidget {
   ConsumerState<RoleHomeScaffold> createState() => _RoleHomeScaffoldState();
 }
 
-class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
+class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold>
+    with WidgetsBindingObserver {
   late final PageController _pageController;
   _EmployeeHomeTab _selectedTab = _EmployeeHomeTab.calendar;
   late _EmployeeNavPage _selectedPage;
   bool _calendarExpanded = false;
+  final _appBarKey = GlobalKey<_EmployeeSiteAppBarState>();
+  final _welcomeHeaderKey = GlobalKey<_EmployeeHomeWelcomeHeaderState>();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final pageIndex = widget.initialNavPageIndex.clamp(
       0,
       _EmployeeNavPage.values.length - 1,
@@ -65,17 +75,32 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
     _selectedPage = _EmployeeNavPage.values[pageIndex];
     _pageController = PageController(initialPage: pageIndex);
     Future.microtask(() {
-      ref.read(employeeJobsControllerProvider.notifier).load();
+      final jobsController = ref.read(employeeJobsControllerProvider.notifier);
+      final notificationsController =
+          ref.read(appNotificationsControllerProvider.notifier);
+      notificationsController.initialize();
+      notificationsController.startPolling(jobsController.refresh);
+      jobsController.load();
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    ref.read(appNotificationsControllerProvider.notifier).stopPolling();
     _pageController.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(employeeJobsControllerProvider.notifier).refresh());
+    }
+  }
+
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
+    await ref.read(appNotificationsControllerProvider.notifier).clearForLogout();
     final storage = ref.read(localStorageProvider);
     await storage.remove(LocalStorageKeys.authAccessToken);
     await storage.remove(LocalStorageKeys.authRefreshToken);
@@ -92,6 +117,22 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
     );
+  }
+
+  Future<void> _refreshHome() async {
+    final jobsController = ref.read(employeeJobsControllerProvider.notifier);
+    final projectsController =
+        ref.read(employeeProjectsControllerProvider.notifier);
+
+    final futures = <Future<void>>[
+      jobsController.refresh(),
+      _appBarKey.currentState?.refreshProfile() ?? Future.value(),
+      _welcomeHeaderKey.currentState?.refreshProfileName() ?? Future.value(),
+    ];
+    if (_selectedTab == _EmployeeHomeTab.project) {
+      futures.add(projectsController.load());
+    }
+    await Future.wait(futures);
   }
 
   String _titleForPage(_EmployeeNavPage page) {
@@ -112,6 +153,19 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<EmployeeJobsState>(employeeJobsControllerProvider, (prev, next) {
+      if (next.isLoading) return;
+      final prevIds = prev?.jobs.map((job) => job.id).toSet() ?? const {};
+      final nextIds = next.jobs.map((job) => job.id).toSet();
+      if (prev == null || prevIds != nextIds) {
+        unawaited(
+          ref
+              .read(appNotificationsControllerProvider.notifier)
+              .processAssignedJobs(next.jobs),
+        );
+      }
+    });
+
     final isProjectTab = _selectedTab == _EmployeeHomeTab.project;
     final jobsState = ref.watch(employeeJobsControllerProvider);
     final jobsController = ref.read(employeeJobsControllerProvider.notifier);
@@ -125,6 +179,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
         child: Column(
           children: [
             _EmployeeSiteAppBar(
+              key: _appBarKey,
               title: _titleForPage(_selectedPage),
               onLogout: () => _logout(context, ref),
               onOpenSettings: () => context.push(
@@ -140,13 +195,28 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
                   );
                 },
                 children: [
-                  ListView(
-                    padding: const EdgeInsets.fromLTRB(0, 12, 0, 18),
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        child: _EmployeeHomeWelcomeHeader(role: widget.role),
-                      ),
+                  RefreshIndicator(
+                    onRefresh: _refreshHome,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(0, 12, 0, 18),
+                      children: [
+                        if (jobsState.isRefreshing)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: LinearProgressIndicator(
+                              minHeight: 2,
+                              backgroundColor: AppColors.borderLight,
+                              color: AppColors.inkStrong,
+                            ),
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          child: _EmployeeHomeWelcomeHeader(
+                            key: _welcomeHeaderKey,
+                            role: widget.role,
+                          ),
+                        ),
                       const SizedBox(height: 18),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -185,7 +255,8 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 18),
                           child: _SelectedDateJobsPanel(
-                            isLoading: jobsState.isLoading,
+                            isLoading:
+                                jobsState.isLoading && jobsState.jobs.isEmpty,
                             errorMessage: jobsState.errorMessage,
                             jobs: selectedDateJobs,
                             onRetry: jobsController.load,
@@ -216,6 +287,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold> {
                       ],
                     ],
                   ),
+                ),
                   const EmployeeJobsContent(showHeader: false),
                   const EmployeeProjectsListContent(),
                 ],
@@ -249,6 +321,7 @@ class RoleActionItem {
 /// Shared top bar for Home / Jobs / Projects bottom tabs (title only changes).
 class _EmployeeSiteAppBar extends ConsumerStatefulWidget {
   const _EmployeeSiteAppBar({
+    super.key,
     required this.title,
     required this.onLogout,
     required this.onOpenSettings,
@@ -272,6 +345,8 @@ class _EmployeeSiteAppBarState extends ConsumerState<_EmployeeSiteAppBar> {
     super.initState();
     Future.microtask(_loadProfile);
   }
+
+  Future<void> refreshProfile() => _loadProfile();
 
   Future<void> _loadProfile() async {
     try {
@@ -316,12 +391,7 @@ class _EmployeeSiteAppBarState extends ConsumerState<_EmployeeSiteAppBar> {
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 24),
           ),
           const Spacer(),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            onPressed: () {},
-            icon: const Icon(Icons.notifications_none_rounded),
-            color: AppColors.inkStrong,
-          ),
+          const NotificationBellButton(),
           IconButton(
             visualDensity: VisualDensity.compact,
             onPressed: widget.onOpenSettings,
@@ -377,7 +447,7 @@ String? _absoluteProfileImageUrl(String imageFromApi) {
 }
 
 class _EmployeeHomeWelcomeHeader extends ConsumerStatefulWidget {
-  const _EmployeeHomeWelcomeHeader({required this.role});
+  const _EmployeeHomeWelcomeHeader({super.key, required this.role});
 
   final AppRole role;
 
@@ -395,6 +465,8 @@ class _EmployeeHomeWelcomeHeaderState
     super.initState();
     Future.microtask(_loadProfileName);
   }
+
+  Future<void> refreshProfileName() => _loadProfileName();
 
   Future<void> _loadProfileName() async {
     try {
@@ -1084,7 +1156,7 @@ class _SelectedDateJobsPanel extends StatelessWidget {
         ],
       );
     }
-    if (errorMessage != null) {
+    if (errorMessage != null && jobs.isEmpty) {
       return Column(
         children: [
           Text(
@@ -1351,6 +1423,8 @@ class _EmployeeBottomNav extends StatelessWidget {
               onJobSheet: () => context.push(EmployeeJobSheetPage.path),
               onReport: () => context.push(EmployeeReportsPage.path),
               onSite: () => context.push(EmployeeSitesPage.path),
+              onMaterialRequests: () =>
+                  context.push(EmployeeMaterialRequestsPage.path),
             ),
           ),
         ],

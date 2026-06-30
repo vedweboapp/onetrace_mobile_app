@@ -100,6 +100,40 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
     return const <Map<String, dynamic>>[];
   }
 
+  static bool _isGenericProjectTitle(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'project':
+      case 'untitled quote':
+      case 'untitled project':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  static String _readProjectDisplayName(
+    Map<String, dynamic> row, {
+    String fallback = 'Untitled Quote',
+  }) {
+    const keys = [
+      'name',
+      'project_name',
+      'quote_name',
+      'Subject',
+      'title',
+    ];
+    String? generic;
+    for (final key in keys) {
+      final value = row[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isEmpty) continue;
+      if (!_isGenericProjectTitle(text)) return text;
+      generic ??= text;
+    }
+    return generic ?? fallback;
+  }
+
   Map<String, dynamic> _normalizeSummaryRow(Map<String, dynamic> row) {
     String read(List<String> keys, {String fallback = ''}) {
       for (final key in keys) {
@@ -113,13 +147,7 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
 
     return <String, dynamic>{
       'id': read(const ['id', 'ID', 'project_id', 'quote_id']),
-      'Subject': read(const [
-        'Subject',
-        'quote_name',
-        'project_name',
-        'name',
-        'title',
-      ], fallback: 'Untitled Quote'),
+      'Subject': _readProjectDisplayName(row),
       'Quote_Number': read(const [
         'Quote_Number',
         'quote_number',
@@ -297,13 +325,10 @@ final class CrmQuotesApiClient implements CrmQuotesApi {
 
     return <String, dynamic>{
       'quote': <String, dynamic>{
-        'quote_name': _readString(quoteMap, const [
-          'quote_name',
-          'Subject',
-          'project_name',
-          'name',
-          'title',
-        ], fallback: 'Untitled Quote'),
+        'quote_name': _readProjectDisplayName(
+          quoteMap,
+          fallback: 'Untitled Quote',
+        ),
         'quote_number': _readString(quoteMap, const [
           'quote_number',
           'Quote_Number',

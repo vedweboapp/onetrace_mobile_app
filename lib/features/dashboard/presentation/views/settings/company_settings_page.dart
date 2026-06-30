@@ -21,6 +21,8 @@ import 'package:red5/features/dashboard/data/organization_settings_write.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/core/places/place_address.dart';
+import 'package:red5/core/widgets/app_address_fields.dart';
 import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
@@ -192,7 +194,7 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     'UTC+5:30 (India Standard Time)',
   ];
 
-  static const _countryOptions = <String>[
+  static const _defaultCountryOptions = <String>[
     'United States',
     'United Kingdom',
     'Canada',
@@ -201,6 +203,9 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
     'Germany',
     'France',
   ];
+
+  final List<String> _countryOptions =
+      List<String>.from(_defaultCountryOptions);
 
   HomeCurrencySettings _currencySettings = HomeCurrencySettings.defaults();
   String? _companyLogoUrl;
@@ -1057,54 +1062,38 @@ class _CompanySettingsPageState extends ConsumerState<CompanySettingsPage>
         const SizedBox(height: 28),
         _sectionHeader('ADDRESS'),
         const SizedBox(height: 4),
-        _orgLabel('Address Line 1'),
-        AppTextField(
-          controller: _addr1Controller,
-          hintText: AppStrings.companySettingsAddress1Hint,
+        AppAddressFields(
+          line1: _addr1Controller,
+          line2: _addr2Controller,
+          city: _cityController,
+          state: _stateController,
+          postalCode: _pincodeController,
           enabled: enabled,
+          layout: AppAddressLayout.entityWithCountryDropdown,
+          line1Hint: AppStrings.companySettingsAddress1Hint,
+          line2Hint: AppStrings.companySettingsAddress2Hint,
+          cityHint: AppStrings.companySettingsCityHint,
+          stateHint: AppStrings.companySettingsStateHint,
+          postalCodeHint: AppStrings.companySettingsPincodeHint,
+          postalCodeLabel: 'Postal Code',
           textStyle: _orgFieldTextStyle(),
-        ),
-        const SizedBox(height: 16),
-        _orgLabel('Address Line 2'),
-        AppTextField(
-          controller: _addr2Controller,
-          hintText: AppStrings.companySettingsAddress2Hint,
-          enabled: enabled,
-          textStyle: _orgFieldTextStyle(),
-        ),
-        const SizedBox(height: 16),
-        _orgLabel('Country', required: true),
-        _orgDropdown(
-          value: _country,
-          items: _countryOptions,
-          onChanged: (v) {
-            if (v != null) setState(() => _country = v);
+          countryDropdownValue: _country,
+          countryDropdownOptions: _countryOptions,
+          onCountryDropdownChanged: (v) => setState(() => _country = v),
+          dropdownDecoration: _orgFieldDecoration(),
+          dropdownValueStyle: _orgFieldTextStyle(),
+          labelBuilder: (text, {required = false}) =>
+              _orgLabel(text, required: required),
+          onCountryResolved: (country) {
+            final matched =
+                matchCountryOption(country, _countryOptions) ?? country;
+            setState(() {
+              if (!_countryOptions.contains(matched)) {
+                _countryOptions.insert(0, matched);
+              }
+              _country = matched;
+            });
           },
-        ),
-        const SizedBox(height: 16),
-        _orgLabel('City'),
-        AppTextField(
-          controller: _cityController,
-          hintText: AppStrings.companySettingsCityHint,
-          enabled: enabled,
-          textStyle: _orgFieldTextStyle(),
-        ),
-        const SizedBox(height: 16),
-        _orgLabel('State / Province'),
-        AppTextField(
-          controller: _stateController,
-          hintText: AppStrings.companySettingsStateHint,
-          enabled: enabled,
-          textStyle: _orgFieldTextStyle(),
-        ),
-        const SizedBox(height: 16),
-        _orgLabel('Postal Code', required: true),
-        AppTextField(
-          controller: _pincodeController,
-          hintText: AppStrings.companySettingsPincodeHint,
-          keyboardType: TextInputType.text,
-          enabled: enabled,
-          textStyle: _orgFieldTextStyle(),
         ),
         const SizedBox(height: 8),
       ],

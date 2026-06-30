@@ -68,4 +68,24 @@ void main() {
     expect(ids, containsAll([5, 18, 20]));
     expect(ids.length, 3);
   });
+
+  test('JobWritePayload includes optional salesperson', () {
+    final payload = JobWritePayload.build(
+      title: 'Site visit',
+      assignedWorker: 2,
+      salesperson: 5,
+    );
+
+    expect(payload['assigned_worker'], 2);
+    expect(payload['salesperson'], 5);
+  });
+
+  test('JobWritePayload omits salesperson when not set', () {
+    final payload = JobWritePayload.build(
+      title: 'Site visit',
+      assignedWorker: 2,
+    );
+
+    expect(payload.containsKey('salesperson'), isFalse);
+  });
 }

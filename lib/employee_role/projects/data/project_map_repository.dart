@@ -1,16 +1,22 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/storage/local_storage.dart';
+import 'package:red5/employee_role/jobs/data/assigned_jobs_filter.dart';
 import 'package:red5/employee_role/projects/data/project_map_job.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 final projectMapRepositoryProvider = Provider<ProjectMapRepository>((ref) {
-  return ProjectMapRepository(sl<QuoteProjectApiClient>());
+  return ProjectMapRepository(
+    sl<QuoteProjectApiClient>(),
+    sl<LocalStorage>(),
+  );
 });
 
 final class ProjectMapRepository {
-  ProjectMapRepository(this._api);
+  ProjectMapRepository(this._api, this._storage);
 
   final QuoteProjectApiClient _api;
+  final LocalStorage _storage;
 
   Future<List<ProjectMapJob>> fetchJobs({
     int? projectId,
@@ -19,7 +25,11 @@ final class ProjectMapRepository {
     if (projectId == null) return const [];
 
     final project = await _api.fetchProjectById(projectId.toString());
-    final allJobs = await _api.fetchAllJobs();
+    final allJobs = await AssignedJobsFilter.fetchAssignedJobs(
+      storage: _storage,
+      fetchAll: ({assignedWorker}) =>
+          _api.fetchAllJobs(assignedWorker: assignedWorker),
+    );
     final projectJobs = allJobs
         .where((job) => job.project == projectId)
         .map(ProjectMapJob.fromJobRead)

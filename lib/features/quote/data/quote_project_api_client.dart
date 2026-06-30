@@ -11,6 +11,8 @@ import 'package:red5/core/network/api_pagination.dart';
 import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/models/named_id_option.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
+import 'package:red5/features/dashboard/data/project_jobs_tree_models.dart';
+import 'package:red5/features/forms/data/form_models.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/features/quote/data/project_read.dart';
 import 'package:red5/features/sites/data/site_models.dart';
@@ -134,6 +136,56 @@ final class TagItem {
   final bool isActive;
 }
 
+/// Project type or installation type row from metadata APIs.
+final class MetadataColourItem {
+  const MetadataColourItem({
+    required this.id,
+    required this.name,
+    required this.bgColour,
+    required this.textColour,
+    required this.isActive,
+  });
+
+  final String id;
+  final String name;
+  final String bgColour;
+  final String textColour;
+  final bool isActive;
+
+  static MetadataColourItem? tryFromMap(
+    Map<String, dynamic> map, {
+    required List<String> nameKeys,
+  }) {
+    final id = QuoteProjectApiClient._readString(map, const ['id']) ?? '';
+    final name = QuoteProjectApiClient._readString(map, nameKeys) ?? '';
+    if (id.isEmpty || name.isEmpty) return null;
+    final bg =
+        QuoteProjectApiClient._readString(map, const [
+          'bg_color',
+          'bg_colour',
+          'background_color',
+        ]) ??
+        '#E5E7EB';
+    final text =
+        QuoteProjectApiClient._readString(map, const [
+          'text_color',
+          'text_colour',
+        ]) ??
+        '#374151';
+    final isActiveRaw = map['is_active'];
+    final isActive = isActiveRaw is bool
+        ? isActiveRaw
+        : '${isActiveRaw ?? 'true'}'.toLowerCase() != 'false';
+    return MetadataColourItem(
+      id: id,
+      name: name,
+      bgColour: bg,
+      textColour: text,
+      isActive: isActive,
+    );
+  }
+}
+
 final class GroupItemOption {
   const GroupItemOption({required this.id, required this.name});
 
@@ -149,6 +201,7 @@ final class CompositeItemOption {
     this.abbreviation = '',
     this.sellingPrice,
     this.quantity = 1,
+    this.installationTypeId,
   });
 
   final int id;
@@ -163,6 +216,9 @@ final class CompositeItemOption {
 
   /// Default quantity from the group line (falls back to 1).
   final int quantity;
+
+  /// Installation type linked to this item key (used to match project forms).
+  final int? installationTypeId;
 }
 
 final class GroupCompositeCatalog {
@@ -203,7 +259,10 @@ final class QuoteProjectApiClient {
     String? endDate,
     List<int>? forms,
   }) async {
-    final payload = <String, dynamic>{'name': name};
+    final payload = <String, dynamic>{
+      'name': name,
+      'quote_name': name,
+    };
     if (organizationId != null) payload['organization'] = organizationId;
     if (clientId != null) payload['client'] = clientId;
     if (projectTypeId != null) payload['project_type'] = projectTypeId;
@@ -211,7 +270,12 @@ final class QuoteProjectApiClient {
     if (description != null) payload['description'] = description;
     if (startDate != null) payload['start_date'] = startDate;
     if (endDate != null) payload['end_date'] = endDate;
-    if (forms != null && forms.isNotEmpty) payload['forms'] = forms;
+    final linkedFormIds =
+        forms?.where((id) => id > 0).toList(growable: false) ?? const <int>[];
+    if (linkedFormIds.isNotEmpty) {
+      payload['form_ids'] = linkedFormIds;
+      payload['forms'] = linkedFormIds;
+    }
     _logOutgoingPayload(
       methodName: 'createProject',
       endpoint: AppApiUrls.projects,
@@ -233,6 +297,9 @@ final class QuoteProjectApiClient {
         type: DioExceptionType.badResponse,
         message: 'Project created but no project id returned by backend.',
       );
+    }
+    if (linkedFormIds.isNotEmpty) {
+      await patchProjectFormIds(projectId: id, formIds: linkedFormIds);
     }
     return id;
   }
@@ -297,14 +364,35 @@ final class QuoteProjectApiClient {
   Future<void> updateProject({
     required String projectId,
     required String name,
+    List<int>? forms,
   }) async {
     final payload = <String, dynamic>{'name': name};
+    if (forms != null) payload['forms'] = forms;
     _logOutgoingPayload(
       methodName: 'updateProject',
       endpoint: AppApiUrls.projectById(projectId),
       payload: payload,
     );
     await _dio.put<Map<String, dynamic>>(
+      AppApiUrls.projectById(projectId),
+      data: payload,
+    );
+  }
+
+  /// `PATCH /project/{id}/` — assign form templates via `form_ids`.
+  Future<void> patchProjectFormIds({
+    required String projectId,
+    required List<int> formIds,
+  }) async {
+    final payload = <String, dynamic>{
+      'form_ids': formIds.where((id) => id > 0).toList(growable: false),
+    };
+    _logOutgoingPayload(
+      methodName: 'patchProjectFormIds',
+      endpoint: AppApiUrls.projectById(projectId),
+      payload: payload,
+    );
+    await _dio.patch<Map<String, dynamic>>(
       AppApiUrls.projectById(projectId),
       data: payload,
     );
@@ -838,6 +926,34 @@ final class QuoteProjectApiClient {
     return out;
   }
 
+  /// Reads `installation_type` id for a catalog / composite item row.
+  Future<int?> fetchItemInstallationTypeId(int itemId) async {
+    for (final endpoint in [
+      AppApiUrls.itemById(itemId.toString()),
+      AppApiUrls.compositeItemById(itemId.toString()),
+    ]) {
+      try {
+        final response = await _dio.get<dynamic>(endpoint);
+        final root = _coerceMap(_normalizeResponseData(response.data));
+        final body = _entityBody(root);
+        final fromBody = readInstallationTypeId(body);
+        if (fromBody != null) return fromBody;
+        final itemKey = body['item_key'];
+        if (itemKey is Map) {
+          final fromKey = readInstallationTypeId(
+            Map<String, dynamic>.from(
+              itemKey.map((k, v) => MapEntry(k.toString(), v)),
+            ),
+          );
+          if (fromKey != null) return fromKey;
+        }
+      } catch (_) {
+        // Try the alternate item endpoint.
+      }
+    }
+    return null;
+  }
+
   Future<List<CompositeItemOption>> fetchCompositeItems({int? groupId}) async {
     List<CompositeItemOption> groupItems = const [];
     if (groupId != null) {
@@ -992,6 +1108,7 @@ final class QuoteProjectApiClient {
             abbreviation: item.abbreviation,
             sellingPrice: price,
             quantity: item.quantity,
+            installationTypeId: item.installationTypeId,
           );
         })
         .toList(growable: false);
@@ -1216,16 +1333,7 @@ final class QuoteProjectApiClient {
       },
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
-    final rows = root['results'] is List
-        ? (root['results'] as List<dynamic>)
-        : (root['data'] is List
-              ? (root['data'] as List<dynamic>)
-              : const <dynamic>[]);
-    return rows
-        .whereType<Map>()
-        .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
-        .whereType<JobRead>()
-        .toList(growable: false);
+    return _jobReadsFromApiRoot(root);
   }
 
   /// Paginated `GET /jobs/` — jobs list for the dashboard Jobs screen.
@@ -1252,16 +1360,7 @@ final class QuoteProjectApiClient {
       },
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
-    final rows = root['results'] is List
-        ? (root['results'] as List<dynamic>)
-        : (root['data'] is List
-              ? (root['data'] as List<dynamic>)
-              : const <dynamic>[]);
-    final items = rows
-        .whereType<Map>()
-        .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
-        .whereType<JobRead>()
-        .toList(growable: false);
+    final items = _jobReadsFromApiRoot(root);
     final meta = readApiPageMeta(root, page: page);
     return JobsPageResult(
       items: items,
@@ -1269,6 +1368,25 @@ final class QuoteProjectApiClient {
       totalPages: meta.totalPages,
       totalRecords: meta.totalRecords,
     );
+  }
+
+  /// `GET /project/{id}/jobs/` — hierarchical levels → plots → jobs.
+  Future<ProjectJobsTree> fetchProjectJobsTree({
+    required String projectId,
+    String? search,
+  }) async {
+    final id = projectId.trim();
+    if (id.isEmpty) return const ProjectJobsTree();
+
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.projectJobs(id),
+      queryParameters: <String, dynamic>{
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      },
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final tree = ProjectJobsTree.fromApiRoot(root);
+    return tree.filteredBySearch(search ?? '');
   }
 
   /// `GET /project/{id}/jobs/` — jobs for a single project.
@@ -1290,57 +1408,59 @@ final class QuoteProjectApiClient {
       },
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
-    final rows = root['results'] is List
-        ? (root['results'] as List<dynamic>)
-        : (root['data'] is List
-              ? (root['data'] as List<dynamic>)
-              : const <dynamic>[]);
-    return rows
-        .whereType<Map>()
-        .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
-        .whereType<JobRead>()
-        .toList(growable: false);
+    return _jobReadsFromApiRoot(root);
   }
 
-  /// Fetches all pages from `GET /project/{id}/jobs/`.
+  /// Fetches all jobs from `GET /project/{id}/jobs/` (flattened).
   Future<List<JobRead>> fetchAllProjectJobs({
     required String projectId,
     String? search,
     int pageSize = 50,
   }) async {
-    final id = projectId.trim();
-    if (id.isEmpty) return const [];
+    final tree = await fetchProjectJobsTree(
+      projectId: projectId,
+      search: search,
+    );
+    return _jobReadsFromProjectTree(tree);
+  }
 
+  static List<JobRead> _jobReadsFromProjectTree(ProjectJobsTree tree) {
     final jobs = <JobRead>[];
-    var page = 1;
-    while (true) {
-      final response = await _dio.get<dynamic>(
-        AppApiUrls.projectJobs(id),
-        queryParameters: <String, dynamic>{
-          if (search != null && search.trim().isNotEmpty)
-            'search': search.trim(),
-          'page': page,
-          'page_size': pageSize,
-        },
+    for (final level in tree.levels) {
+      for (final plot in level.plots) {
+        for (final job in plot.jobs) {
+          jobs.add(
+            JobRead(
+              id: job.id,
+              title: job.title,
+              description: job.description,
+              jobSource: job.jobSource,
+              startDate: job.startDate,
+              completedAt: job.completedAt,
+              workerName: job.assignedWorkerName,
+              assignedWorker: job.assignedWorkerId,
+              jobPinStatus: job.statusName,
+              plotName: plot.name,
+              sectionName: level.name,
+            ),
+          );
+        }
+      }
+    }
+    for (final job in tree.manualJobs) {
+      jobs.add(
+        JobRead(
+          id: job.id,
+          title: job.title,
+          description: job.description,
+          jobSource: job.jobSource,
+          startDate: job.startDate,
+          completedAt: job.completedAt,
+          workerName: job.assignedWorkerName,
+          assignedWorker: job.assignedWorkerId,
+          jobPinStatus: job.statusName,
+        ),
       );
-      final root = _coerceMap(_normalizeResponseData(response.data));
-      final rows = root['results'] is List
-          ? (root['results'] as List<dynamic>)
-          : (root['data'] is List
-                ? (root['data'] as List<dynamic>)
-                : const <dynamic>[]);
-      jobs.addAll(
-        rows
-            .whereType<Map>()
-            .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
-            .whereType<JobRead>(),
-      );
-      final pagination = _coerceMap(root['pagination']);
-      final hasNext = root['next'] != null ||
-          (pagination['next'] != null &&
-              pagination['next'].toString().trim().isNotEmpty);
-      if (!hasNext || rows.isEmpty) break;
-      page += 1;
     }
     return jobs;
   }
@@ -1382,18 +1502,9 @@ final class QuoteProjectApiClient {
         );
       }
       final root = _coerceMap(_normalizeResponseData(response.data));
-      final rows = root['results'] is List
-          ? (root['results'] as List<dynamic>)
-          : (root['data'] is List
-                ? (root['data'] as List<dynamic>)
-                : const <dynamic>[]);
-      jobs.addAll(
-        rows
-            .whereType<Map>()
-            .map((row) => JobRead.tryFromMap(Map<String, dynamic>.from(row)))
-            .whereType<JobRead>(),
-      );
-      if (root['next'] == null || rows.isEmpty) break;
+      final pageJobs = _jobReadsFromApiRoot(root);
+      jobs.addAll(pageJobs);
+      if (!readApiHasNextPage(root) || pageJobs.isEmpty) break;
       page += 1;
     }
     return jobs;
@@ -1409,15 +1520,50 @@ final class QuoteProjectApiClient {
 
   /// Project type options for create project forms.
   Future<List<NamedIdOption>> fetchProjectTypeOptions() async {
-    return _fetchNamedIdOptions(
-      AppApiUrls.projectTypes,
+    final items = await fetchProjectTypes(isActive: true);
+    return items
+        .map((item) {
+          final id = int.tryParse(item.id);
+          if (id == null) return null;
+          return NamedIdOption(id: id, name: item.name);
+        })
+        .whereType<NamedIdOption>()
+        .toList(growable: false);
+  }
+
+  /// `GET /project-type/` — project-type_list
+  Future<List<MetadataColourItem>> fetchProjectTypes({
+    int page = 1,
+    int pageSize = 100,
+    bool? isActive,
+  }) {
+    return _fetchMetadataColourItems(
+      endpoint: AppApiUrls.projectTypes,
       nameKeys: const ['project_type', 'type_name', 'name', 'title', 'label'],
-      queryParameters: const <String, dynamic>{
-        'page': 1,
-        'page_size': 500,
-        'is_active': true,
-      },
+      page: page,
+      pageSize: pageSize,
+      isActive: isActive,
     );
+  }
+
+  /// `GET /project-type/{id}/` — project-type_read
+  Future<MetadataColourItem> fetchProjectTypeById(String id) async {
+    final response = await _dio.get<dynamic>(AppApiUrls.projectTypeById(id));
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final item = MetadataColourItem.tryFromMap(
+      body,
+      nameKeys: const ['project_type', 'type_name', 'name', 'title', 'label'],
+    );
+    if (item == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Project type response is invalid.',
+      );
+    }
+    return item;
   }
 
   /// `POST /project-type/` — create a project type metadata row.
@@ -1458,6 +1604,252 @@ final class QuoteProjectApiClient {
         _readString(body, const ['project_type', 'name']) ??
         projectType.trim();
     return NamedIdOption(id: id, name: name);
+  }
+
+  /// `PUT /project-type/{id}/` — project-type_update
+  Future<MetadataColourItem> updateProjectType({
+    required String id,
+    required String projectType,
+    required String bgColor,
+    required String textColor,
+    required bool isActive,
+  }) async {
+    final payload = <String, dynamic>{
+      'project_type': projectType.trim(),
+      'bg_color': bgColor.trim().toLowerCase(),
+      'text_color': textColor.trim().toLowerCase(),
+      'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'updateProjectType',
+      endpoint: AppApiUrls.projectTypeById(id),
+      payload: payload,
+    );
+    final response = await _dio.put<dynamic>(
+      AppApiUrls.projectTypeById(id),
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return MetadataColourItem.tryFromMap(
+          body,
+          nameKeys: const [
+            'project_type',
+            'type_name',
+            'name',
+            'title',
+            'label',
+          ],
+        ) ??
+        MetadataColourItem(
+          id: id,
+          name: projectType.trim(),
+          bgColour: bgColor,
+          textColour: textColor,
+          isActive: isActive,
+        );
+  }
+
+  /// `DELETE /project-type/{id}/` — project-type_delete
+  Future<void> deleteProjectType(String id) async {
+    await _dio.delete<void>(AppApiUrls.projectTypeById(id));
+  }
+
+  /// Installation type options for dropdowns.
+  Future<List<NamedIdOption>> fetchInstallationTypeOptions({
+    bool? isActive,
+  }) async {
+    final items = await fetchInstallationTypes(isActive: isActive ?? true);
+    return items
+        .map((item) {
+          final id = int.tryParse(item.id);
+          if (id == null) return null;
+          return NamedIdOption(id: id, name: item.name);
+        })
+        .whereType<NamedIdOption>()
+        .toList(growable: false);
+  }
+
+  /// `GET /installation-type/` — installation-type_list
+  Future<List<MetadataColourItem>> fetchInstallationTypes({
+    int page = 1,
+    int pageSize = 100,
+    bool? isActive,
+  }) {
+    return _fetchMetadataColourItems(
+      endpoint: AppApiUrls.installationTypes,
+      nameKeys: const [
+        'installation_type',
+        'type_name',
+        'name',
+        'title',
+        'label',
+      ],
+      page: page,
+      pageSize: pageSize,
+      isActive: isActive,
+    );
+  }
+
+  /// `GET /installation-type/{id}/` — installation-type_read
+  Future<MetadataColourItem> fetchInstallationTypeById(String id) async {
+    final response = await _dio.get<dynamic>(
+      AppApiUrls.installationTypeById(id),
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final item = MetadataColourItem.tryFromMap(
+      body,
+      nameKeys: const [
+        'installation_type',
+        'type_name',
+        'name',
+        'title',
+        'label',
+      ],
+    );
+    if (item == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Installation type response is invalid.',
+      );
+    }
+    return item;
+  }
+
+  /// `POST /installation-type/` — installation-type_create
+  Future<MetadataColourItem> createInstallationType({
+    required String installationType,
+    required String bgColor,
+    required String textColor,
+    bool isActive = true,
+  }) async {
+    final payload = <String, dynamic>{
+      'installation_type': installationType.trim(),
+      'bg_color': bgColor.trim().toLowerCase(),
+      'text_color': textColor.trim().toLowerCase(),
+      'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'createInstallationType',
+      endpoint: AppApiUrls.installationTypes,
+      payload: payload,
+    );
+    final response = await _dio.post<dynamic>(
+      AppApiUrls.installationTypes,
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    final item = MetadataColourItem.tryFromMap(
+      body,
+      nameKeys: const [
+        'installation_type',
+        'type_name',
+        'name',
+        'title',
+        'label',
+      ],
+    );
+    if (item == null) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        message: 'Installation type created but payload is invalid.',
+      );
+    }
+    return item;
+  }
+
+  /// `PUT /installation-type/{id}/` — installation-type_update
+  Future<MetadataColourItem> updateInstallationType({
+    required String id,
+    required String installationType,
+    required String bgColor,
+    required String textColor,
+    required bool isActive,
+  }) async {
+    final payload = <String, dynamic>{
+      'installation_type': installationType.trim(),
+      'bg_color': bgColor.trim().toLowerCase(),
+      'text_color': textColor.trim().toLowerCase(),
+      'is_active': isActive,
+    };
+    _logOutgoingPayload(
+      methodName: 'updateInstallationType',
+      endpoint: AppApiUrls.installationTypeById(id),
+      payload: payload,
+    );
+    final response = await _dio.put<dynamic>(
+      AppApiUrls.installationTypeById(id),
+      data: payload,
+    );
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return MetadataColourItem.tryFromMap(
+          body,
+          nameKeys: const [
+            'installation_type',
+            'type_name',
+            'name',
+            'title',
+            'label',
+          ],
+        ) ??
+        MetadataColourItem(
+          id: id,
+          name: installationType.trim(),
+          bgColour: bgColor,
+          textColour: textColor,
+          isActive: isActive,
+        );
+  }
+
+  /// `DELETE /installation-type/{id}/` — installation-type_delete
+  Future<void> deleteInstallationType(String id) async {
+    await _dio.delete<void>(AppApiUrls.installationTypeById(id));
+  }
+
+  Future<List<MetadataColourItem>> _fetchMetadataColourItems({
+    required String endpoint,
+    required List<String> nameKeys,
+    int page = 1,
+    int pageSize = 100,
+    bool? isActive,
+  }) async {
+    final out = <MetadataColourItem>[];
+    var nextPage = page < 1 ? 1 : page;
+    while (true) {
+      final response = await _dio.get<dynamic>(
+        endpoint,
+        queryParameters: <String, dynamic>{
+          'page': nextPage,
+          'page_size': pageSize,
+          if (isActive != null) 'is_active': isActive,
+        },
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final rows = root['data'] is List
+          ? (root['data'] as List<dynamic>)
+          : (root['results'] is List
+                ? (root['results'] as List<dynamic>)
+                : const <dynamic>[]);
+      for (final row in rows) {
+        final item = MetadataColourItem.tryFromMap(
+          _coerceMap(row),
+          nameKeys: nameKeys,
+        );
+        if (item != null) out.add(item);
+      }
+      final pagination = _coerceMap(root['pagination']);
+      final hasNext = pagination['next'] != null;
+      if (!hasNext) break;
+      nextPage += 1;
+    }
+    return out;
   }
 
   /// Registered QR codes for create/edit job forms.
@@ -1726,6 +2118,13 @@ final class QuoteProjectApiClient {
     );
   }
 
+  static List<JobRead> _jobReadsFromApiRoot(Map<String, dynamic> root) {
+    return readApiRows(root)
+        .map(JobRead.tryFromMap)
+        .whereType<JobRead>()
+        .toList(growable: false);
+  }
+
   static dynamic _normalizeResponseData(dynamic data) {
     if (data is List<int>) {
       final asText = utf8.decode(data, allowMalformed: true).trim();
@@ -1800,6 +2199,7 @@ final class QuoteProjectApiClient {
     for (final key in const [
       'item',
       'composite_item',
+      'item_key',
       'product',
       'item_detail',
       'composite_item_detail',
@@ -1876,6 +2276,10 @@ final class QuoteProjectApiClient {
               ])
             : null);
     final quantity = _readInt(map, const ['quantity', 'qty'], fallback: 1);
+    final installationTypeId =
+        readInstallationTypeId(map) ??
+        (nested != null ? readInstallationTypeId(nested) : null) ??
+        _readInstallationTypeFromItemKey(map);
 
     return CompositeItemOption(
       id: id,
@@ -1884,6 +2288,17 @@ final class QuoteProjectApiClient {
       abbreviation: abbreviation,
       sellingPrice: sellingPrice,
       quantity: quantity > 0 ? quantity : 1,
+      installationTypeId: installationTypeId,
+    );
+  }
+
+  static int? _readInstallationTypeFromItemKey(Map<String, dynamic> map) {
+    final raw = map['item_key'];
+    if (raw is! Map) return null;
+    return readInstallationTypeId(
+      Map<String, dynamic>.from(
+        raw.map((k, v) => MapEntry(k.toString(), v)),
+      ),
     );
   }
 

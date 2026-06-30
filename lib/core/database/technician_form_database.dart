@@ -13,17 +13,21 @@ final class TechnicianFormDatabase {
   static const _tableName = 'technician_form_cache';
   static const _submissionTable = 'job_form_submission';
   static const _jobFormLinkTable = 'job_form_link';
+  static const _jobListCacheTable = 'operative_job_list_cache';
+  static const _jobDetailCacheTable = 'operative_job_detail_cache';
+  static const _syncQueueTable = 'operative_sync_queue';
 
   static Future<TechnicianFormDatabase> open() async {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, _dbName);
     final db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (database, version) async {
         await _createFormCacheTable(database);
         await _createSubmissionTable(database);
         await _createJobFormLinkTable(database);
+        await _createOperativeCacheTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -31,6 +35,9 @@ final class TechnicianFormDatabase {
         }
         if (oldVersion < 3) {
           await _createJobFormLinkTable(database);
+        }
+        if (oldVersion < 4) {
+          await _createOperativeCacheTables(database);
         }
       },
     );
@@ -256,6 +263,151 @@ final class TechnicianFormDatabase {
         })
         .whereType<JobFormAssignment>()
         .toList(growable: false);
+  }
+
+  static Future<void> _createOperativeCacheTables(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS $_jobListCacheTable (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        jobs_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS $_jobDetailCacheTable (
+        job_id INTEGER PRIMARY KEY,
+        job_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS $_syncQueueTable (
+        id TEXT PRIMARY KEY,
+        operation_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_operative_sync_queue_created
+      ON $_syncQueueTable (created_at ASC)
+    ''');
+  }
+
+  Future<void> saveJobListCache(String jobsJson) async {
+    await _db.insert(
+      _jobListCacheTable,
+      <String, Object?>{
+        'id': 1,
+        'jobs_json': jobsJson,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> readJobListCache() async {
+    final rows = await _db.query(
+      _jobListCacheTable,
+      columns: ['jobs_json'],
+      where: 'id = ?',
+      whereArgs: [1],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['jobs_json'] as String?;
+  }
+
+  Future<void> saveJobDetailCache({
+    required int jobId,
+    required String jobJson,
+  }) async {
+    await _db.insert(
+      _jobDetailCacheTable,
+      <String, Object?>{
+        'job_id': jobId,
+        'job_json': jobJson,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> readJobDetailCache(int jobId) async {
+    final rows = await _db.query(
+      _jobDetailCacheTable,
+      columns: ['job_json'],
+      where: 'job_id = ?',
+      whereArgs: [jobId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['job_json'] as String?;
+  }
+
+  Future<void> enqueueSyncOperation({
+    required String id,
+    required String operationType,
+    required String payloadJson,
+  }) async {
+    await _db.insert(
+      _syncQueueTable,
+      <String, Object?>{
+        'id': id,
+        'operation_type': operationType,
+        'payload_json': payloadJson,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'retry_count': 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> listSyncQueue() async {
+    return _db.query(
+      _syncQueueTable,
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  Future<void> deleteSyncQueueItem(String id) async {
+    await _db.delete(
+      _syncQueueTable,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateSyncQueueError({
+    required String id,
+    required String error,
+  }) async {
+    await _db.rawUpdate(
+      '''
+      UPDATE $_syncQueueTable
+      SET retry_count = retry_count + 1, last_error = ?
+      WHERE id = ?
+      ''',
+      [error, id],
+    );
+  }
+
+  Future<int> countPendingSyncItems() async {
+    final forms = await _db.rawQuery(
+      '''
+      SELECT COUNT(*) AS count FROM $_submissionTable
+      WHERE sync_status = ?
+      ''',
+      [JobFormSubmissionSyncStatus.pending.name],
+    );
+    final queue = await _db.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_syncQueueTable',
+    );
+    final formCount = (forms.first['count'] as int?) ?? 0;
+    final queueCount = (queue.first['count'] as int?) ?? 0;
+    return formCount + queueCount;
   }
 
   Future<void> close() async {

@@ -8,6 +8,9 @@ abstract final class AppApiUrls {
   /// API host root (no trailing slash; Dio joins paths safely).
   static const String baseUrl = 'http://110.225.254.51:5050';
 
+  /// Purchase orders API (separate host from main CRM API).
+  static const String purchaseOrdersBaseUrl = 'http://110.225.254.51:5001';
+
   static const String _v1 = '/api/v1';
 
   // ─── Auth ───────────────────────────────────────────────────────────────
@@ -53,14 +56,25 @@ abstract final class AppApiUrls {
 
   // ─── Vendors ─────────────────────────────────────────────────────────────
 
-  /// `GET` vendors list · `POST` vendor create
+  /// `GET` [vendors_list] · `POST` [vendors_create]
   static const String vendors = '$_v1/vendors/';
 
-  /// `GET` vendor detail · `PUT` · `PATCH` · `DELETE`
+  /// `GET` [vendors_read] · `PUT` [vendors_update] · `PATCH` [vendors_partial_update] · `DELETE` [vendors_delete]
   static String vendorsById(String id) => '$_v1/vendors/$id/';
 
-  /// `GET` [vendor-type_list] — vendor type dropdowns for create vendor.
+  /// `GET` [vendor-type_list] · `POST` [vendor-type_create]
   static const String vendorTypes = '$_v1/vendor-type/';
+
+  /// `GET` [vendor-type_read] · `PUT` [vendor-type_update] · `PATCH` [vendor-type_partial_update] · `DELETE` [vendor-type_delete]
+  static String vendorTypeById(String id) => '$_v1/vendor-type/$id/';
+
+  // ─── Purchase orders (port 5001 — no trailing slash on these routes) ─────
+
+  /// `GET` [purchase-orders_list] · `POST` [purchase-orders_create]
+  static const String purchaseOrders = '$_v1/purchase-orders';
+
+  /// `GET` [purchase-orders_read] · `PUT` [purchase-orders_update] · `PATCH` [purchase-orders_partial_update] · `DELETE` [purchase-orders_delete]
+  static String purchaseOrderById(String id) => '$_v1/purchase-orders/$id';
 
   // ─── Contacts ─────────────────────────────────────────────────────────────
 
@@ -166,8 +180,18 @@ abstract final class AppApiUrls {
   /// `GET` job status metadata (dropdowns).
   static const String jobStatuses = '$_v1/job-status/';
 
-  /// `GET` project type metadata (dropdowns).
+  /// `GET` [project-type_list] · `POST` [project-type_create]
   static const String projectTypes = '$_v1/project-type/';
+
+  /// `GET` [project-type_read] · `PUT` [project-type_update] · `PATCH` [project-type_partial_update] · `DELETE` [project-type_delete]
+  static String projectTypeById(String id) => '$_v1/project-type/$id/';
+
+  /// `GET` [installation-type_list] · `POST` [installation-type_create]
+  static const String installationTypes = '$_v1/installation-type/';
+
+  /// `GET` [installation-type_read] · `PUT` [installation-type_update] · `PATCH` [installation-type_partial_update] · `DELETE` [installation-type_delete]
+  static String installationTypeById(String id) =>
+      '$_v1/installation-type/$id/';
 
   // ─── Site ──────────────────────────────────────────────────────────────────
 

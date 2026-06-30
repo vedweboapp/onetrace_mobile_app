@@ -40,6 +40,7 @@ import 'package:red5/features/dashboard/presentation/jobs_list_refresh.dart';
 import 'package:red5/features/dashboard/presentation/views/quotations_list_page.dart';
 import 'package:red5/features/quotations/data/quotation_models.dart';
 import 'package:red5/features/dashboard/presentation/invoice_list_refresh.dart';
+import 'package:red5/features/dashboard/presentation/purchase_order_list_refresh.dart';
 import 'package:red5/features/quotations/presentation/quotation_list_refresh.dart';
 import 'package:red5/features/quotations/presentation/views/add_quotation_page.dart';
 import 'package:red5/features/clients/presentation/views/clients_page.dart';
@@ -306,7 +307,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
       return;
     }
     if (_selectedIndex == 11) {
-      context.push<bool?>(AddPurchaseOrderPage.path);
+      context.push<bool?>(AddPurchaseOrderPage.path).then((created) {
+        if (!mounted || created != true) return;
+        ref.read(purchaseOrderListRefreshTickProvider.notifier).state++;
+      });
       return;
     }
     if (_selectedIndex == 10) {
@@ -1088,6 +1092,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
   Widget build(BuildContext context) {
     final whiteShellTab =
         _selectedIndex == 8 ||
+        _selectedIndex == 9 ||
         _selectedIndex == 10 ||
         _selectedIndex == 11 ||
         _selectedIndex == 12;

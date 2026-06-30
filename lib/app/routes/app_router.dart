@@ -6,6 +6,7 @@ import 'package:red5/core/auth/auth_redirect_notifier.dart';
 import 'package:red5/core/auth/auth_session.dart';
 import 'package:red5/core/auth/user_role_navigation.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/notifications/presentation/notifications_page.dart';
 import 'package:red5/core/widgets/app_navigator_key.dart';
 import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
@@ -16,6 +17,7 @@ import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.d
 import 'package:red5/features/dashboard/presentation/views/add_job_page.dart';
 import 'package:red5/features/dashboard/presentation/views/job_details_page.dart';
 import 'package:red5/features/dashboard/presentation/views/project_details_page.dart';
+import 'package:red5/features/dashboard/presentation/views/project_level_jobs_page.dart';
 import 'package:red5/features/dashboard/presentation/views/qr_codes_page.dart';
 import 'package:red5/features/dashboard/presentation/views/quote_composite_items_screen.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
@@ -30,6 +32,7 @@ import 'package:red5/employee_role/presentation/employee_personal_profile_page.d
 import 'package:red5/features/dashboard/presentation/views/settings/personal_profile_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/job_status_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/pin_status_settings_page.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/installation_type_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/project_type_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/privacy_settings_page.dart';
 import 'package:red5/features/dashboard/presentation/views/settings/settings_page.dart';
@@ -54,6 +57,7 @@ import 'package:red5/features/items/presentation/views/add_item_page.dart';
 import 'package:red5/features/items/presentation/views/item_detail_page.dart';
 import 'package:red5/features/dashboard/presentation/views/add_invoice_page.dart';
 import 'package:red5/features/dashboard/presentation/views/add_purchase_order_page.dart';
+import 'package:red5/features/dashboard/data/purchase_order_models.dart';
 import 'package:red5/features/dashboard/presentation/views/add_bill_page.dart';
 import 'package:red5/features/dashboard/presentation/views/bill_detail_page.dart';
 import 'package:red5/features/dashboard/presentation/views/bill_preview_page.dart';
@@ -98,6 +102,7 @@ import 'package:red5/employee_role/jobs/presentation/employee_qr_scan_page.dart'
 import 'package:red5/employee_role/reports/data/employee_reports_data.dart';
 import 'package:red5/employee_role/reports/presentation/employee_report_product_detail_page.dart';
 import 'package:red5/employee_role/sites/presentation/employee_site_detail_page.dart';
+import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
 import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/projects/presentation/employee_project_details_page.dart';
@@ -264,6 +269,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             beginOffset: const Offset(0.08, 0),
           );
         },
+      ),
+      GoRoute(
+        path: NotificationsPage.path,
+        name: NotificationsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const NotificationsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
       ),
       GoRoute(
         path: EmployeeQrScanPage.path,
@@ -541,6 +555,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => _animatedPage(
           state: state,
           child: const EmployeeSitesPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EmployeeMaterialRequestsPage.path,
+        name: EmployeeMaterialRequestsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeeMaterialRequestsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),
@@ -946,6 +969,25 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '${PurchaseOrderDetailPage.pathPrefix}/:purchaseOrderId/edit',
+        name: AddPurchaseOrderPage.editName,
+        pageBuilder: (context, state) {
+          final id = Uri.decodeComponent(
+            (state.pathParameters['purchaseOrderId'] ?? '').trim(),
+          );
+          final extra = state.extra;
+          final prefill = extra is PurchaseOrderDetail ? extra : null;
+          return _animatedPage(
+            state: state,
+            child: AddPurchaseOrderPage(
+              editPurchaseOrderId: id,
+              existing: prefill,
+            ),
+            beginOffset: const Offset(0, 0.08),
+          );
+        },
+      ),
+      GoRoute(
         path: '${PurchaseOrderDetailPage.pathPrefix}/:purchaseOrderId/preview',
         name: PurchaseOrderPreviewPage.name,
         pageBuilder: (context, state) {
@@ -1155,7 +1197,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final id = state.pathParameters['projectId'] ?? '';
           summary ??= QuoteSummary(
             id: id,
-            quoteName: 'Project',
+            quoteName: 'Untitled Project',
             quoteNumber: '—',
           );
           return _animatedPage(
@@ -1188,6 +1230,25 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               projectId: projectId,
               initialProjectName: projectName,
               initialClientName: clientName,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${ProjectDetailsPage.pathPrefix}/:projectId/level-jobs',
+        name: ProjectLevelJobsPage.name,
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final extra = state.extra;
+          final args = extra is ProjectLevelJobsArgs
+              ? extra
+              : const ProjectLevelJobsArgs(levelName: 'Level', plots: []);
+          return _animatedPage(
+            state: state,
+            child: ProjectLevelJobsPage(
+              projectId: projectId,
+              args: args,
             ),
             beginOffset: const Offset(0.08, 0),
           );
@@ -1602,6 +1663,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => _animatedPage(
           state: state,
           child: const ProjectTypeSettingsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: InstallationTypeSettingsPage.path,
+        name: InstallationTypeSettingsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const InstallationTypeSettingsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
       ),

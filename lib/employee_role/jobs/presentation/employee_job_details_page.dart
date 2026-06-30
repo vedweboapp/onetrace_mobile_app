@@ -12,6 +12,7 @@ import 'package:red5/employee_role/jobs/presentation/employee_job_safety_verific
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_detail_widgets.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_form_picker_sheet.dart';
 import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
@@ -120,7 +121,6 @@ class _EmployeeJobDetailsPageState
       context,
       ref,
       jobId: jobId,
-      navigateOnOpenJob: false,
     );
     if (!mounted || !success) return;
     ref.read(employeeJobDetailControllerProvider.notifier).markQrCodeScanned();
@@ -220,14 +220,10 @@ class _EmployeeJobDetailsPageState
       dynamicFormComplete: dynamicFormComplete,
     );
 
-    final statusLabel = job == null
-        ? '—'
-        : state.formIds.isNotEmpty && !dynamicFormComplete
-            ? EmployeeJobStatus.inProgress.label
-            : sessionController.resolveStatusLabel(
-                jobId: job.id,
-                apiStatusLabel: job.currentStatus,
-              );
+    final statusLabel = controller.liveStatusLabel(
+      formsIncomplete:
+          job != null && state.formIds.isNotEmpty && !dynamicFormComplete,
+    );
 
     final requiredItems = job == null
         ? const <EmployeeRequiredFormItem>[]
@@ -335,17 +331,31 @@ class _EmployeeJobDetailsPageState
                             }
                             setState(() => _isSubmittingForms = true);
                             try {
-                              JobCompletionDebugLog.banner(
-                                'Submit Form — POST submit-form from SQLite | jobId=${job.id}',
-                              );
-                              await ref
-                                  .read(jobFormSubmissionRepositoryProvider)
-                                  .syncPendingSubmissionsForJob(
-                                    jobId: job.id,
-                                    assignments:
-                                        job.formAssignments,
-                                  );
+                              final isOnline = ref
+                                  .read(connectivityServiceProvider)
+                                  .isOnline;
+                              if (isOnline) {
+                                JobCompletionDebugLog.banner(
+                                  'Submit Form — POST submit-form from SQLite | jobId=${job.id}',
+                                );
+                                await ref
+                                    .read(jobFormSubmissionRepositoryProvider)
+                                    .syncPendingSubmissionsForJob(
+                                      jobId: job.id,
+                                      assignments: job.formAssignments,
+                                    );
+                              }
                               if (!context.mounted) return;
+                              if (!isOnline) {
+                                context.showTopSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Forms saved offline. They will sync when you are back online.',
+                                    ),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
                               await context.push(
                                 EmployeeJobConfirmationPage.path,
                                 extra: <String, Object?>{

@@ -439,7 +439,7 @@ class _JobDetailsPageState extends ConsumerState<JobDetailsPage>
       ProjectDetailsPage.pathFor(widget.projectId),
       extra: <String, dynamic>{
         ...fallbackSummary.toJson(),
-        'initialTabIndex': 1, // Jobs tab
+        'initialTabIndex': 2, // Jobs tab
       },
     );
   }

@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_qr_scanner_page.dart';
 import 'package:red5/employee_role/jobs/data/job_qr_scan_repository.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/qr_code_details_sheet.dart';
 
 /// Opens the camera, registers the scan with the API, and shows job details.
@@ -14,7 +12,6 @@ Future<bool> runEmployeeQrScanFlow(
   BuildContext context,
   WidgetRef ref, {
   int? jobId,
-  bool navigateOnOpenJob = true,
 }) async {
   final code = await openFormQrScanner(context);
   final qrCode = code?.trim();
@@ -30,27 +27,26 @@ Future<bool> runEmployeeQrScanFlow(
     context.showTopSnackBar(
       SnackBar(
         content: Text(
-          result.registeredWithJob
-              ? 'QR ${result.qrCode} linked to job.'
-              : 'QR details loaded for ${result.details.title}.',
+          result.queuedOffline
+              ? 'QR scan saved offline. It will sync when you are back online.'
+              : result.registeredWithJob
+                  ? 'QR ${result.qrCode} linked to job.'
+                  : 'QR details loaded for ${result.details.title}.',
         ),
         behavior: SnackBarBehavior.floating,
       ),
     );
 
-    final openJob = await showQrCodeDetailsSheet(
+    if (result.queuedOffline) {
+      return true;
+    }
+
+    await showQrCodeDetailsSheet(
       context,
       details: result.details,
       qrCode: result.qrCode,
     );
     if (!context.mounted) return true;
-
-    if (openJob == true && navigateOnOpenJob) {
-      context.push(
-        EmployeeJobDetailsPage.path,
-        extra: <String, Object?>{'jobId': result.details.jobId},
-      );
-    }
 
     return true;
   } catch (error) {

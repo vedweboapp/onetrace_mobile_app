@@ -9,7 +9,6 @@ import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_detail_widgets.dart';
-import 'package:red5/employee_role/projects/data/employee_project_repository.dart';
 
 final employeeJobDetailControllerProvider =
     StateNotifierProvider.autoDispose<
@@ -18,7 +17,6 @@ final employeeJobDetailControllerProvider =
     >((ref) {
       return EmployeeJobDetailController(
         ref.read(employeeJobRepositoryProvider),
-        ref.read(employeeProjectRepositoryProvider),
         ref.read(jobFormSubmissionRepositoryProvider),
         ref,
       );
@@ -31,6 +29,7 @@ final class EmployeeJobDetailState {
     this.job,
     this.isLoading = false,
     this.errorMessage,
+    this.isShowingCachedData = false,
     this.selectedTab = EmployeeJobDetailTab.forms,
     this.materialUsed = '',
     this.beforePhotoBytes,
@@ -49,6 +48,7 @@ final class EmployeeJobDetailState {
   final EmployeeJobDetail? job;
   final bool isLoading;
   final String? errorMessage;
+  final bool isShowingCachedData;
   final EmployeeJobDetailTab selectedTab;
   final String materialUsed;
   final Uint8List? beforePhotoBytes;
@@ -81,6 +81,7 @@ final class EmployeeJobDetailState {
     EmployeeJobDetail? job,
     bool? isLoading,
     String? errorMessage,
+    bool? isShowingCachedData,
     bool clearError = false,
     EmployeeJobDetailTab? selectedTab,
     String? materialUsed,
@@ -100,6 +101,7 @@ final class EmployeeJobDetailState {
       job: job ?? this.job,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
+      isShowingCachedData: isShowingCachedData ?? this.isShowingCachedData,
       selectedTab: selectedTab ?? this.selectedTab,
       materialUsed: materialUsed ?? this.materialUsed,
       beforePhotoBytes: beforePhotoBytes ?? this.beforePhotoBytes,
@@ -129,126 +131,177 @@ final class EmployeeJobDetailController
     extends StateNotifier<EmployeeJobDetailState> {
   EmployeeJobDetailController(
     this._repository,
-    this._projectRepository,
     this._submissionRepository,
     this._ref,
   ) : super(const EmployeeJobDetailState());
 
   final EmployeeJobRepository _repository;
-  final EmployeeProjectRepository _projectRepository;
   final JobFormSubmissionRepository _submissionRepository;
   final Ref _ref;
+
+  ({
+    List<int> formIds,
+    List<JobFormAssignment> formAssignments,
+    Map<int, String> formTitles,
+    Map<int, int> formSubmissionIds,
+  }) _formsStateFromJobDetail({
+    required List<JobLinkedFormSummary> jobForms,
+    required List<JobFormAssignment> seedAssignments,
+    Map<int, int> seedSubmissionIds = const {},
+  }) {
+    var formAssignments = List<JobFormAssignment>.from(seedAssignments);
+    var formIds = jobForms.isNotEmpty
+        ? jobForms.map((form) => form.formId).toList(growable: false)
+        : formAssignments.isNotEmpty
+            ? formAssignments.map((assignment) => assignment.formId).toList()
+            : <int>[];
+    final formTitles = <int, String>{
+      for (final form in jobForms)
+        if (form.name.trim().isNotEmpty) form.formId: form.name.trim(),
+    };
+    final formSubmissionIds = Map<int, int>.from(seedSubmissionIds);
+
+    if (jobForms.isNotEmpty) {
+      formAssignments = JobFormAssignment.mergeByFormId(
+        formAssignments,
+        JobFormAssignment.fromLinkedForms(jobForms),
+      );
+      for (final form in jobForms) {
+        final submissionId = form.submissionId;
+        if (submissionId != null && submissionId > 0) {
+          formSubmissionIds[form.formId] = submissionId;
+        }
+      }
+    }
+
+    formIds = formIds.toSet().toList(growable: false);
+
+    for (final assignment in formAssignments) {
+      final submissionId = assignment.submissionId;
+      if (submissionId != null && submissionId > 0) {
+        formSubmissionIds[assignment.formId] = submissionId;
+      }
+    }
+
+    return (
+      formIds: formIds,
+      formAssignments: formAssignments,
+      formTitles: formTitles,
+      formSubmissionIds: formSubmissionIds,
+    );
+  }
+
+  String liveStatusLabel({required bool formsIncomplete}) {
+    final job = state.job;
+    if (job == null) return '—';
+    if (formsIncomplete) return EmployeeJobStatus.inProgress.label;
+    return _ref.read(employeeJobSessionProvider.notifier).resolveStatusLabel(
+          jobId: job.id,
+          apiStatusLabel: job.currentStatus,
+        );
+  }
+
+  Future<EmployeeJobDetail> _syncOperativeJobStatus(EmployeeJobDetail job) async {
+    final session = _ref.read(employeeJobSessionProvider.notifier);
+    final apiStatus =
+        EmployeeJobSessionController.statusFromLabel(job.currentStatus);
+
+    if (apiStatus == EmployeeJobStatus.completed ||
+        session.isJobCompleted(job.id)) {
+      return job;
+    }
+
+    if (apiStatus == EmployeeJobStatus.inProgress || session.isJobStarted(job.id)) {
+      session.ensureJobSessionHydrated(job.id);
+      if (apiStatus != EmployeeJobStatus.inProgress) {
+        try {
+          return await _repository.fetchJobDetail(jobId: job.id);
+        } catch (_) {}
+      }
+      return job;
+    }
+
+    if (job.safetyChecklist.isNotEmpty) {
+      return job;
+    }
+
+    try {
+      await _repository.markJobStarted(job.id);
+      session.startJob(job.id);
+      return _repository.fetchJobDetail(jobId: job.id);
+    } catch (_) {
+      session.startJob(job.id);
+      return job;
+    }
+  }
 
   Future<void> load({int? jobId}) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final job = await _repository.fetchJobDetail(jobId: jobId);
-      var formAssignments = List<JobFormAssignment>.from(job.formAssignments);
-      if (formAssignments.isNotEmpty) {
+      final fetchResult = await _repository.fetchJobDetailWithSource(jobId: jobId);
+      var job = await _syncOperativeJobStatus(fetchResult.detail);
+      final jobForms = job.jobForms;
+      var formsState = _formsStateFromJobDetail(
+        jobForms: jobForms,
+        seedAssignments: job.formAssignments,
+        seedSubmissionIds: {
+          for (final assignment in job.formAssignments)
+            if (assignment.submissionId != null && assignment.submissionId! > 0)
+              assignment.formId: assignment.submissionId!,
+        },
+      );
+
+      if (formsState.formAssignments.isNotEmpty) {
         await _submissionRepository.cacheJobFormLinks(
           jobId: job.id,
-          assignments: formAssignments,
+          assignments: formsState.formAssignments,
         );
       }
-      var formIds = formAssignments.isNotEmpty
-          ? formAssignments.map((assignment) => assignment.formId).toList()
-          : List<int>.from(job.linkedFormIds);
-
-      if (formIds.isEmpty && formAssignments.isEmpty && job.projectId != null) {
-        try {
-          final project = await _projectRepository.fetchProjectDetail(
-            projectId: job.projectId,
-          );
-          if (project.formIds.isNotEmpty) {
-            formIds = List<int>.from(project.formIds);
-          }
-        } catch (_) {
-          // Form preload is best-effort when job has no direct form link.
-        }
-      }
-
-      formIds = formIds.toSet().toList(growable: false);
-      var formTitles = <int, String>{};
-      var formSubmissionIds = <int, int>{
-        for (final assignment in job.formAssignments)
-          if (assignment.submissionId != null && assignment.submissionId! > 0)
-            assignment.formId: assignment.submissionId!,
-      };
-      var linkedForms = const <JobLinkedFormSummary>[];
 
       try {
-        linkedForms =
-            await _submissionRepository.fetchLinkedFormsRemote(job.id);
-        if (linkedForms.isNotEmpty) {
-          formIds = {
-            ...formIds,
-            ...linkedForms.map((form) => form.formId),
-          }.toList(growable: false);
-
-          for (final linked in linkedForms) {
-            formTitles[linked.formId] = linked.name;
-            final submissionId = linked.submissionId;
-            if (submissionId != null && submissionId > 0) {
-              formSubmissionIds[linked.formId] = submissionId;
-            }
-          }
-          formAssignments = JobFormAssignment.mergeByFormId(
-            formAssignments,
-            JobFormAssignment.fromLinkedForms(linkedForms),
-          );
-        }
-      } catch (_) {
-        // Linked forms are best-effort when job detail omits them.
-      }
-
-      await _submissionRepository.refreshJobFormLinksFromApi(job.id);
+        await _submissionRepository.refreshJobFormLinksFromApi(job.id);
+      } catch (_) {}
 
       final refreshedAssignments =
           await _submissionRepository.cachedAssignmentsForJob(job.id);
       if (refreshedAssignments.isNotEmpty) {
-        formAssignments = JobFormAssignment.mergeByFormId(
-          formAssignments,
-          refreshedAssignments,
+        formsState = _formsStateFromJobDetail(
+          jobForms: jobForms,
+          seedAssignments: JobFormAssignment.mergeByFormId(
+            formsState.formAssignments,
+            refreshedAssignments,
+          ),
+          seedSubmissionIds: formsState.formSubmissionIds,
         );
       }
 
-      formIds = {
-        ...formIds,
-        ...formAssignments.map((assignment) => assignment.formId),
-      }.toList(growable: false);
-
-      for (final assignment in formAssignments) {
-        final submissionId = assignment.submissionId;
-        if (submissionId != null && submissionId > 0) {
-          formSubmissionIds[assignment.formId] = submissionId;
-        }
-      }
-
       final enrichedJobWithLinks = job.copyWith(
-        formIds: formIds,
-        formAssignments: formAssignments,
+        formIds: formsState.formIds,
+        formAssignments: formsState.formAssignments,
+        jobForms: jobForms,
       );
 
       state = state.copyWith(
         job: enrichedJobWithLinks,
         isLoading: false,
+        isShowingCachedData: fetchResult.fromCache,
         clearError: true,
-        formIds: formIds,
+        formIds: formsState.formIds,
         selectedFormId: null,
         completedFormIds: const {},
-        formTitles: formTitles,
-        formSubmissionIds: formSubmissionIds,
+        formTitles: formsState.formTitles,
+        formSubmissionIds: formsState.formSubmissionIds,
       );
 
-      if (formIds.isNotEmpty) {
+      if (formsState.formIds.isNotEmpty) {
         await Future.wait([
-          _preloadFormTitles(formIds),
+          _preloadFormTitles(formsState.formIds),
           _loadCompletedForms(
             job.id,
-            formIds,
+            formsState.formIds,
             enrichedJobWithLinks.formAssignments,
           ),
-          _loadSubmissionIds(job.id, formIds),
+          _loadSubmissionIds(job.id, formsState.formIds),
         ]);
       }
     } catch (_) {
@@ -280,61 +333,45 @@ final class EmployeeJobDetailController
     }
   }
 
-  /// Re-fetches linked forms from the API (e.g. when new forms are attached mid-job).
+  /// Re-fetches linked forms from `GET /jobs/{id}/` (e.g. when new forms are attached mid-job).
   Future<void> refreshAttachedForms() async {
     final job = state.job;
     if (job == null) return;
 
     try {
+      final jobForms = await _repository.fetchJobForms(jobId: job.id);
       final refreshedAssignments =
           await _submissionRepository.refreshJobFormLinksFromApi(job.id);
 
-      var formIds = List<int>.from(state.formIds);
-      var formAssignments = List<JobFormAssignment>.from(job.formAssignments);
-      var formTitles = Map<int, String>.from(state.formTitles);
-
-      if (refreshedAssignments.isNotEmpty) {
-        formAssignments = JobFormAssignment.mergeByFormId(
-          formAssignments,
+      final formsState = _formsStateFromJobDetail(
+        jobForms: jobForms,
+        seedAssignments: JobFormAssignment.mergeByFormId(
+          job.formAssignments,
           refreshedAssignments,
-        );
-        formIds = {
-          ...formIds,
-          ...refreshedAssignments.map((assignment) => assignment.formId),
-        }.toList(growable: false);
-      }
-
-      try {
-        final linked =
-            await _submissionRepository.fetchLinkedFormsRemote(job.id);
-        if (linked.isNotEmpty) {
-          formIds = {
-            ...formIds,
-            ...linked.map((form) => form.formId),
-          }.toList(growable: false);
-          formAssignments = JobFormAssignment.mergeByFormId(
-            formAssignments,
-            JobFormAssignment.fromLinkedForms(linked),
-          );
-          for (final row in linked) {
-            formTitles[row.formId] = row.name;
-          }
-        }
-      } catch (_) {
-        // Linked forms are best-effort.
-      }
+        ),
+        seedSubmissionIds: state.formSubmissionIds,
+      );
 
       state = state.copyWith(
         job: job.copyWith(
-          formIds: formIds,
-          formAssignments: formAssignments,
+          formIds: formsState.formIds,
+          formAssignments: formsState.formAssignments,
+          jobForms: jobForms,
         ),
-        formIds: formIds,
-        formTitles: formTitles,
+        formIds: formsState.formIds,
+        formTitles: {
+          ...state.formTitles,
+          ...formsState.formTitles,
+        },
+        formSubmissionIds: formsState.formSubmissionIds,
       );
 
-      if (formIds.isNotEmpty) {
-        await _loadCompletedForms(job.id, formIds, formAssignments);
+      if (formsState.formIds.isNotEmpty) {
+        await _loadCompletedForms(
+          job.id,
+          formsState.formIds,
+          formsState.formAssignments,
+        );
       } else {
         state = state.copyWith(completedFormIds: const {});
       }
@@ -515,6 +552,7 @@ final class EmployeeJobDetailController
         formId: job.formId,
         formIds: job.formIds,
         formAssignments: job.formAssignments,
+        jobForms: job.jobForms,
         projectId: job.projectId,
       ),
     );

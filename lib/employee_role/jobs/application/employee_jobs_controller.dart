@@ -26,7 +26,9 @@ final class EmployeeJobsState {
   const EmployeeJobsState({
     this.jobs = const <EmployeeJobSummary>[],
     this.isLoading = false,
+    this.isRefreshing = false,
     this.errorMessage,
+    this.isShowingCachedData = false,
     this.filter = EmployeeJobsFilter.all,
     this.selectedCalendarDate,
     this.selectedSiteName,
@@ -37,7 +39,9 @@ final class EmployeeJobsState {
 
   final List<EmployeeJobSummary> jobs;
   final bool isLoading;
+  final bool isRefreshing;
   final String? errorMessage;
+  final bool isShowingCachedData;
   final EmployeeJobsFilter filter;
   final DateTime? selectedCalendarDate;
   final String? selectedSiteName;
@@ -213,7 +217,9 @@ final class EmployeeJobsState {
   EmployeeJobsState copyWith({
     List<EmployeeJobSummary>? jobs,
     bool? isLoading,
+    bool? isRefreshing,
     String? errorMessage,
+    bool? isShowingCachedData,
     bool clearError = false,
     EmployeeJobsFilter? filter,
     DateTime? selectedCalendarDate,
@@ -229,7 +235,9 @@ final class EmployeeJobsState {
     return EmployeeJobsState(
       jobs: jobs ?? this.jobs,
       isLoading: isLoading ?? this.isLoading,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
       errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
+      isShowingCachedData: isShowingCachedData ?? this.isShowingCachedData,
       filter: filter ?? this.filter,
       selectedCalendarDate: clearSelectedCalendarDate
           ? null
@@ -273,13 +281,46 @@ final class EmployeeJobsController extends StateNotifier<EmployeeJobsState> {
   Future<void> load() async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final jobs = await _repository.fetchJobs();
+      final result = await _repository.fetchJobsWithSource();
       state = _stateWithValidFilters(
-        state.copyWith(jobs: jobs, isLoading: false, clearError: true),
+        state.copyWith(
+          jobs: result.jobs,
+          isLoading: false,
+          isRefreshing: false,
+          isShowingCachedData: result.fromCache,
+          clearError: true,
+        ),
       );
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
+        isRefreshing: false,
+        errorMessage: 'Unable to load jobs.',
+      );
+    }
+  }
+
+  /// Reloads jobs while keeping existing data visible (pull-to-refresh).
+  Future<void> refresh() async {
+    if (state.jobs.isEmpty) {
+      return load();
+    }
+    if (state.isRefreshing) return;
+
+    state = state.copyWith(isRefreshing: true, clearError: true);
+    try {
+      final result = await _repository.fetchJobsWithSource();
+      state = _stateWithValidFilters(
+        state.copyWith(
+          jobs: result.jobs,
+          isRefreshing: false,
+          isShowingCachedData: result.fromCache,
+          clearError: true,
+        ),
+      );
+    } catch (_) {
+      state = state.copyWith(
+        isRefreshing: false,
         errorMessage: 'Unable to load jobs.',
       );
     }

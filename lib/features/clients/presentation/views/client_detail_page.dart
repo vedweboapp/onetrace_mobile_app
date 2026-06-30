@@ -684,7 +684,7 @@ class _ClientDetailPageState extends ConsumerState<ClientDetailPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                p.quoteName.trim().isEmpty ? 'Project' : p.quoteName,
+                p.quoteName.trim().isEmpty ? 'Untitled Project' : p.quoteName,
                 style: AppFonts.titleMedium(color: AppColors.inkStrong).copyWith(
                   fontWeight: FontWeight.w700,
                   fontSize: 16,

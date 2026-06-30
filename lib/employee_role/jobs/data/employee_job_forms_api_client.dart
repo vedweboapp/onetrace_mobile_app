@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
@@ -42,12 +44,21 @@ final class EmployeeJobFormsApiClient {
     required JobFormSubmitPayload payload,
   }) async {
     final url = AppApiUrls.jobSubmitForm(jobId);
-    final requestBody = payload.toFormBody();
+    final parts = buildJobFormSubmitRequestParts(
+      jobFormId: payload.jobFormId,
+      status: payload.status,
+      values: payload.values,
+      remarks: payload.remarks,
+    );
+    final requestBody = parts.formFields;
 
-    final response = await _dio.post<dynamic>(
-      url,
-      data: requestBody,
-      options: _jobFormSubmitOptions(jobId),
+    final response = await _sendJobFormRequest(
+      jobId: jobId,
+      url: url,
+      method: 'POST',
+      formBody: requestBody,
+      scalarValues: parts.scalarValues,
+      attachments: parts.attachments,
     );
 
     JobCompletionDebugLog.formApi(
@@ -123,12 +134,20 @@ final class EmployeeJobFormsApiClient {
     required JobFormUpdatePayload payload,
   }) async {
     final url = AppApiUrls.jobSubmittedFormUpdate(jobId, submissionId);
-    final requestBody = payload.toFormBody();
+    final parts = buildJobFormUpdateRequestParts(
+      status: payload.status,
+      values: payload.values,
+      remarks: payload.remarks,
+    );
+    final requestBody = parts.formFields;
 
-    final response = await _dio.put<dynamic>(
-      url,
-      data: requestBody,
-      options: _jobFormSubmitOptions(jobId),
+    final response = await _sendJobFormRequest(
+      jobId: jobId,
+      url: url,
+      method: 'PUT',
+      formBody: requestBody,
+      scalarValues: parts.scalarValues,
+      attachments: parts.attachments,
     );
 
     JobCompletionDebugLog.formApi(
@@ -241,6 +260,91 @@ final class EmployeeJobFormsApiClient {
       );
     }
     return root;
+  }
+
+  Future<Response<dynamic>> _sendJobFormRequest({
+    required int jobId,
+    required String url,
+    required String method,
+    required Map<String, dynamic> formBody,
+    required List<JobFormFieldValue> scalarValues,
+    required List<JobFormFieldValue> attachments,
+  }) async {
+    final attachmentParts = await _buildIndexedAttachmentParts(
+      scalarValues: scalarValues,
+      attachments: attachments,
+    );
+    if (attachmentParts.isEmpty) {
+      return _dio.request<dynamic>(
+        url,
+        data: formBody,
+        options: _jobFormSubmitOptions(jobId).copyWith(method: method),
+      );
+    }
+
+    final formData = FormData.fromMap(<String, dynamic>{
+      for (final entry in formBody.entries)
+        entry.key: entry.value?.toString() ?? '',
+      ...attachmentParts,
+    });
+
+    return _dio.request<dynamic>(
+      url,
+      data: formData,
+      options: Options(
+        method: method,
+        headers: <String, String>{
+          _jobIdHeader: jobId.toString(),
+          Headers.acceptHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+  }
+
+  /// Website contract: `values[n][field_id]`, `values[n][field_type]`, `values[n][value]`.
+  Future<Map<String, dynamic>> _buildIndexedAttachmentParts({
+    required List<JobFormFieldValue> scalarValues,
+    required List<JobFormFieldValue> attachments,
+  }) async {
+    final parts = <String, dynamic>{};
+    final baseIndex = scalarValues.length;
+
+    for (var i = 0; i < attachments.length; i++) {
+      final row = attachments[i];
+      final path = row.localFilePath?.trim();
+      if (path == null || path.isEmpty) continue;
+
+      final file = File(path);
+      if (!await file.exists()) continue;
+
+      final index = baseIndex + i;
+      final prefix = 'values[$index]';
+      final filename = row.value.trim();
+      parts['$prefix[field_id]'] = row.fieldId.toString();
+      parts['$prefix[field_type]'] = _attachmentFieldType(row);
+      parts['$prefix[value]'] = await MultipartFile.fromFile(
+        path,
+        filename: filename.isNotEmpty ? filename : null,
+      );
+    }
+    return parts;
+  }
+
+  static String _attachmentFieldType(JobFormFieldValue row) {
+    final type = row.fieldType?.trim().toLowerCase();
+    if (type != null && type.isNotEmpty) {
+      if (type == 'image' || type == 'file' || type == 'file_upload') {
+        return 'image_upload';
+      }
+      if (type == 'digital_signature' || type == 'sign' || type == 'esign') {
+        return 'signature';
+      }
+      return type;
+    }
+
+    final value = row.value.trim().toLowerCase();
+    if (value.startsWith('sig_') || value.endsWith('.png')) return 'signature';
+    return 'image_upload';
   }
 
   static int? _readInt(dynamic value) {

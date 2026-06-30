@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/employee_role/forms/data/signature_form_value.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
 
@@ -62,6 +63,146 @@ void main() {
     expect(values.last.value, 'photo.jpg');
   });
 
+  test('splitJobFormValuesForSubmit matches website scalar vs file split', () {
+    final values = [
+      const JobFormFieldValue(
+        fieldId: 41,
+        value: 'photo.jpg',
+        fieldType: 'image_upload',
+        localFilePath: '/tmp/photo.jpg',
+      ),
+      const JobFormFieldValue(fieldId: 42, value: 'anirudh'),
+      const JobFormFieldValue(fieldId: 43, value: 'testing'),
+      const JobFormFieldValue(
+        fieldId: 46,
+        value: 'sig_f46.png',
+        fieldType: 'signature',
+        localFilePath: '/tmp/sig_f46.png',
+      ),
+      const JobFormFieldValue(fieldId: 47, value: 'IN'),
+    ];
+
+    final split = splitJobFormValuesForSubmit(values);
+
+    expect(split.scalars.map((v) => v.fieldId), [42, 43, 47]);
+    expect(split.attachments.map((v) => v.fieldId), [41, 46]);
+  });
+
+  test('buildJobFormSubmitRequestParts excludes files from values JSON', () {
+    final parts = buildJobFormSubmitRequestParts(
+      jobFormId: 73,
+      status: 'submitted',
+      values: [
+        const JobFormFieldValue(
+          fieldId: 41,
+          value: 'photo.jpg',
+          fieldType: 'image_upload',
+          localFilePath: '/tmp/photo.jpg',
+        ),
+        const JobFormFieldValue(fieldId: 42, value: 'anirudh'),
+        const JobFormFieldValue(
+          fieldId: 46,
+          value: 'sig_f46.png',
+          fieldType: 'signature',
+          localFilePath: '/tmp/sig_f46.png',
+        ),
+      ],
+    );
+
+    expect(parts.formFields['job_form_id'], 73);
+    expect(parts.formFields['status'], 'submitted');
+    expect(
+      parts.formFields['values'],
+      jsonEncode([
+        {'field_id': 42, 'value': 'anirudh'},
+      ]),
+    );
+    expect(parts.scalarValues, hasLength(1));
+    expect(parts.attachments, hasLength(2));
+  });
+
+  test('prepareJobFormValuesForApi maps PNG base64 to short signature filename', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final signature = await encodeSignaturePngForApi([
+      [const Offset(12.5, 48), const Offset(140, 52.5), const Offset(210, 44)],
+    ]);
+    expect(signature, isNotNull);
+
+    final values = prepareJobFormValuesForApi([
+      JobFormFieldValue(fieldId: 46, value: signature!),
+    ]);
+
+    expect(values.single.value, 'sig_f46.png');
+    expect(values.single.value.length, lessThanOrEqualTo(kJobFormApiValueMaxLength));
+    expect(isSignatureApiPayload(values.single.value), isTrue);
+  });
+
+  test('isSignatureApiPayload rejects inline PNG base64', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final signature = await encodeSignaturePngForApi([
+      [const Offset(1, 2), const Offset(3, 4), const Offset(20, 10)],
+    ]);
+    expect(signature, isNotNull);
+    expect(isSignatureApiPayload(signature!), isFalse);
+    expect(isSignatureApiPayload('sig_f46.png'), isTrue);
+  });
+
+  test('clampJobFormFieldValueForApi keeps datetime timestamp as yyyy-MM-ddTHH:mm', () {
+    expect(
+      clampJobFormFieldValueForApi(
+        '2026-06-25T18:38:00.000',
+        fieldId: 76,
+        fieldType: 'datetime',
+      ),
+      '2026-06-25T18:38',
+    );
+    expect(
+      normalizeJobFormDateTimeValue('2026-06-25T18:38'),
+      '2026-06-25T18:38',
+    );
+    expect(
+      JobFormFieldValue.fromJson({
+        'field_id': 76,
+        'field_type': 'datetime',
+        'value': '2026-06-25T18:38:00.000',
+      }).value,
+      '2026-06-25T18:38',
+    );
+  });
+
+  test('clampJobFormFieldValueForApi strips ISO timestamp to yyyy-MM-dd', () {
+    expect(
+      clampJobFormFieldValueForApi(
+        '2026-06-25T00:00:00.000',
+        fieldId: 90,
+        fieldType: 'date',
+      ),
+      '2026-06-25',
+    );
+    expect(
+      prepareJobFormValuesForApi([
+        const JobFormFieldValue(
+          fieldId: 90,
+          value: '2026-06-25T00:00:00.000',
+          fieldType: 'date',
+        ),
+      ]).single.value,
+      '2026-06-25',
+    );
+    expect(
+      JobFormFieldValue.fromJson({
+        'field_id': 90,
+        'field_type': 'date',
+        'value': '2026-06-25T00:00:00.000',
+      }).value,
+      '2026-06-25',
+    );
+    expect(
+      normalizeJobFormDateValue('20260625'),
+      '2026-06-25',
+    );
+  });
+
   test('prepareJobFormRemarksForApi clamps remarks to varchar(100)', () {
     expect(
       prepareJobFormRemarksForApi('a' * 150)?.length,
@@ -101,6 +242,32 @@ void main() {
     expect(assignments.first.formId, 5);
     expect(assignments.last.jobFormId, 8);
     expect(assignments.last.formId, 8);
+  });
+
+  test('JobLinkedFormSummary.listFromJobRaw parses GET /jobs/{id}/ forms[]', () {
+    final forms = JobLinkedFormSummary.listFromJobRaw({
+      'forms': [
+        {
+          'job_form_id': 14,
+          'project_form_id': 18,
+          'name': 'Site Form',
+          'is_submitted': false,
+        },
+        {'id': 6, 'form_id': 5, 'name': 'Safety Checklist'},
+      ],
+    });
+
+    expect(forms, hasLength(2));
+    expect(forms.first.formId, 18);
+    expect(forms.first.jobFormId, 14);
+    expect(forms.first.name, 'Site Form');
+    expect(forms.last.formId, 5);
+    expect(forms.last.jobFormId, 6);
+    expect(forms.last.name, 'Safety Checklist');
+  });
+
+  test('JobLinkedFormSummary.listFromJobRaw returns empty when forms missing', () {
+    expect(JobLinkedFormSummary.listFromJobRaw({'id': 35}), isEmpty);
   });
 
   test('JobLinkedFormSummary resolves job_form_id when id equals form_id', () {
