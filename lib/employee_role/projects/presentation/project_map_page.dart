@@ -2,9 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/employee_role/jobs/presentation/operative_job_site_listings_page.dart';
 import 'package:red5/employee_role/projects/application/project_map_controller.dart';
 import 'package:red5/employee_role/projects/data/project_map_job.dart';
+import 'package:red5/employee_role/projects/presentation/operative_site_route_page.dart';
+import 'package:red5/employee_role/projects/presentation/widgets/operative_site_google_map.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/project_map_overlays.dart';
 
 class EmployeeProjectMapPage extends ConsumerStatefulWidget {
@@ -35,7 +39,9 @@ class _EmployeeProjectMapPageState
   void initState() {
     super.initState();
     Future.microtask(() {
-      ref.read(projectMapControllerProvider.notifier).loadJobs(
+      ref
+          .read(projectMapControllerProvider.notifier)
+          .loadJobs(
             projectId: widget.projectId,
             projectName: widget.projectName,
             activeSites: widget.activeSites,
@@ -51,6 +57,43 @@ class _EmployeeProjectMapPageState
 
   void _selectJob(ProjectMapJob job) {
     ref.read(projectMapControllerProvider.notifier).selectJob(job.id);
+  }
+
+  void _clearJobSelection() {
+    ref.read(projectMapControllerProvider.notifier).clearSelection();
+  }
+
+  ProjectMapJob? _selectedJob(List<ProjectMapJob> jobs, int? selectedJobId) {
+    if (selectedJobId == null) return null;
+    for (final job in jobs) {
+      if (job.id == selectedJobId) return job;
+    }
+    return null;
+  }
+
+  void _openDrawings(List<ProjectMapJob> jobs, int? selectedJobId) {
+    final job = _selectedJob(jobs, selectedJobId);
+    if (job == null) return;
+    context.push(
+      OperativeJobSiteListingsPage.path,
+      extra: <String, Object?>{
+        'jobId': job.id,
+        'initialTab': OperativeJobSiteListingsTab.drawings.name,
+      },
+    );
+  }
+
+  void _openRoute(List<ProjectMapJob> jobs, int? selectedJobId) {
+    final job = _selectedJob(jobs, selectedJobId);
+    if (job == null) return;
+    OperativeSiteRoutePage.open(
+      context,
+      title: job.title,
+      subtitle: job.address,
+      stableId: job.id,
+      latitude: job.position.latitude,
+      longitude: job.position.longitude,
+    );
   }
 
   void _searchJobs(String query) {
@@ -114,22 +157,19 @@ class _EmployeeProjectMapPageState
       body: Stack(
         children: [
           Positioned.fill(
-            child: InbuiltProjectSiteMap(
+            child: OperativeJobsMapLoader(
               jobs: mapState.jobs,
               selectedJobId: mapState.selectedJobId,
-              isDark: mapState.isDarkMap,
-              onJobTap: _selectJob,
-            ),
-          ),
-          Positioned(
-            right: 12,
-            top: MediaQuery.sizeOf(context).height * 0.40,
-            child: ProjectMapFloatingButtons(
-              onCurrentLocation: () {
-                final selected = mapState.selectedJob ??
-                    (mapState.jobs.isNotEmpty ? mapState.jobs.first : null);
-                if (selected != null) _selectJob(selected);
+              onJobSelected: (jobId) {
+                final job = _selectedJob(mapState.jobs, jobId);
+                if (job != null) _selectJob(job);
               },
+              onDrawings: () =>
+                  _openDrawings(mapState.jobs, mapState.selectedJobId),
+              onShowRoutes: () =>
+                  _openRoute(mapState.jobs, mapState.selectedJobId),
+              onClearSelection: _clearJobSelection,
+              isDark: mapState.isDarkMap,
               onToggleTheme: () {
                 ref
                     .read(projectMapControllerProvider.notifier)
@@ -147,9 +187,9 @@ class _EmployeeProjectMapPageState
                 .read(projectMapControllerProvider.notifier)
                 .loadJobs(projectId: widget.projectId),
             onRetry: () {
-              ref.read(projectMapControllerProvider.notifier).loadJobs(
-                    projectId: widget.projectId,
-                  );
+              ref
+                  .read(projectMapControllerProvider.notifier)
+                  .loadJobs(projectId: widget.projectId);
             },
             onSearchChanged: _searchJobs,
             onJobTap: _selectJob,
@@ -161,135 +201,9 @@ class _EmployeeProjectMapPageState
   }
 }
 
-class InbuiltProjectSiteMap extends StatelessWidget {
-  const InbuiltProjectSiteMap({
-    super.key,
-    required this.jobs,
-    required this.selectedJobId,
-    required this.isDark,
-    required this.onJobTap,
-  });
-
-  final List<ProjectMapJob> jobs;
-  final int? selectedJobId;
-  final bool isDark;
-  final ValueChanged<ProjectMapJob> onJobTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            CustomPaint(painter: _ProjectSiteMapPainter(isDark: isDark)),
-            for (var index = 0; index < jobs.length; index++)
-              _PositionedSitePin(
-                job: jobs[index],
-                index: index,
-                total: jobs.length,
-                canvasSize: Size(constraints.maxWidth, constraints.maxHeight),
-                selected: jobs[index].id == selectedJobId,
-                onTap: () => onJobTap(jobs[index]),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// positioned site pin view
-class _PositionedSitePin extends StatelessWidget {
-  const _PositionedSitePin({
-    required this.job,
-    required this.index,
-    required this.total,
-    required this.canvasSize,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final ProjectMapJob job;
-  final int index;
-  final int total;
-  final Size canvasSize;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final point = _sitePointForIndex(index, total);
-    final size = selected ? 42.0 : 32.0;
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      left: point.dx * canvasSize.width - size / 2,
-      top: point.dy * canvasSize.height - size / 2,
-      child: _SiteMapPin(selected: selected, size: size, onTap: onTap),
-    );
-  }
-
-  static Offset _sitePointForIndex(int index, int total) {
-    if (total <= 1) return const Offset(0.5, 0.35);
-    final cols = total <= 3 ? total : 3;
-    final row = index ~/ cols;
-    final col = index % cols;
-    final x = 0.2 + (col + 1) * (0.6 / (cols + 1));
-    final y = 0.2 + (row + 1) * 0.15;
-    return Offset(x.clamp(0.15, 0.85), y.clamp(0.15, 0.65));
-  }
-}
-
-/// Site Map Pin view
-class _SiteMapPin extends StatelessWidget {
-  const _SiteMapPin({
-    required this.selected,
-    required this.size,
-    required this.onTap,
-  });
-
-  final bool selected;
-  final double size;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: selected ? AppColors.inkStrong : AppColors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.inkStrong, width: 2),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 10,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.location_on_rounded,
-            color: selected ? AppColors.white : AppColors.inkStrong,
-            size: size * 0.48,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Project Site Map painter
-class _ProjectSiteMapPainter extends CustomPainter {
-  const _ProjectSiteMapPainter({required this.isDark});
+/// Stylized offline map painter shared with [OperativePaintedSiteMap].
+class ProjectSiteMapPainter extends CustomPainter {
+  const ProjectSiteMapPainter({required this.isDark});
 
   final bool isDark;
 
@@ -356,7 +270,7 @@ class _ProjectSiteMapPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _ProjectSiteMapPainter oldDelegate) {
+  bool shouldRepaint(covariant ProjectSiteMapPainter oldDelegate) {
     return oldDelegate.isDark != isDark;
   }
 }

@@ -4,12 +4,12 @@ import 'package:red5/employee_role/jobs/application/employee_job_session_control
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
+import 'package:red5/employee_role/offline/operative_cache_policy.dart';
 
 final employeeJobsControllerProvider =
-    StateNotifierProvider.autoDispose<
-      EmployeeJobsController,
-      EmployeeJobsState
-    >((ref) => EmployeeJobsController(ref.read(employeeJobRepositoryProvider)));
+    StateNotifierProvider<EmployeeJobsController, EmployeeJobsState>(
+      (ref) => EmployeeJobsController(ref.read(employeeJobRepositoryProvider)),
+    );
 
 enum EmployeeJobsFilter {
   all('All'),
@@ -277,11 +277,24 @@ final class EmployeeJobsController extends StateNotifier<EmployeeJobsState> {
   EmployeeJobsController(this._repository) : super(const EmployeeJobsState());
 
   final EmployeeJobRepository _repository;
+  DateTime? _lastNetworkFetchAt;
 
-  Future<void> load() async {
+  bool get _isJobsCacheFresh => OperativeCachePolicy.isFresh(
+    _lastNetworkFetchAt,
+    OperativeCachePolicy.jobsListTtl,
+  );
+
+  Future<void> load({bool force = false}) async {
+    if (!force && _isJobsCacheFresh && state.jobs.isNotEmpty) {
+      return;
+    }
+
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final result = await _repository.fetchJobsWithSource();
+      if (!result.fromCache) {
+        _lastNetworkFetchAt = DateTime.now();
+      }
       state = _stateWithValidFilters(
         state.copyWith(
           jobs: result.jobs,
@@ -300,16 +313,23 @@ final class EmployeeJobsController extends StateNotifier<EmployeeJobsState> {
     }
   }
 
-  /// Reloads jobs while keeping existing data visible (pull-to-refresh).
-  Future<void> refresh() async {
+  /// Reloads jobs while keeping existing data visible.
+  /// Skips network when cache is still fresh unless [force] (pull-to-refresh).
+  Future<void> refresh({bool force = false}) async {
     if (state.jobs.isEmpty) {
-      return load();
+      return load(force: force);
+    }
+    if (!force && _isJobsCacheFresh) {
+      return;
     }
     if (state.isRefreshing) return;
 
     state = state.copyWith(isRefreshing: true, clearError: true);
     try {
       final result = await _repository.fetchJobsWithSource();
+      if (!result.fromCache) {
+        _lastNetworkFetchAt = DateTime.now();
+      }
       state = _stateWithValidFilters(
         state.copyWith(
           jobs: result.jobs,

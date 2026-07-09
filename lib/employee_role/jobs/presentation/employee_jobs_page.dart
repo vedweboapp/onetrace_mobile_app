@@ -15,7 +15,6 @@ import 'package:red5/employee_role/material_requests/presentation/employee_mater
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
-import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
 import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 
 class EmployeeJobsPage extends ConsumerStatefulWidget {
@@ -90,7 +89,7 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
         ),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: controller.refresh,
+            onRefresh: () => controller.refresh(force: true),
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
@@ -571,83 +570,75 @@ class _EmployeeJobCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = job.status == EmployeeJobStatus.inProgress;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.borderLight),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0F000000),
-            blurRadius: 14,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _StatusChip(status: job.status),
-              const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    'Earning',
-                    style: AppFonts.labelSmall(
-                      color: AppColors.muted,
-                    ).copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    job.earning,
-                    style: AppFonts.titleSmall(
-                      color: active
-                          ? const Color(0xFF00A553)
-                          : AppColors.inkStrong,
-                    ).copyWith(fontWeight: FontWeight.w900),
-                  ),
-                ],
+    return Material(
+      color: AppColors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: AppColors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.borderLight),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0A000000),
+                blurRadius: 12,
+                offset: Offset(0, 4),
               ),
             ],
           ),
-          const SizedBox(height: 7),
-          Text(
-            job.title,
-            style: AppFonts.titleMedium(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w900, fontSize: 18, height: 1.08),
-          ),
-          const SizedBox(height: 12),
-          _MetaRow(icon: Icons.location_on_rounded, label: job.location),
-          const SizedBox(height: 7),
-          _MetaRow(icon: Icons.access_time_rounded, label: job.schedule),
-          const SizedBox(height: 18),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton(
-              onPressed: onTap,
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.inkStrong,
-                foregroundColor: AppColors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _StatusChip(status: job.status),
+                    const Spacer(),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'Earning',
+                          style: AppFonts.labelSmall(
+                            color: AppColors.muted,
+                          ).copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          job.earning,
+                          style: AppFonts.titleSmall(
+                            color: active
+                                ? const Color(0xFF00A553)
+                                : AppColors.inkStrong,
+                          ).copyWith(fontWeight: FontWeight.w900, fontSize: 17),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ),
-              child: Text(
-                job.primaryActionLabel,
-                style: AppFonts.titleSmall(
-                  color: AppColors.white,
-                ).copyWith(fontWeight: FontWeight.w900),
-              ),
+                const SizedBox(height: 10),
+                Text(
+                  job.title,
+                  style: AppFonts.titleMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _MetaRow(icon: Icons.location_on_outlined, label: job.location),
+                const SizedBox(height: 6),
+                _MetaRow(icon: Icons.access_time_rounded, label: job.schedule),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -707,8 +698,8 @@ class _MetaRow extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: AppFonts.bodySmall(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w700),
+              color: AppColors.muted,
+            ).copyWith(fontWeight: FontWeight.w600),
           ),
         ),
       ],
@@ -820,7 +811,6 @@ class _EmployeeJobsBottomNav extends StatelessWidget {
             sections: EmployeeSiteMenu.buildSections(
               onJobSheet: () => context.push(EmployeeJobSheetPage.path),
               onReport: () => context.push(EmployeeReportsPage.path),
-              onSite: () => context.push(EmployeeSitesPage.path),
               onMaterialRequests: () =>
                   context.push(EmployeeMaterialRequestsPage.path),
             ),

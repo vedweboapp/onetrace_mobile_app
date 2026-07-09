@@ -28,11 +28,10 @@ final class EmployeeSiteMenuItem {
 abstract final class EmployeeSiteMenu {
   const EmployeeSiteMenu._();
 
-  /// More menu short card — Job sheet, Report, Site, Material Requests.
+  /// More menu short card — Job Shift, Reports, Material Required.
   static List<EmployeeSiteMenuSection> buildSections({
     VoidCallback? onJobSheet,
     VoidCallback? onReport,
-    VoidCallback? onSite,
     VoidCallback? onMaterialRequests,
   }) {
     return [
@@ -40,22 +39,17 @@ abstract final class EmployeeSiteMenu {
         title: '',
         items: [
           EmployeeSiteMenuItem(
-            label: 'Job sheet',
-            icon: Icons.assignment_outlined,
+            label: 'Job Shift',
+            icon: Icons.work_rounded,
             onTap: onJobSheet,
           ),
           EmployeeSiteMenuItem(
-            label: 'Report',
-            icon: Icons.summarize_outlined,
+            label: 'Reports',
+            icon: Icons.bar_chart_rounded,
             onTap: onReport,
           ),
           EmployeeSiteMenuItem(
-            label: 'Site',
-            icon: Icons.location_on_outlined,
-            onTap: onSite,
-          ),
-          EmployeeSiteMenuItem(
-            label: 'Material Requests',
+            label: 'Material Required',
             icon: Icons.inventory_2_outlined,
             onTap: onMaterialRequests,
           ),
@@ -112,7 +106,6 @@ abstract final class EmployeeSiteMenu {
       },
     );
   }
-
 }
 
 class EmployeeSiteMenuButton extends StatelessWidget {
@@ -176,170 +169,70 @@ class _EmployeeSiteShortCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 290, maxHeight: 320),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 6, 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.menu, size: 20, color: AppColors.inkStrong),
-                  const SizedBox(width: 8),
-                  Text(
-                    'More',
-                    style: AppFonts.titleSmall(
-                      color: AppColors.inkStrong,
-                    ).copyWith(fontWeight: FontWeight.w900),
+        constraints: const BoxConstraints(minWidth: 220, maxWidth: 260),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final section in sections)
+                for (final item in section.items)
+                  _CompactMenuTile(
+                    item: item,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      item.onTap?.call();
+                    },
                   ),
-                  const Spacer(),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    color: AppColors.muted,
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: AppColors.borderLight),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.fromLTRB(6, 6, 6, 10),
-                children: [
-                  for (final section in sections) ...[
-                    _MenuSection(section: section, compact: true),
-                    if (section != sections.last) const SizedBox(height: 4),
-                  ],
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _MenuSection extends StatelessWidget {
-  const _MenuSection({required this.section, this.compact = false});
-
-  final EmployeeSiteMenuSection section;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final showTitle = section.title.trim().isNotEmpty;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (showTitle)
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              10,
-              compact ? 2 : 6,
-              10,
-              compact ? 4 : 8,
-            ),
-            child: Text(
-              section.title.toUpperCase(),
-              style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.5,
-                fontSize: compact ? 9 : null,
-              ),
-            ),
-          ),
-        for (final item in section.items)
-          _MenuTile(
-            item: item,
-            compact: compact,
-            onTap: () {
-              Navigator.of(context).pop();
-              item.onTap?.call();
-            },
-          ),
-      ],
-    );
-  }
-}
-
-class _MenuTile extends StatelessWidget {
-  const _MenuTile({
+class _CompactMenuTile extends StatelessWidget {
+  const _CompactMenuTile({
     required this.item,
     required this.onTap,
-    this.compact = false,
   });
 
   final EmployeeSiteMenuItem item;
   final VoidCallback onTap;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final color = item.isDestructive ? AppColors.error : AppColors.inkStrong;
-    final iconSize = compact ? 32.0 : 38.0;
+    final color = item.isDestructive ? AppColors.error : AppColors.muted;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: compact ? 7 : 10,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: iconSize,
-              height: iconSize,
-              decoration: BoxDecoration(
-                color: item.isDestructive
-                    ? const Color(0xFFFFF1F1)
-                    : AppColors.surfaceHigh,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(item.icon, size: compact ? 16 : 19, color: color),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Material(
+        color: AppColors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          hoverColor: const Color(0xFFF3F4F6),
+          highlightColor: const Color(0xFFF3F4F6),
+          splashColor: const Color(0xFFE5E7EB),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Icon(item.icon, size: 20, color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
                     item.label,
                     style: AppFonts.bodyMedium(color: color).copyWith(
                       fontWeight: FontWeight.w800,
-                      fontSize: compact ? 13 : null,
+                      fontSize: 14,
                     ),
                   ),
-                  if (item.subtitle != null && !compact) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      item.subtitle!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppFonts.bodySmall(
-                        color: AppColors.muted,
-                      ).copyWith(fontWeight: FontWeight.w500),
-                    ),
-                  ],
-                ],
-              ),
+                ),
+              ],
             ),
-            Icon(
-              Icons.chevron_right_rounded,
-              size: compact ? 18 : 22,
-              color: item.isDestructive ? AppColors.error : AppColors.muted,
-            ),
-          ],
+          ),
         ),
       ),
     );

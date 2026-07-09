@@ -145,8 +145,7 @@ final class JobRead {
       pinXCoordinate: _readDouble(map['pin_x_coordinate']),
       pinYCoordinate: _readDouble(map['pin_y_coordinate']),
       itemName: _readString(map, const ['item_name']),
-      sectionName:
-          siteName ?? _readString(map, const ['section_name']),
+      sectionName: siteName ?? _readString(map, const ['section_name']),
       plotName: _readString(map, const ['plot_name']),
       pinName: _readString(map, const ['pin_name']),
       quantity: _readInt(map['quantity']),
@@ -282,7 +281,11 @@ final class JobChecklistItemRead {
     required this.sequence,
     required this.isRequired,
     required this.isChecked,
+    this.file,
+    this.isMarked = false,
+    this.concentricPoint = false,
     this.checkedAt,
+    this.concentricPointFromApi,
   });
 
   final int id;
@@ -290,7 +293,22 @@ final class JobChecklistItemRead {
   final int sequence;
   final bool isRequired;
   final bool isChecked;
+  final String? file;
+  final bool isMarked;
+  final bool concentricPoint;
   final DateTime? checkedAt;
+
+  /// `null` when API omitted `concentric_point`; otherwise the explicit flag.
+  final bool? concentricPointFromApi;
+
+  bool get hasFile => file != null && file!.trim().isNotEmpty;
+
+  /// Missing `concentric_point` on required items still needs operative confirmation.
+  bool get requiresConcentricPoint {
+    final explicit = concentricPointFromApi;
+    if (explicit != null) return explicit;
+    return isRequired;
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'id': id,
@@ -298,6 +316,9 @@ final class JobChecklistItemRead {
         'sequence': sequence,
         'is_required': isRequired,
         'is_checked': isChecked,
+        if (file != null) 'file': file,
+        'is_marked': isMarked,
+        'concentric_point': concentricPoint,
         if (checkedAt != null) 'checked_at': checkedAt!.toUtc().toIso8601String(),
       };
 
@@ -306,6 +327,7 @@ final class JobChecklistItemRead {
       <String, dynamic>{
         'checklist_id': id,
         'is_checked': isChecked,
+        'concentric_point': concentricPoint,
         if (isChecked)
           'checked_at': (checkedAtOverride ?? checkedAt ?? DateTime.now().toUtc())
               .toUtc()
@@ -313,14 +335,22 @@ final class JobChecklistItemRead {
       };
 
   static JobChecklistItemRead? tryFromMap(Map<String, dynamic> map) {
-    final id = JobRead._readInt(map['checklist_id']) ?? JobRead._readInt(map['id']);
+    final id =
+        JobRead._readInt(map['checklist_id']) ?? JobRead._readInt(map['id']);
     if (id == null) return null;
+    final concentricFromApi = map.containsKey('concentric_point')
+        ? (JobRead._readBool(map['concentric_point']) ?? false)
+        : null;
     return JobChecklistItemRead(
       id: id,
       title: JobRead._readString(map, const ['title']) ?? 'Checklist item',
       sequence: JobRead._readInt(map['sequence']) ?? 0,
       isRequired: JobRead._readBool(map['is_required']) ?? true,
       isChecked: JobRead._readBool(map['is_checked']) ?? false,
+      file: JobRead._readString(map, const ['file']),
+      isMarked: JobRead._readBool(map['is_marked']) ?? false,
+      concentricPoint: concentricFromApi ?? false,
+      concentricPointFromApi: concentricFromApi,
       checkedAt: JobRead._readDate(map['checked_at']),
     );
   }
@@ -328,24 +358,20 @@ final class JobChecklistItemRead {
 
 @immutable
 final class JobChecklistRead {
-  const JobChecklistRead({
-    required this.isMarked,
-    required this.items,
-  });
+  const JobChecklistRead({required this.isMarked, required this.items});
 
   final bool isMarked;
   final List<JobChecklistItemRead> items;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'is_marked': isMarked,
-        'items': items.map((item) => item.toJson()).toList(growable: false),
-      };
+    'is_marked': isMarked,
+    'items': items.map((item) => item.toJson()).toList(growable: false),
+  };
 
   /// `PUT /jobs/{id}/` expects `checklists` as a list of item objects.
-  List<Map<String, dynamic>> toWriteList({DateTime? checkedAtOverride}) =>
-      items
-          .map((item) => item.toWriteJson(checkedAtOverride: checkedAtOverride))
-          .toList(growable: false);
+  List<Map<String, dynamic>> toWriteList({DateTime? checkedAtOverride}) => items
+      .map((item) => item.toWriteJson(checkedAtOverride: checkedAtOverride))
+      .toList(growable: false);
 
   static List<JobChecklistItemRead> parseItems(dynamic raw) {
     if (raw is List) {

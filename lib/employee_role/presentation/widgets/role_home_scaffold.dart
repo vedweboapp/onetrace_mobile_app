@@ -25,11 +25,11 @@ import 'package:red5/employee_role/material_requests/presentation/employee_mater
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
-import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
 import 'package:red5/employee_role/projects/application/employee_projects_controller.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/employee_jobs_tab_content.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/employee_projects_list_content.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
@@ -95,6 +95,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // Uses 10-min TTL — skips API when data is still fresh.
       unawaited(ref.read(employeeJobsControllerProvider.notifier).refresh());
     }
   }
@@ -125,12 +126,15 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold>
         ref.read(employeeProjectsControllerProvider.notifier);
 
     final futures = <Future<void>>[
-      jobsController.refresh(),
+      jobsController.refresh(force: true),
       _appBarKey.currentState?.refreshProfile() ?? Future.value(),
       _welcomeHeaderKey.currentState?.refreshProfileName() ?? Future.value(),
     ];
     if (_selectedTab == _EmployeeHomeTab.project) {
-      futures.add(projectsController.load());
+      futures.add(projectsController.load(force: true));
+    }
+    if (_selectedPage == _EmployeeNavPage.projects) {
+      futures.add(projectsController.load(force: true));
     }
     await Future.wait(futures);
   }
@@ -193,6 +197,14 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold>
                   setState(
                     () => _selectedPage = _EmployeeNavPage.values[index],
                   );
+                  if (_EmployeeNavPage.values[index] ==
+                      _EmployeeNavPage.projects) {
+                    unawaited(
+                      ref
+                          .read(employeeProjectsControllerProvider.notifier)
+                          .ensureLoaded(),
+                    );
+                  }
                 },
                 children: [
                   RefreshIndicator(
@@ -230,7 +242,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold>
                       if (isProjectTab)
                         const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 18),
-                          child: EmployeeProjectsHomePreview(),
+                          child: EmployeeJobsTabContent(embedded: true),
                         )
                       else ...[
                         _ExpandableCalendarBand(
@@ -619,7 +631,7 @@ class _EmployeeCalendarSwitch extends StatelessWidget {
           ),
           Expanded(
             child: _SwitchSegment(
-              label: 'Project',
+              label: 'Job',
               selected: selectedTab == _EmployeeHomeTab.project,
               onTap: () => onChanged(_EmployeeHomeTab.project),
             ),
@@ -1422,7 +1434,6 @@ class _EmployeeBottomNav extends StatelessWidget {
             sections: EmployeeSiteMenu.buildSections(
               onJobSheet: () => context.push(EmployeeJobSheetPage.path),
               onReport: () => context.push(EmployeeReportsPage.path),
-              onSite: () => context.push(EmployeeSitesPage.path),
               onMaterialRequests: () =>
                   context.push(EmployeeMaterialRequestsPage.path),
             ),

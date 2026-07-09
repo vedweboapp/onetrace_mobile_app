@@ -344,6 +344,12 @@ final class EmployeeJobFormsApiClient {
 
     final value = row.value.trim().toLowerCase();
     if (value.startsWith('sig_') || value.endsWith('.png')) return 'signature';
+    if (value.endsWith('.mp4') ||
+        value.endsWith('.mov') ||
+        value.endsWith('.webm') ||
+        value.endsWith('.m4v')) {
+      return 'video_recorder';
+    }
     return 'image_upload';
   }
 

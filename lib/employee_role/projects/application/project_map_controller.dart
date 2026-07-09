@@ -122,6 +122,10 @@ final class ProjectMapController extends StateNotifier<ProjectMapState> {
     state = state.copyWith(selectedJobId: jobId, clearError: true);
   }
 
+  void clearSelection() {
+    state = state.copyWith(clearSelectedJob: true);
+  }
+
   void toggleMapTheme() {
     state = state.copyWith(isDarkMap: !state.isDarkMap);
   }

@@ -1,14 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/employee_role/offline/operative_cache_policy.dart';
 import 'package:red5/employee_role/projects/data/employee_project_detail.dart';
 import 'package:red5/employee_role/projects/data/employee_project_repository.dart';
 
 enum EmployeeProjectFilter { all, active, completed }
 
 final employeeProjectsControllerProvider =
-    StateNotifierProvider.autoDispose<
-      EmployeeProjectsController,
-      EmployeeProjectsState
-    >((ref) {
+    StateNotifierProvider<EmployeeProjectsController, EmployeeProjectsState>((
+      ref,
+    ) {
       return EmployeeProjectsController(
         ref.read(employeeProjectRepositoryProvider),
       );
@@ -63,16 +63,34 @@ final class EmployeeProjectsState {
   }
 }
 
-final class EmployeeProjectsController extends StateNotifier<EmployeeProjectsState> {
+final class EmployeeProjectsController
+    extends StateNotifier<EmployeeProjectsState> {
   EmployeeProjectsController(this._repository)
     : super(const EmployeeProjectsState());
 
   final EmployeeProjectRepository _repository;
+  DateTime? _lastNetworkFetchAt;
 
-  Future<void> load() async {
+  bool get _isProjectsCacheFresh => OperativeCachePolicy.isFresh(
+    _lastNetworkFetchAt,
+    OperativeCachePolicy.projectsListTtl,
+  );
+
+  Future<void> ensureLoaded() async {
+    if (state.isLoading) return;
+    if (state.projects.isNotEmpty && _isProjectsCacheFresh) return;
+    await load();
+  }
+
+  Future<void> load({bool force = false}) async {
+    if (!force && _isProjectsCacheFresh && state.projects.isNotEmpty) {
+      return;
+    }
+
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final projects = await _repository.fetchProjects();
+      _lastNetworkFetchAt = DateTime.now();
       state = state.copyWith(
         projects: projects,
         isLoading: false,

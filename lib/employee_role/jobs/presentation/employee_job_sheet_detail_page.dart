@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_skeleton.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_sheet_detail_builder.dart';
+import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
+import 'package:red5/employee_role/offline/operative_offline_store.dart';
 
-class EmployeeJobSheetDetailPage extends StatelessWidget {
+class EmployeeJobSheetDetailPage extends ConsumerStatefulWidget {
   const EmployeeJobSheetDetailPage({
     super.key,
     required this.job,
@@ -17,8 +24,82 @@ class EmployeeJobSheetDetailPage extends StatelessWidget {
   static const name = 'employee-job-sheet-detail';
 
   @override
+  ConsumerState<EmployeeJobSheetDetailPage> createState() =>
+      _EmployeeJobSheetDetailPageState();
+}
+
+class _EmployeeJobSheetDetailPageState
+    extends ConsumerState<EmployeeJobSheetDetailPage> {
+  EmployeeJobSheetDetail? _detail;
+  var _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadDetail);
+  }
+
+  Future<void> _loadDetail() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final repository = ref.read(employeeJobRepositoryProvider);
+      final submissionRepository =
+          ref.read(jobFormSubmissionRepositoryProvider);
+      final session = ref.read(employeeJobSessionProvider.notifier);
+      final offlineStore = ref.read(operativeOfflineStoreProvider);
+
+      final detailResult = await repository.fetchJobDetailWithSource(
+        jobId: widget.job.id,
+      );
+      final jobRead = await offlineStore.readCachedJobDetail(widget.job.id);
+      final linkedFormIds = detailResult.detail.linkedFormIds;
+      final completedFormIds = linkedFormIds.isEmpty
+          ? <int>{}
+          : await submissionRepository.completedFormIdsForJob(
+              jobId: widget.job.id,
+              formIds: linkedFormIds,
+              assignments: detailResult.detail.formAssignments,
+            );
+      final allFormsComplete = linkedFormIds.isNotEmpty &&
+          linkedFormIds.every(completedFormIds.contains);
+
+      if (!mounted) return;
+      setState(() {
+        _detail = EmployeeJobSheetDetailBuilder.build(
+          summary: widget.job,
+          detail: detailResult.detail,
+          jobRead: jobRead,
+          session: session,
+          completedFormIds: completedFormIds,
+          allFormsComplete: allFormsComplete,
+        );
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      final session = ref.read(employeeJobSessionProvider.notifier);
+      setState(() {
+        _detail = EmployeeJobSheetDetailBuilder.build(
+          summary: widget.job,
+          session: session,
+        );
+        _isLoading = false;
+        _errorMessage = 'Some job details could not be loaded. Showing available data.';
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final detail = EmployeeJobSheetData.detailFor(job.id);
+    final backLabel =
+        widget.job.projectName?.trim().isNotEmpty == true
+            ? widget.job.projectName!.trim()
+            : 'Jobs';
 
     return Scaffold(
       backgroundColor: AppColors.surface,
@@ -26,23 +107,54 @@ class EmployeeJobSheetDetailPage extends StatelessWidget {
         child: Column(
           children: [
             _JobSheetDetailAppBar(
-              backLabel: 'Jobs Sheet',
+              backLabel: backLabel,
               onBack: () => context.pop(),
             ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
-                children: [
-                  _JobSheetDetailHeader(detail: detail),
-                  const SizedBox(height: 18),
-                  _TimesheetSummaryCard(detail: detail),
-                  const SizedBox(height: 12),
-                  _ComplianceFormCard(detail: detail),
-                  const SizedBox(height: 22),
-                  _ActivityTimeline(steps: detail.timeline),
-                ],
+            if (_isLoading)
+              const Expanded(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(18, 12, 18, 24),
+                  child: AppSkeletonProjectsListBody(
+                    includeSearchAndFilters: false,
+                    cardCount: 2,
+                  ),
+                ),
+              )
+            else if (_detail == null)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'No job details found.',
+                    style: AppFonts.bodyMedium(color: AppColors.muted),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _loadDetail,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                    children: [
+                      if (_errorMessage != null) ...[
+                        Text(
+                          _errorMessage!,
+                          style: AppFonts.bodySmall(color: AppColors.muted),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      _JobSheetDetailHeader(detail: _detail!),
+                      const SizedBox(height: 18),
+                      _TimesheetSummaryCard(detail: _detail!),
+                      const SizedBox(height: 12),
+                      _ComplianceFormCard(detail: _detail!),
+                      const SizedBox(height: 22),
+                      _ActivityTimeline(steps: _detail!.timeline),
+                    ],
+                  ),
+                ),
               ),
-            ),
           ],
         ),
       ),

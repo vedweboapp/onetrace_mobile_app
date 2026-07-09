@@ -255,6 +255,11 @@ bool isJobFormAttachmentFieldType(String? fieldType) {
     case 'digital_signature':
     case 'sign':
     case 'esign':
+    case 'video_recorder':
+    case 'video_recording':
+    case 'video_record':
+    case 'video':
+    case 'video_upload':
       return true;
     default:
       return false;

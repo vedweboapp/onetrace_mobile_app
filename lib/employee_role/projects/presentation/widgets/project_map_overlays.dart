@@ -5,6 +5,89 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/app_const_widget.dart';
 import 'package:red5/employee_role/projects/data/project_map_job.dart';
 
+enum ProjectMapViewTab { list, drawings }
+
+/// List / Drawings switcher shared by project map and site listings screens.
+class ProjectMapTabSwitcher extends StatelessWidget {
+  const ProjectMapTabSwitcher({
+    super.key,
+    required this.selectedTab,
+    required this.onChanged,
+  });
+
+  final ProjectMapViewTab selectedTab;
+  final ValueChanged<ProjectMapViewTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 45,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ProjectMapTabSegment(
+              label: 'List',
+              selected: selectedTab == ProjectMapViewTab.list,
+              onTap: () => onChanged(ProjectMapViewTab.list),
+            ),
+          ),
+          Expanded(
+            child: _ProjectMapTabSegment(
+              label: 'Drawings',
+              selected: selectedTab == ProjectMapViewTab.drawings,
+              onTap: () => onChanged(ProjectMapViewTab.drawings),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectMapTabSegment extends StatelessWidget {
+  const _ProjectMapTabSegment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        height: double.infinity,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.inkStrong : AppColors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: AppFonts.titleSmall(
+              color: selected ? AppColors.white : AppColors.muted,
+            ).copyWith(
+              fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class ProjectMapTopBar extends StatelessWidget implements PreferredSizeWidget {
   const ProjectMapTopBar({
     super.key,

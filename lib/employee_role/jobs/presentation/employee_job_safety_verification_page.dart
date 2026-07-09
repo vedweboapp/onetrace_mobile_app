@@ -6,8 +6,10 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_checklist_pdf_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
 
 class EmployeeJobSafetyVerificationPage extends ConsumerStatefulWidget {
@@ -52,9 +54,9 @@ class _EmployeeJobSafetyVerificationPageState
     });
 
     try {
-      final job = await ref.read(employeeJobRepositoryProvider).fetchJobDetail(
-            jobId: jobId,
-          );
+      final job = await ref
+          .read(employeeJobRepositoryProvider)
+          .fetchJobDetail(jobId: jobId);
       if (!mounted) return;
       setState(() {
         _items = job.safetyChecklist;
@@ -73,11 +75,21 @@ class _EmployeeJobSafetyVerificationPageState
   }
 
   bool get _allRequiredChecked {
-    final requiredItems =
-        _items.where((item) => item.isRequired).toList(growable: false);
+    final requiredItems = _items
+        .where((item) => item.isRequired)
+        .toList(growable: false);
     if (requiredItems.isEmpty) return true;
     return requiredItems.every((item) => item.isChecked);
   }
+
+  bool get _allConcentricSatisfied =>
+      _items.every((item) => item.concentricPointSatisfied);
+
+  bool get _canStart =>
+      !_isLoading &&
+      _allRequiredChecked &&
+      _allConcentricSatisfied &&
+      !_isSubmitting;
 
   void _toggleItem(String id) {
     setState(() {
@@ -88,26 +100,38 @@ class _EmployeeJobSafetyVerificationPageState
     });
   }
 
+  void _setConcentricPoint(String id, bool confirmed) {
+    setState(() {
+      _items = [
+        for (final item in _items)
+          item.id == id
+              ? item.copyWith(concentricPointConfirmed: confirmed)
+              : item,
+      ];
+    });
+  }
+
   Future<void> _startJob() async {
     final jobId = widget.jobId;
-    if (jobId == null || !_allRequiredChecked || _isSubmitting) return;
+    if (jobId == null || !_canStart) return;
 
     setState(() => _isSubmitting = true);
     try {
+      final repository = ref.read(employeeJobRepositoryProvider);
       if (_items.isNotEmpty) {
-        await ref.read(employeeJobRepositoryProvider).updateJobChecklists(
-              jobId: jobId,
-              items: _items,
-            );
+        await repository.startJobWithChecklist(jobId: jobId, items: _items);
+      } else {
+        await repository.markJobStarted(jobId);
       }
-
-      await ref.read(employeeJobRepositoryProvider).markJobStarted(jobId);
 
       ref.read(employeeJobSessionProvider.notifier).startJob(jobId);
       if (!mounted) return;
       context.pushReplacement(
         EmployeeJobDetailsPage.path,
-        extra: <String, Object?>{'jobId': jobId},
+        extra: <String, Object?>{
+          'jobId': jobId,
+          'initialTab': EmployeeJobDetailTab.forms.name,
+        },
       );
     } catch (error) {
       if (!mounted) return;
@@ -211,7 +235,21 @@ class _EmployeeJobSafetyVerificationPageState
                       title: item.title,
                       isChecked: item.isChecked,
                       isRequired: item.isRequired,
-                      onTap: () => _toggleItem(item.id),
+                      hasPdf: item.hasPdf,
+                      requiresConcentricPoint: item.requiresConcentricPoint,
+                      concentricPointConfirmed: item.concentricPointConfirmed,
+                      onToggle: () => _toggleItem(item.id),
+                      onConcentricChanged: item.requiresConcentricPoint
+                          ? (confirmed) =>
+                                _setConcentricPoint(item.id, confirmed)
+                          : null,
+                      onViewPdf: item.hasPdf
+                          ? () => openEmployeeChecklistPdf(
+                              context,
+                              title: item.title,
+                              fileUrl: item.fileUrl!,
+                            )
+                          : null,
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -229,14 +267,21 @@ class _EmployeeJobSafetyVerificationPageState
                 padding: const EdgeInsets.fromLTRB(22, 14, 22, 14),
                 child: Column(
                   children: [
+                    if (!_allConcentricSatisfied &&
+                        _items.any((item) => item.requiresConcentricPoint))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Text(
+                          'Confirm concentric point verification for all required items.',
+                          textAlign: TextAlign.center,
+                          style: AppFonts.bodySmall(color: AppColors.muted),
+                        ),
+                      ),
                     SizedBox(
                       width: double.infinity,
                       height: 52,
                       child: FilledButton(
-                        onPressed:
-                            !_isLoading && _allRequiredChecked && !_isSubmitting
-                                ? _startJob
-                                : null,
+                        onPressed: _canStart ? _startJob : null,
                         style: FilledButton.styleFrom(
                           backgroundColor: AppColors.inkStrong,
                           disabledBackgroundColor: const Color(0xFFB8B8BE),
@@ -304,29 +349,38 @@ class _SafetyCheckRow extends StatelessWidget {
     required this.title,
     required this.isChecked,
     required this.isRequired,
-    required this.onTap,
+    required this.hasPdf,
+    required this.requiresConcentricPoint,
+    required this.concentricPointConfirmed,
+    required this.onToggle,
+    this.onConcentricChanged,
+    this.onViewPdf,
   });
 
   final String title;
   final bool isChecked;
   final bool isRequired;
-  final VoidCallback onTap;
+  final bool hasPdf;
+  final bool requiresConcentricPoint;
+  final bool? concentricPointConfirmed;
+  final VoidCallback onToggle;
+  final ValueChanged<bool>? onConcentricChanged;
+  final VoidCallback? onViewPdf;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.transparent,
-      child: InkWell(
-        onTap: onTap,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: AppColors.white,
         borderRadius: BorderRadius.circular(14),
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.borderLight),
-          ),
-          child: Row(
+        border: Border.all(color: AppColors.borderLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Column(
@@ -350,28 +404,131 @@ class _SafetyCheckRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isChecked ? AppColors.inkStrong : AppColors.transparent,
-                  border: Border.all(
-                    color: isChecked ? AppColors.inkStrong : AppColors.border,
-                    width: 2,
+              Material(
+                color: AppColors.transparent,
+                child: InkWell(
+                  onTap: onToggle,
+                  customBorder: const CircleBorder(),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isChecked
+                          ? AppColors.inkStrong
+                          : AppColors.transparent,
+                      border: Border.all(
+                        color: isChecked
+                            ? AppColors.inkStrong
+                            : AppColors.border,
+                        width: 2,
+                      ),
+                    ),
+                    child: isChecked
+                        ? const Icon(
+                            Icons.check_rounded,
+                            size: 18,
+                            color: AppColors.white,
+                          )
+                        : null,
                   ),
                 ),
-                child: isChecked
-                    ? const Icon(
-                        Icons.check_rounded,
-                        size: 18,
-                        color: AppColors.white,
-                      )
-                    : null,
               ),
             ],
           ),
-        ),
+          if (hasPdf && onViewPdf != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 42,
+              child: OutlinedButton.icon(
+                onPressed: onViewPdf,
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text('View checklist file'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.inkStrong,
+                  side: const BorderSide(color: AppColors.borderLight),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if (requiresConcentricPoint) ...[
+            const SizedBox(height: 14),
+            const Divider(height: 1, color: AppColors.borderLight),
+            const SizedBox(height: 12),
+            Text(
+              'Concentric point',
+              style: AppFonts.labelMedium(
+                color: AppColors.inkStrong,
+              ).copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Material(
+              color: AppColors.transparent,
+              child: InkWell(
+                onTap: onConcentricChanged == null
+                    ? null
+                    : () => onConcentricChanged!(
+                        concentricPointConfirmed != true,
+                      ),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: concentricPointConfirmed == true
+                              ? AppColors.inkStrong
+                              : AppColors.transparent,
+                          border: Border.all(
+                            color: concentricPointConfirmed == true
+                                ? AppColors.inkStrong
+                                : AppColors.border,
+                            width: 2,
+                          ),
+                        ),
+                        child: concentricPointConfirmed == true
+                            ? const Icon(
+                                Icons.check_rounded,
+                                size: 18,
+                                color: AppColors.white,
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Concentric point verified',
+                              style: AppFonts.bodyMedium(
+                                color: AppColors.inkStrong,
+                              ).copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            Text(
+                              'Required before starting the job.',
+                              style: AppFonts.labelSmall(
+                                color: AppColors.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

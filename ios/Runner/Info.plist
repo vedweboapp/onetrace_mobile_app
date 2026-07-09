@@ -59,8 +59,16 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>GMSApiKey</key>
+	<string>$(GMS_API_KEY)</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>We use your location to show your position and routes to job sites on the map.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>We use your location to show your position and routes to job sites on the map.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>We use the camera to scan QR codes and update your profile photo.</string>
+	<string>We use the camera to scan QR codes, capture photos, and record short videos in job forms.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We use the microphone when you record videos in job forms.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>We need access to your photos to set your profile picture.</string>
 	<key>UISupportedInterfaceOrientations~ipad</key>

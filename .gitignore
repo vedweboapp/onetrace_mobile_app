@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Google Maps / Places API secrets (copy from *.example files)
+/android/secrets.properties
+/ios/Runner/Secrets.xcconfig
+/dart_defines.json

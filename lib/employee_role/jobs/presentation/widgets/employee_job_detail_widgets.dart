@@ -219,10 +219,12 @@ class EmployeeJobTabs extends StatelessWidget {
     super.key,
     required this.selectedTab,
     required this.onChanged,
+    this.showDesignsTab = false,
   });
 
   final EmployeeJobDetailTab selectedTab;
   final ValueChanged<EmployeeJobDetailTab> onChanged;
+  final bool showDesignsTab;
 
   @override
   Widget build(BuildContext context) {
@@ -237,6 +239,12 @@ class EmployeeJobTabs extends StatelessWidget {
             selected: selectedTab == EmployeeJobDetailTab.forms,
             onTap: () => onChanged(EmployeeJobDetailTab.forms),
           ),
+          if (showDesignsTab)
+            _TabButton(
+              label: 'Designs',
+              selected: selectedTab == EmployeeJobDetailTab.designs,
+              onTap: () => onChanged(EmployeeJobDetailTab.designs),
+            ),
           _TabButton(
             label: 'Location',
             selected: selectedTab == EmployeeJobDetailTab.location,
@@ -590,28 +598,55 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
   required EmployeeJobDetail job,
   List<int> formIds = const [],
   Set<int> completedFormIds = const {},
+  Set<String> completedPinFormKeys = const {},
   required bool hasQrScan,
   required bool dynamicFormComplete,
   bool isJobCompleted = false,
+  Map<int, bool> formHasQrFields = const {},
 }) {
+  final pinTasks = job.pinFormTasks;
   final linkedFormIds = formIds.isNotEmpty ? formIds : job.linkedFormIds;
-  final hasDynamicForms = linkedFormIds.isNotEmpty;
+  final hasDynamicForms = pinTasks.isNotEmpty || linkedFormIds.isNotEmpty;
+  final hasPinQrForms = pinTasks.any(
+    (task) => formHasQrFields[task.formId] == true,
+  );
 
-  final completedForms = linkedFormIds
-      .where((formId) => completedFormIds.contains(formId))
-      .length;
-  final formItems = hasDynamicForms
+  final completedForms = pinTasks.isNotEmpty
+      ? pinTasks
+          .where((task) => completedPinFormKeys.contains(task.key))
+          .length
+      : linkedFormIds
+          .where((formId) => completedFormIds.contains(formId))
+          .length;
+  final totalForms =
+      pinTasks.isNotEmpty ? pinTasks.length : linkedFormIds.length;
+  final formItems = hasDynamicForms && pinTasks.isEmpty
       ? [
           EmployeeRequiredFormItem(
             id: 'linked_forms',
             title: isJobCompleted
-                ? (linkedFormIds.length > 1
-                    ? 'Submitted forms — tap to edit ($completedForms/${linkedFormIds.length})'
+                ? (totalForms > 1
+                    ? 'Submitted forms — tap to edit ($completedForms/$totalForms)'
                     : 'Submitted form — tap to edit')
-                : (linkedFormIds.length > 1
-                    ? 'Fill required forms ($completedForms/${linkedFormIds.length})'
+                : (totalForms > 1
+                    ? 'Fill required forms ($completedForms/$totalForms)'
                     : 'Fill required form'),
             isComplete: dynamicFormComplete,
+          ),
+        ]
+      : pinTasks.isNotEmpty
+      ? [
+          EmployeeRequiredFormItem(
+            id: 'pin_forms_summary',
+            title: isJobCompleted
+                ? (totalForms > 1
+                    ? 'Pin forms complete ($completedForms/$totalForms)'
+                    : 'Pin form complete')
+                : (totalForms > 1
+                    ? 'Complete pin forms ($completedForms/$totalForms)'
+                    : 'Complete pin form'),
+            isComplete: dynamicFormComplete,
+            isActionable: false,
           ),
         ]
       : job.safetyChecklist.isNotEmpty
@@ -621,19 +656,22 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
             title: 'Complete job checklist',
             isComplete: job.safetyChecklist
                 .where((item) => item.isRequired)
-                .every((item) => item.isChecked),
+                .every(
+                  (item) => item.isChecked && item.concentricPointSatisfied,
+                ),
           ),
         ]
       : const <EmployeeRequiredFormItem>[];
 
   return [
     ...formItems,
-    EmployeeRequiredFormItem(
-      id: 'qr_scan',
-      title: 'Scan QR code',
-      isComplete: hasQrScan,
-      isOptional: true,
-    ),
+    if (!hasPinQrForms)
+      EmployeeRequiredFormItem(
+        id: 'qr_scan',
+        title: 'Scan QR code',
+        isComplete: hasQrScan,
+        isOptional: true,
+      ),
   ];
 }
 
@@ -680,7 +718,9 @@ class EmployeeRequiredFormChecklist extends StatelessWidget {
         for (var i = 0; i < items.length; i++) ...[
           _RequiredFormTaskCard(
             item: items[i],
-            onTap: onItemTap == null ? null : () => onItemTap!(items[i].id),
+            onTap: onItemTap == null || !items[i].isActionable
+                ? null
+                : () => onItemTap!(items[i].id),
           ),
           if (i < items.length - 1) const SizedBox(height: 10),
         ],

@@ -89,6 +89,7 @@ import 'package:red5/features/splash/presentation/views/splash_page.dart';
 import 'package:red5/employee_role/data/role_session.dart';
 import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_checklist_pdf_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_confirmation_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_form_page.dart';
@@ -98,6 +99,8 @@ import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
+import 'package:red5/employee_role/jobs/presentation/operative_job_site_listings_page.dart';
+import 'package:red5/employee_role/projects/presentation/operative_site_route_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_qr_scan_page.dart';
 import 'package:red5/employee_role/reports/data/employee_reports_data.dart';
 import 'package:red5/employee_role/reports/presentation/employee_report_product_detail_page.dart';
@@ -397,6 +400,33 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: OperativeJobSiteListingsPage.path,
+        name: OperativeJobSiteListingsPage.name,
+        pageBuilder: (context, state) {
+          final page = OperativeJobSiteListingsPage.fromExtra(state.extra);
+          return _animatedPage(
+            state: state,
+            child: page ?? const OperativeJobSiteListingsPage(jobId: 0),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: OperativeSiteRoutePage.path,
+        name: OperativeSiteRoutePage.name,
+        pageBuilder: (context, state) {
+          final page = OperativeSiteRoutePage.fromExtra(state.extra);
+          return _animatedPage(
+            state: state,
+            child: page ??
+                const OperativeSiteRoutePage(
+                  title: 'Site location',
+                ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: EmployeeJobSafetyVerificationPage.path,
         name: EmployeeJobSafetyVerificationPage.name,
         pageBuilder: (context, state) {
@@ -460,6 +490,34 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               jobId: jobId,
               jobFormId: jobFormId,
               submissionId: submissionId,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeChecklistPdfPage.path,
+        name: EmployeeChecklistPdfPage.name,
+        pageBuilder: (context, state) {
+          var title = 'Checklist';
+          var fileUrl = '';
+          final extra = state.extra;
+          if (extra is Map) {
+            final map = Map<String, dynamic>.from(extra);
+            final rawTitle = map['title'];
+            if (rawTitle is String && rawTitle.trim().isNotEmpty) {
+              title = rawTitle.trim();
+            }
+            final rawFileUrl = map['fileUrl'];
+            if (rawFileUrl is String && rawFileUrl.trim().isNotEmpty) {
+              fileUrl = rawFileUrl.trim();
+            }
+          }
+          return _animatedPage(
+            state: state,
+            child: EmployeeChecklistPdfPage(
+              title: title,
+              fileUrl: fileUrl,
             ),
             beginOffset: const Offset(0.08, 0),
           );
@@ -1122,6 +1180,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           String? projectName;
           String? projectId;
           String? levelId;
+          var viewOnly = false;
+          List<Map<String, dynamic>> embeddedLevelPlots = const [];
           final extra = state.extra;
           if (extra is Map) {
             final map = Map<String, dynamic>.from(extra);
@@ -1153,6 +1213,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             if (rawLevelId is String && rawLevelId.trim().isNotEmpty) {
               levelId = rawLevelId.trim();
             }
+            final rawViewOnly = map['viewOnly'];
+            if (rawViewOnly == true || rawViewOnly?.toString() == 'true') {
+              viewOnly = true;
+            }
+            final rawPlots = map['embeddedLevelPlots'];
+            if (rawPlots is List) {
+              embeddedLevelPlots = rawPlots
+                  .whereType<Map>()
+                  .map((plot) => Map<String, dynamic>.from(plot))
+                  .toList(growable: false);
+            }
           }
           return _animatedPage(
             state: state,
@@ -1164,6 +1235,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               projectName: projectName,
               projectId: projectId,
               levelId: levelId,
+              embeddedLevelPlots: embeddedLevelPlots,
+              viewOnly: viewOnly,
             ),
             beginOffset: const Offset(0.08, 0),
           );

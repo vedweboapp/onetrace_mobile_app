@@ -8,6 +8,7 @@ import 'package:red5/employee_role/projects/application/employee_projects_contro
 import 'package:red5/employee_role/projects/data/employee_project_detail.dart';
 import 'package:red5/employee_role/projects/presentation/employee_project_details_page.dart';
 import 'package:red5/employee_role/projects/presentation/project_map_page.dart';
+import 'package:red5/employee_role/projects/presentation/widgets/employee_project_card.dart';
 
 class EmployeeProjectsListContent extends ConsumerStatefulWidget {
   const EmployeeProjectsListContent({super.key});
@@ -58,12 +59,12 @@ class _EmployeeProjectsListContentState
     if (state.errorMessage != null && state.projects.isEmpty) {
       return _ProjectsErrorState(
         message: state.errorMessage!,
-        onRetry: controller.load,
+        onRetry: () => controller.load(force: true),
       );
     }
 
     return RefreshIndicator(
-      onRefresh: controller.load,
+      onRefresh: () => controller.load(force: true),
       child: ListView(
         clipBehavior: Clip.none,
         physics: const AlwaysScrollableScrollPhysics(),
@@ -171,7 +172,7 @@ class _EmployeeProjectsHomePreviewState
     if (state.errorMessage != null && preview.isEmpty) {
       return _ProjectsErrorState(
         message: state.errorMessage!,
-        onRetry: controller.load,
+        onRetry: () => controller.load(force: true),
         compact: true,
       );
     }
@@ -222,153 +223,6 @@ class _EmployeeProjectsHomePreviewState
       ],
     );
   }
-}
-
-class EmployeeProjectCard extends StatelessWidget {
-  const EmployeeProjectCard({
-    super.key,
-    required this.project,
-    required this.onTap,
-  });
-
-  final EmployeeProjectSummary project;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final statusStyle = _statusStyle(project.cardStatus);
-    final taskLabel = project.jobCount == 1
-        ? '1 Task'
-        : '${project.jobCount} Tasks';
-
-    return Material(
-      color: AppColors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Ink(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.borderLight),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      project.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppFonts.titleLarge(
-                        color: AppColors.inkStrong,
-                      ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusStyle.background,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      project.cardStatus.label,
-                      style: AppFonts.labelSmall(
-                        color: statusStyle.foreground,
-                      ).copyWith(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 9,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.only(top: 1),
-                    child: Icon(
-                      Icons.location_on_outlined,
-                      size: 16,
-                      color: AppColors.muted,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      project.address,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppFonts.bodySmall(
-                        color: AppColors.muted,
-                      ).copyWith(fontWeight: FontWeight.w600, height: 1.35),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  const Spacer(),
-                  Text(
-                    taskLabel,
-                    style: AppFonts.labelLarge(
-                      color: AppColors.inkStrong,
-                    ).copyWith(fontWeight: FontWeight.w900),
-                  ),
-                  const SizedBox(width: 2),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    size: 20,
-                    color: AppColors.inkStrong,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  static _ProjectStatusStyle _statusStyle(EmployeeProjectCardStatus status) {
-    return switch (status) {
-      EmployeeProjectCardStatus.inProgress => const _ProjectStatusStyle(
-        background: Color(0xFFE8F1FF),
-        foreground: Color(0xFF3D6FD8),
-      ),
-      EmployeeProjectCardStatus.scheduled => const _ProjectStatusStyle(
-        background: Color(0xFFF2F3F5),
-        foreground: Color(0xFF8B939E),
-      ),
-      EmployeeProjectCardStatus.review => const _ProjectStatusStyle(
-        background: Color(0xFFF2F3F5),
-        foreground: Color(0xFF8B939E),
-      ),
-    };
-  }
-}
-
-class _ProjectStatusStyle {
-  const _ProjectStatusStyle({
-    required this.background,
-    required this.foreground,
-  });
-
-  final Color background;
-  final Color foreground;
 }
 
 class _ProjectsErrorState extends StatelessWidget {

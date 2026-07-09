@@ -18,9 +18,9 @@ final class OperativeSyncProcessor {
     required OperativeSyncQueue queue,
     required EmployeeJobRepository jobRepository,
     required JobQrScanRepository qrScanRepository,
-  })  : _queue = queue,
-        _jobRepository = jobRepository,
-        _qrScanRepository = qrScanRepository;
+  }) : _queue = queue,
+       _jobRepository = jobRepository,
+       _qrScanRepository = qrScanRepository;
 
   final OperativeSyncQueue _queue;
   final EmployeeJobRepository _jobRepository;
@@ -36,10 +36,7 @@ final class OperativeSyncProcessor {
         await _queue.remove(item.id);
         processed++;
       } catch (error) {
-        await _queue.recordFailure(
-          id: item.id,
-          error: error.toString(),
-        );
+        await _queue.recordFailure(id: item.id, error: error.toString());
       }
     }
 

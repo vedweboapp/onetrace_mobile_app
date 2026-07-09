@@ -23,6 +23,8 @@ import 'package:red5/core/utils/qr_code_utils.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_qr_input_sheet.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_qr_scanner_page.dart';
 import 'package:red5/employee_role/forms/data/signature_form_value.dart';
+import 'package:red5/employee_role/forms/data/form_video_recorder_constraints.dart';
+import 'package:red5/employee_role/forms/presentation/widgets/form_video_recorder_field.dart';
 import 'package:red5/employee_role/forms/presentation/widgets/form_signature_field.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 
@@ -56,6 +58,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
   final _choiceValues = <String, String?>{};
   final _boolValues = <String, bool>{};
   final _fileValues = <String, _PickedFileValue>{};
+  final _videoValues = <String, FormPickedVideoValue>{};
   final _signatureStrokes = <String, List<List<Offset>>>{};
   final _signaturePngBase64 = <String, String>{};
   final _signatureFiles = <String, _PickedFileValue>{};
@@ -87,6 +90,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
       _choiceValues.clear();
       _boolValues.clear();
       _fileValues.clear();
+      _videoValues.clear();
       _signatureStrokes.clear();
       _signaturePngBase64.clear();
       _signatureFiles.clear();
@@ -130,6 +134,8 @@ class DynamicFormViewState extends State<DynamicFormView> {
           case _FieldKind.checkbox:
             _boolValues[key] = false;
           case _FieldKind.image:
+            break;
+          case _FieldKind.video:
             break;
           case _FieldKind.signature:
             _signatureStrokes[key] = const [];
@@ -199,6 +205,8 @@ class DynamicFormViewState extends State<DynamicFormView> {
             values[key] = _boolValues[key] ?? false;
           case _FieldKind.image:
             values[key] = _fileValues[key]?.name;
+          case _FieldKind.video:
+            values[key] = _videoValues[key]?.name;
           case _FieldKind.signature:
             values[key] = _signatureFiles[key]?.name ?? '';
         }
@@ -227,6 +235,10 @@ class DynamicFormViewState extends State<DynamicFormView> {
         return _signatureFiles[field.apiName]?.path;
       case _FieldKind.image:
         return _fileValues[field.apiName]?.path;
+      case _FieldKind.video:
+        final path = _videoValues[field.apiName]?.path?.trim();
+        if (path == null || path.isEmpty) return null;
+        return path;
       default:
         return null;
     }
@@ -289,22 +301,23 @@ class DynamicFormViewState extends State<DynamicFormView> {
   void applyFieldValues(List<JobFormFieldValue> values) {
     if (values.isEmpty) return;
 
-    final byFieldId = <int, String>{
+    final byFieldId = <int, JobFormFieldValue>{
       for (final row in values)
-        if (row.fieldId > 0) row.fieldId: row.value,
+        if (row.fieldId > 0) row.fieldId: row,
     };
 
     for (final section in _sections) {
       for (final field in section.fields) {
-        final raw = byFieldId[field.id];
-        if (raw == null) continue;
-        _applyValue(field, raw);
+        final row = byFieldId[field.id];
+        if (row == null) continue;
+        _applyValue(field, row);
       }
     }
     if (mounted) setState(() {});
   }
 
-  void _applyValue(FormMetadataField field, String raw) {
+  void _applyValue(FormMetadataField field, JobFormFieldValue row) {
+    final raw = row.value;
     final key = field.apiName;
     switch (_fieldKind(field)) {
       case _FieldKind.text:
@@ -330,6 +343,27 @@ class DynamicFormViewState extends State<DynamicFormView> {
         _boolValues[key] = normalized == 'true' || normalized == '1';
       case _FieldKind.image:
         break;
+      case _FieldKind.video:
+        final localPath = row.localFilePath?.trim();
+        if (localPath != null &&
+            localPath.isNotEmpty &&
+            File(localPath).existsSync()) {
+          _videoValues[key] = FormPickedVideoValue(
+            name: raw.trim().isNotEmpty
+                ? raw.trim()
+                : localPath.split(Platform.pathSeparator).last,
+            path: localPath,
+            sizeBytes: File(localPath).lengthSync(),
+            duration: Duration.zero,
+          );
+        } else if (raw.trim().isNotEmpty) {
+          _videoValues[key] = FormPickedVideoValue(
+            name: raw.trim(),
+            path: '',
+            sizeBytes: 0,
+            duration: Duration.zero,
+          );
+        }
       case _FieldKind.signature:
         final display = parseSignatureDisplayValue(raw);
         if (display.hasImage) {
@@ -479,6 +513,7 @@ class DynamicFormViewState extends State<DynamicFormView> {
       _FieldKind.dropdown => _dropdownField(field),
       _FieldKind.checkbox => _checkboxField(field),
       _FieldKind.image => _imageField(field),
+      _FieldKind.video => _videoField(field),
       _FieldKind.qr => _qrField(field),
       _FieldKind.signature => _signatureField(field),
       _FieldKind.unsupported => _unsupportedField(field),
@@ -1405,6 +1440,36 @@ class DynamicFormViewState extends State<DynamicFormView> {
     _notifyChanged();
   }
 
+  Widget _videoField(FormMetadataField field) {
+    return FormVideoRecorderField(
+      label: field.label,
+      hint: field.placeholder ?? 'Tap to record a short video',
+      readOnly: field.isReadonly,
+      required: field.isRequired,
+      value: _videoValues[field.apiName],
+      onChanged: (value) {
+        setState(() {
+          if (value == null) {
+            _videoValues.remove(field.apiName);
+          } else {
+            _videoValues[field.apiName] = value;
+          }
+        });
+        _notifyChanged();
+      },
+      validator: (value) {
+        if (field.isRequired && value == null) {
+          return '${field.label} is required';
+        }
+        if (value == null || value.path.trim().isEmpty) return null;
+        return FormVideoRecorderConstraints.validate(
+          duration: value.duration,
+          bytes: value.sizeBytes,
+        );
+      },
+    );
+  }
+
   Widget _unsupportedField(FormMetadataField field) {
     return AppTextField(
       controller: _textControllers[field.apiName]!,
@@ -1605,6 +1670,7 @@ enum _FieldKind {
   dropdown,
   checkbox,
   image,
+  video,
   qr,
   signature,
   unsupported,
@@ -1617,6 +1683,10 @@ _FieldKind _fieldKind(FormMetadataField field) {
 
   if (type == _FieldKind.signature || _looksLikeSignatureField(api, label)) {
     return _FieldKind.signature;
+  }
+
+  if (isVideoRecorderFieldType(field.fieldType) || _looksLikeVideoField(api, label)) {
+    return _FieldKind.video;
   }
 
   if (type != _FieldKind.text && type != _FieldKind.unsupported) return type;
@@ -1715,6 +1785,13 @@ bool _looksLikeSignatureField(String api, String label) {
   return false;
 }
 
+bool _looksLikeVideoField(String api, String label) {
+  if (api.contains('video')) return true;
+  if (label.contains('video')) return true;
+  if (label.contains('record video')) return true;
+  return false;
+}
+
 _FieldKind _normalizedType(String raw) {
   switch (raw) {
     case 'single_line':
@@ -1771,6 +1848,12 @@ _FieldKind _normalizedType(String raw) {
     case 'file':
     case 'file_upload':
       return _FieldKind.image;
+    case 'video_recorder':
+    case 'video_recording':
+    case 'video_record':
+    case 'video':
+    case 'video_upload':
+      return _FieldKind.video;
     case 'qr_code':
     case 'qr':
     case 'qrcode':

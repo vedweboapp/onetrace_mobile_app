@@ -259,10 +259,7 @@ final class QuoteProjectApiClient {
     String? endDate,
     List<int>? forms,
   }) async {
-    final payload = <String, dynamic>{
-      'name': name,
-      'quote_name': name,
-    };
+    final payload = <String, dynamic>{'name': name, 'quote_name': name};
     if (organizationId != null) payload['organization'] = organizationId;
     if (clientId != null) payload['client'] = clientId;
     if (projectTypeId != null) payload['project_type'] = projectTypeId;
@@ -328,10 +325,7 @@ final class QuoteProjectApiClient {
     while (true) {
       final response = await _dio.get<dynamic>(
         AppApiUrls.projects,
-        queryParameters: <String, dynamic>{
-          'page': page,
-          'page_size': pageSize,
-        },
+        queryParameters: <String, dynamic>{'page': page, 'page_size': pageSize},
       );
       final root = _coerceMap(_normalizeResponseData(response.data));
       final rows = root['results'] is List
@@ -341,9 +335,7 @@ final class QuoteProjectApiClient {
                 : const <dynamic>[]);
       for (final row in rows) {
         if (row is! Map) continue;
-        final project = ProjectRead.tryFromMap(
-          Map<String, dynamic>.from(row),
-        );
+        final project = ProjectRead.tryFromMap(Map<String, dynamic>.from(row));
         if (project != null) projects.add(project);
       }
       final hasNext = root['next'] != null && rows.isNotEmpty;
@@ -443,8 +435,7 @@ final class QuoteProjectApiClient {
     final seenIds = <String>{};
     for (final row in rows) {
       final map = _coerceMap(row);
-      final id =
-          _readString(map, const ['id', 'project_id', 'quote_id']) ?? '';
+      final id = _readString(map, const ['id', 'project_id', 'quote_id']) ?? '';
       if (id.isEmpty || !seenIds.add(id)) continue;
       final name =
           _readString(map, const [
@@ -579,7 +570,9 @@ final class QuoteProjectApiClient {
     return body.isNotEmpty ? body : (root.isEmpty ? null : root);
   }
 
-  static Map<String, dynamic> _levelUpdateResponseBody(Map<String, dynamic> root) {
+  static Map<String, dynamic> _levelUpdateResponseBody(
+    Map<String, dynamic> root,
+  ) {
     final body = _entityBody(root);
     final payload = body['payload'];
     if (payload is Map) {
@@ -1518,6 +1511,25 @@ final class QuoteProjectApiClient {
     );
   }
 
+  /// `GET /job-status/{id}/` — job-status_read (`data.id` → `job_status` FK).
+  Future<NamedIdOption?> fetchJobStatusById(int id) async {
+    try {
+      final response = await _dio.get<dynamic>(
+        AppApiUrls.jobStatusById('$id'),
+      );
+      final root = _coerceMap(_normalizeResponseData(response.data));
+      final body = readApiEntityBody(root);
+      final parsedId = readApiIntFromMap(body, const ['id']);
+      if (parsedId == null) return null;
+      final name =
+          _readString(body, const ['status_name', 'name', 'title', 'label']) ??
+          'Status $parsedId';
+      return NamedIdOption(id: parsedId, name: name);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Project type options for create project forms.
   Future<List<NamedIdOption>> fetchProjectTypeOptions() async {
     final items = await fetchProjectTypes(isActive: true);
@@ -1601,8 +1613,7 @@ final class QuoteProjectApiClient {
       );
     }
     final name =
-        _readString(body, const ['project_type', 'name']) ??
-        projectType.trim();
+        _readString(body, const ['project_type', 'name']) ?? projectType.trim();
     return NamedIdOption(id: id, name: name);
   }
 
@@ -1856,7 +1867,14 @@ final class QuoteProjectApiClient {
   Future<List<NamedIdOption>> fetchQrCodeOptions() async {
     return _fetchNamedIdOptions(
       AppApiUrls.qrCodes,
-      nameKeys: const ['qr_code_id', 'code', 'name', 'title', 'label', 'qr_code'],
+      nameKeys: const [
+        'qr_code_id',
+        'code',
+        'name',
+        'title',
+        'label',
+        'qr_code',
+      ],
     );
   }
 
@@ -1868,21 +1886,22 @@ final class QuoteProjectApiClient {
     try {
       final response = await _dio.get<dynamic>(
         endpoint,
-        queryParameters: queryParameters ??
+        queryParameters:
+            queryParameters ??
             const <String, dynamic>{'page': 1, 'page_size': 100},
       );
       final root = _coerceMap(_normalizeResponseData(response.data));
-      final rows = root['data'] is List
-          ? (root['data'] as List<dynamic>)
-          : (root['results'] is List
-                ? (root['results'] as List<dynamic>)
-                : const <dynamic>[]);
+      var rows = readApiRows(root);
+      if (rows.isEmpty) {
+        final entity = readApiEntityBody(root);
+        if (readApiIntFromMap(entity, const ['id']) != null) {
+          rows = [entity];
+        }
+      }
       final out = <NamedIdOption>[];
       final seen = <int>{};
-      for (final row in rows) {
-        final map = _coerceMap(row);
-        final idRaw = map['id'];
-        final id = idRaw is int ? idRaw : int.tryParse('${idRaw ?? ''}');
+      for (final map in rows) {
+        final id = readApiIntFromMap(map, const ['id']);
         if (id == null || !seen.add(id)) continue;
         final name = _readString(map, nameKeys) ?? 'Item $id';
         out.add(NamedIdOption(id: id, name: name));
@@ -2119,10 +2138,9 @@ final class QuoteProjectApiClient {
   }
 
   static List<JobRead> _jobReadsFromApiRoot(Map<String, dynamic> root) {
-    return readApiRows(root)
-        .map(JobRead.tryFromMap)
-        .whereType<JobRead>()
-        .toList(growable: false);
+    return readApiRows(
+      root,
+    ).map(JobRead.tryFromMap).whereType<JobRead>().toList(growable: false);
   }
 
   static dynamic _normalizeResponseData(dynamic data) {
@@ -2249,7 +2267,12 @@ final class QuoteProjectApiClient {
     if (id == null) return null;
 
     final name =
-        _readString(map, const ['item_name', 'name', 'title', 'product_name']) ??
+        _readString(map, const [
+          'item_name',
+          'name',
+          'title',
+          'product_name',
+        ]) ??
         (nested != null
             ? _readString(nested, const ['name', 'item_name', 'title'])
             : null) ??
@@ -2296,9 +2319,7 @@ final class QuoteProjectApiClient {
     final raw = map['item_key'];
     if (raw is! Map) return null;
     return readInstallationTypeId(
-      Map<String, dynamic>.from(
-        raw.map((k, v) => MapEntry(k.toString(), v)),
-      ),
+      Map<String, dynamic>.from(raw.map((k, v) => MapEntry(k.toString(), v))),
     );
   }
 

@@ -125,7 +125,7 @@ class JobSheetJobCard extends StatelessWidget {
                 ),
               ),
               child: Text(
-                'View Details',
+                job.primaryActionLabel,
                 style: AppFonts.titleSmall(
                   color: AppColors.white,
                 ).copyWith(fontWeight: FontWeight.w800),

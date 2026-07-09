@@ -4,7 +4,8 @@ import 'package:red5/features/dashboard/data/job_models.dart';
 abstract final class JobWritePayload {
   const JobWritePayload._();
 
-  static Map<String, dynamic> build({    required String title,
+  static Map<String, dynamic> build({
+    required String title,
     String? description,
     int? assignedWorker,
     int? salesperson,
@@ -54,6 +55,7 @@ abstract final class JobWritePayload {
     DateTime? completedAt,
     int? jobStatusOverride,
     int? qrCodeOverride,
+    bool includeExistingChecklists = true,
   }) {
     final linkedFormIds = job.formIds.isNotEmpty
         ? job.formIds
@@ -78,7 +80,9 @@ abstract final class JobWritePayload {
 
     if (checklists != null) {
       payload['checklists'] = checklists;
-    } else if (job.checklists != null && job.checklists!.items.isNotEmpty) {
+    } else if (includeExistingChecklists &&
+        job.checklists != null &&
+        job.checklists!.items.isNotEmpty) {
       payload['checklists'] = job.checklists!.toWriteList();
     }
     if (completedAt != null) {
@@ -87,10 +91,37 @@ abstract final class JobWritePayload {
     return payload;
   }
 
-  static List<int> _normalizeFormIds({
-    List<int>? formIds,
-    int? form,
+  /// Checklist-only PUT — omits [job_status] so the server does not treat the
+  /// request as a job completion transition.
+  static Map<String, dynamic> buildChecklistOnlyUpdate({
+    required String title,
+    required List<Map<String, dynamic>> checklists,
   }) {
+    return <String, dynamic>{'title': title.trim(), 'checklists': checklists};
+  }
+
+  /// Operative "Start Job" — saves checklist rows and moves status to in progress.
+  static Map<String, dynamic> buildOperativeJobStart({
+    required String title,
+    required List<Map<String, dynamic>> checklists,
+    int? inProgressJobStatusId,
+  }) {
+    return <String, dynamic>{
+      'title': title.trim(),
+      'checklists': checklists,
+      if (inProgressJobStatusId != null) 'job_status': inProgressJobStatusId,
+    };
+  }
+
+  /// Status-only PUT for operative start when checklist was already saved.
+  static Map<String, dynamic> buildStatusOnlyUpdate({
+    required String title,
+    required int jobStatusId,
+  }) {
+    return <String, dynamic>{'title': title.trim(), 'job_status': jobStatusId};
+  }
+
+  static List<int> _normalizeFormIds({List<int>? formIds, int? form}) {
     final ids = <int>{
       if (formIds != null) ...formIds.where((id) => id > 0),
       if (form != null && form > 0) form,
@@ -122,10 +153,7 @@ abstract final class JobWritePayload {
       if (groupId != null) 'group': groupId,
       'composite_items': compositeItems
           .map(
-            (row) => <String, dynamic>{
-              'id': row.id,
-              'quantity': row.quantity,
-            },
+            (row) => <String, dynamic>{'id': row.id, 'quantity': row.quantity},
           )
           .toList(growable: false),
     };
@@ -140,6 +168,8 @@ abstract final class JobWritePayload {
 }
 
 extension JobReadWritePayload on JobRead {
-  Map<String, dynamic> toWritePayload({Map<String, dynamic>? jobMetaOverride}) =>
+  Map<String, dynamic> toWritePayload({
+    Map<String, dynamic>? jobMetaOverride,
+  }) =>
       JobWritePayload.buildFromJobRead(this, jobMetaOverride: jobMetaOverride);
 }

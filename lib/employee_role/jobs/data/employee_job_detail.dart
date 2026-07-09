@@ -1,3 +1,4 @@
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 
 final class EmployeeJobDetail {
@@ -18,6 +19,10 @@ final class EmployeeJobDetail {
     this.formAssignments = const [],
     this.jobForms = const [],
     this.projectId,
+    this.levels = const [],
+    this.pinFormTasks = const [],
+    this.siteDetail,
+    this.jobSerialNumber,
   });
 
   final int id;
@@ -36,8 +41,17 @@ final class EmployeeJobDetail {
   final List<JobFormAssignment> formAssignments;
   final List<JobLinkedFormSummary> jobForms;
   final int? projectId;
+  final List<EmployeeJobDrawingLevel> levels;
+  final List<EmployeeJobPinFormTask> pinFormTasks;
+  final EmployeeJobSiteDetail? siteDetail;
+  final String? jobSerialNumber;
+
+  bool get hasDrawingHierarchy => levels.any((level) => level.pinCount > 0);
 
   List<int> get linkedFormIds {
+    if (pinFormTasks.isNotEmpty) {
+      return pinFormTasks.map((task) => task.formId).toSet().toList(growable: false);
+    }
     if (jobForms.isNotEmpty) {
       return jobForms.map((form) => form.formId).toList(growable: false);
     }
@@ -56,11 +70,23 @@ final class EmployeeJobDetail {
     return null;
   }
 
+  int? jobFormIdForPin(int pinId, int formTemplateId) {
+    for (final task in pinFormTasks) {
+      if (task.pinId == pinId && task.formId == formTemplateId) {
+        return task.jobFormId ?? task.pinId;
+      }
+    }
+    return jobFormIdFor(formTemplateId);
+  }
+
   EmployeeJobDetail copyWith({
     String? currentStatus,
     List<int>? formIds,
     List<JobFormAssignment>? formAssignments,
     List<JobLinkedFormSummary>? jobForms,
+    List<EmployeeJobDrawingLevel>? levels,
+    List<EmployeeJobPinFormTask>? pinFormTasks,
+    List<EmployeeSafetyChecklistItem>? safetyChecklist,
   }) {
     return EmployeeJobDetail(
       id: id,
@@ -73,12 +99,16 @@ final class EmployeeJobDetail {
       plot: plot,
       description: description,
       items: items,
-      safetyChecklist: safetyChecklist,
+      safetyChecklist: safetyChecklist ?? this.safetyChecklist,
       formId: formId,
       formIds: formIds ?? this.formIds,
       formAssignments: formAssignments ?? this.formAssignments,
       jobForms: jobForms ?? this.jobForms,
       projectId: projectId,
+      levels: levels ?? this.levels,
+      pinFormTasks: pinFormTasks ?? this.pinFormTasks,
+      siteDetail: siteDetail,
+      jobSerialNumber: jobSerialNumber,
     );
   }
 }
@@ -95,6 +125,7 @@ final class EmployeeJobSummary {
     this.startDate,
     this.siteName,
     this.projectName,
+    this.projectId,
   });
 
   final int id;
@@ -107,6 +138,7 @@ final class EmployeeJobSummary {
   final DateTime? startDate;
   final String? siteName;
   final String? projectName;
+  final int? projectId;
 }
 
 enum EmployeeJobStatus {
@@ -138,12 +170,14 @@ final class EmployeeRequiredFormItem {
     required this.title,
     required this.isComplete,
     this.isOptional = false,
+    this.isActionable = true,
   });
 
   final String id;
   final String title;
   final bool isComplete;
   final bool isOptional;
+  final bool isActionable;
 }
 
 final class EmployeeSafetyChecklistItem {
@@ -153,6 +187,10 @@ final class EmployeeSafetyChecklistItem {
     this.isChecked = false,
     this.isRequired = true,
     this.sequence = 0,
+    this.fileUrl,
+    this.isMarked = false,
+    this.requiresConcentricPoint = false,
+    this.concentricPointConfirmed,
   });
 
   final String id;
@@ -160,14 +198,43 @@ final class EmployeeSafetyChecklistItem {
   final bool isChecked;
   final bool isRequired;
   final int sequence;
+  final String? fileUrl;
+  final bool isMarked;
 
-  EmployeeSafetyChecklistItem copyWith({bool? isChecked}) {
+  /// Template flag from API — item needs operative concentric confirmation.
+  final bool requiresConcentricPoint;
+
+  /// Operative answer: `true` = verified, `false` = not verified, `null` = unanswered.
+  final bool? concentricPointConfirmed;
+
+  bool get hasPdf => fileUrl != null && fileUrl!.trim().isNotEmpty;
+
+  bool get concentricPointAnswered =>
+      !requiresConcentricPoint || concentricPointConfirmed != null;
+
+  bool get concentricPointSatisfied =>
+      !requiresConcentricPoint || concentricPointConfirmed == true;
+
+  bool get submissionConcentricPoint =>
+      requiresConcentricPoint && concentricPointConfirmed == true;
+
+  EmployeeSafetyChecklistItem copyWith({
+    bool? isChecked,
+    bool? concentricPointConfirmed,
+    bool resetConcentricPointConfirmed = false,
+  }) {
     return EmployeeSafetyChecklistItem(
       id: id,
       title: title,
       isChecked: isChecked ?? this.isChecked,
       isRequired: isRequired,
       sequence: sequence,
+      fileUrl: fileUrl,
+      isMarked: isMarked,
+      requiresConcentricPoint: requiresConcentricPoint,
+      concentricPointConfirmed: resetConcentricPointConfirmed
+          ? null
+          : (concentricPointConfirmed ?? this.concentricPointConfirmed),
     );
   }
 }

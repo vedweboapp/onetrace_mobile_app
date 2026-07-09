@@ -5,6 +5,7 @@ import 'package:red5/core/notifications/app_notification_models.dart';
 import 'package:red5/core/notifications/app_notifications_repository.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/offline/operative_cache_policy.dart';
 
 final appNotificationsControllerProvider =
     StateNotifierProvider<AppNotificationsController, AppNotificationsState>((ref) {
@@ -24,9 +25,13 @@ final class AppNotificationsController extends StateNotifier<AppNotificationsSta
 
   void startPolling(Future<void> Function() onPoll) {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      unawaited(onPoll());
-    });
+    // Refresh assigned jobs periodically — controller enforces 10-min TTL.
+    _pollTimer = Timer.periodic(
+      OperativeCachePolicy.notificationPollInterval,
+      (_) {
+        unawaited(onPoll());
+      },
+    );
   }
 
   void stopPolling() {

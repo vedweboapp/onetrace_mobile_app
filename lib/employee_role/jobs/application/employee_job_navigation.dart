@@ -5,6 +5,7 @@ import 'package:red5/employee_role/jobs/application/employee_job_session_control
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_safety_verification_page.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
 import 'package:red5/employee_role/projects/data/employee_project_detail.dart';
 
 void openEmployeeJob(
@@ -14,6 +15,19 @@ void openEmployeeJob(
   final container = ProviderScope.containerOf(context);
   final session = container.read(employeeJobSessionProvider.notifier);
   final displayJob = session.withLocalProgress(job);
+
+  final showCompletionSummary =
+      displayJob.status == EmployeeJobStatus.completed ||
+      displayJob.primaryActionLabel == 'View Details';
+
+  if (showCompletionSummary) {
+    context.push(
+      EmployeeJobSheetDetailPage.path,
+      extra: displayJob,
+    );
+    return;
+  }
+
   final needsSafety = session.needsSafetyVerification(
     jobId: displayJob.id,
     status: displayJob.status,

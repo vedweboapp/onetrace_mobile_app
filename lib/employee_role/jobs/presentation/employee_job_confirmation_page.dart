@@ -9,8 +9,10 @@ import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
+import 'package:red5/employee_role/projects/application/employee_projects_controller.dart';
 
 class EmployeeJobConfirmationPage extends ConsumerStatefulWidget {
   const EmployeeJobConfirmationPage({super.key, this.jobId, this.jobTitle});
@@ -45,6 +47,16 @@ class _EmployeeJobConfirmationPageState
             .read(employeeJobDetailControllerProvider.notifier)
             .load(jobId: activeJobId);
         final job = ref.read(employeeJobDetailControllerProvider).job;
+        final incompletePins = job == null
+            ? 0
+            : countIncompleteAssignedPins(job.levels);
+        if (incompletePins > 0) {
+          throw StateError(
+            incompletePins == 1
+                ? 'Complete the remaining pin form on the Forms tab before finishing this job.'
+                : 'Complete all $incompletePins pin forms on the Forms tab before finishing this job.',
+          );
+        }
         JobCompletionDebugLog.info(
           'formAssignments: ${job?.formAssignments.map((a) => 'form=${a.formId}→job_form=${a.jobFormId}').join(', ') ?? 'none'}',
         );
@@ -60,7 +72,12 @@ class _EmployeeJobConfirmationPageState
       JobCompletionDebugLog.info('Refresh local job list');
       ref.read(employeeJobSessionProvider.notifier).completeJob(activeJobId);
       if (isOnline) {
-        await ref.read(employeeJobsControllerProvider.notifier).load();
+        await ref
+            .read(employeeJobsControllerProvider.notifier)
+            .load(force: true);
+        await ref
+            .read(employeeProjectsControllerProvider.notifier)
+            .load(force: true);
         await ref
             .read(employeeJobDetailControllerProvider.notifier)
             .load(jobId: activeJobId);

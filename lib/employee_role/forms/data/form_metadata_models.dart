@@ -3,6 +3,7 @@
 library;
 
 import 'package:flutter/foundation.dart';
+import 'package:red5/employee_role/forms/data/form_video_recorder_constraints.dart';
 
 @immutable
 final class FormMetadataSection {
@@ -345,4 +346,39 @@ Map<String, dynamic> _readMap(dynamic value) {
     );
   }
   return const <String, dynamic>{};
+}
+
+bool isQrFormField(FormMetadataField field) {
+  if (!field.isVisible) return false;
+  final api = field.fieldType.trim().toLowerCase();
+  final apiName = field.apiName.trim().toLowerCase();
+  final label = field.label.trim().toLowerCase();
+
+  if (api.contains('qr') ||
+      apiName.contains('qr') ||
+      label.contains('qr code') ||
+      label.contains('scan qr') ||
+      label == 'qr') {
+    return true;
+  }
+  return false;
+}
+
+bool formMetadataHasQrFields(Map<String, dynamic> metadata) {
+  for (final section in parseFormMetadataSections(metadata)) {
+    for (final field in section.fields) {
+      if (isQrFormField(field)) return true;
+    }
+  }
+  return false;
+}
+
+bool isVideoFormField(FormMetadataField field) {
+  if (!field.isVisible) return false;
+  final api = field.fieldType.trim().toLowerCase();
+  final apiName = field.apiName.trim().toLowerCase();
+  final label = field.label.trim().toLowerCase();
+  if (isVideoRecorderFieldType(api)) return true;
+  if (apiName.contains('video') || label.contains('video')) return true;
+  return false;
 }

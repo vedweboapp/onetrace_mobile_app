@@ -44,6 +44,8 @@ class DrawingCanvasArgs {
     this.projectName,
     this.projectId,
     this.levelId,
+    this.embeddedLevelPlots = const [],
+    this.viewOnly = false,
   });
 
   final String title;
@@ -56,6 +58,12 @@ class DrawingCanvasArgs {
   final String? projectId;
   final String? levelId;
 
+  /// Preloaded plot/pin markup (e.g. operative job drawings) — skips level API fetch.
+  final List<Map<String, dynamic>> embeddedLevelPlots;
+
+  /// Read-only preview — hides editing tools and submit controls.
+  final bool viewOnly;
+
   Map<String, dynamic> toExtra() {
     final t = title.trim();
     final fp = (filePath ?? '').trim();
@@ -64,6 +72,9 @@ class DrawingCanvasArgs {
     final pn = (projectName ?? '').trim();
     final pid = (projectId ?? '').trim();
     final lid = (levelId ?? '').trim();
+    final plots = embeddedLevelPlots
+        .map((plot) => Map<String, dynamic>.from(plot))
+        .toList(growable: false);
     return <String, dynamic>{
       if (t.isNotEmpty) 'title': t,
       if (fp.isNotEmpty) 'filePath': fp,
@@ -72,6 +83,8 @@ class DrawingCanvasArgs {
       if (pn.isNotEmpty) 'projectName': pn,
       if (pid.isNotEmpty) 'projectId': pid,
       if (lid.isNotEmpty) 'levelId': lid,
+      if (plots.isNotEmpty) 'embeddedLevelPlots': plots,
+      if (viewOnly) 'viewOnly': true,
     };
   }
 
@@ -119,6 +132,8 @@ class DrawingCanvasPage extends ConsumerStatefulWidget {
     this.projectName,
     this.projectId,
     this.levelId,
+    this.embeddedLevelPlots = const [],
+    this.viewOnly = false,
   });
 
   static const path = '/drawing-canvas';
@@ -138,6 +153,8 @@ class DrawingCanvasPage extends ConsumerStatefulWidget {
   final String? projectName;
   final String? projectId;
   final String? levelId;
+  final List<Map<String, dynamic>> embeddedLevelPlots;
+  final bool viewOnly;
 
   @override
   ConsumerState<DrawingCanvasPage> createState() => _DrawingCanvasPageState();
@@ -275,9 +292,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
 
   /// Draw-tool overlay captures all pointers (select / line / place pin).
   bool get _overlayDrawListenerActive =>
-      _selectedTool == _CanvasTool.selectArea ||
-      _selectedTool == _CanvasTool.line ||
-      _selectedTool == _CanvasTool.location;
+      !widget.viewOnly &&
+      (_selectedTool == _CanvasTool.selectArea ||
+          _selectedTool == _CanvasTool.line ||
+          _selectedTool == _CanvasTool.location);
 
   @override
   void initState() {
@@ -309,6 +327,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     _projectId = (widget.projectId ?? '').trim();
     _levelId = (widget.levelId ?? '').trim();
+    if (widget.viewOnly) {
+      _selectedTool = _CanvasTool.pin;
+    }
     _loadPinStatuses();
     _loadGroupAndCompositeOptions();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2259,6 +2280,12 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   Future<void> _loadSavedLevelMarkup() async {
+    final embedded = widget.embeddedLevelPlots;
+    if (embedded.isNotEmpty) {
+      await _applyPlotsPayload(embedded);
+      return;
+    }
+
     final projectId = (_projectId ?? '').trim();
     final levelId = (_levelId ?? '').trim();
     if (projectId.isEmpty || levelId.isEmpty) return;
@@ -2273,8 +2300,19 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           .cast<ProjectLevelItem?>()
           .firstWhere((e) => e != null, orElse: () => null);
       if (!mounted || level == null) return;
+      await _applyPlotsPayload(level.plots);
+    } catch (_) {
+      // keep UI editable even if preload fails
+    }
+  }
+
+  Future<void> _applyPlotsPayload(List<Map<String, dynamic>> plots) async {
+    if (_activeContentAspectRatio == null && _hasFile) {
+      await _refreshActiveContentAspectRatio();
+    }
+    try {
       final loaded = <_PlotRegion>[];
-      for (final plot in level.plots) {
+      for (final plot in plots) {
         final name = (plot['name'] ?? '').toString().trim();
         final plotPageRaw = plot['page'];
         final plotPage = plotPageRaw is int
@@ -3570,7 +3608,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       ),
       body: Column(
         children: [
-          Container(
+          if (!widget.viewOnly)
+            Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 10),
             decoration: const BoxDecoration(
@@ -3731,169 +3770,170 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               ),
             ),
           ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF7F7F8),
-              border: Border(top: BorderSide(color: Color(0xFFE4E4E5))),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                children: [
-                  AppTextField(
-                    controller: _blockController,
-                    hintText: 'Name :',
-                    fillColor: const Color(0xFFF2F2F3),
-                    borderRadius: 12,
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    value: _groupOptions.any((g) => g.id == _selectedGroupId)
-                        ? _selectedGroupId
-                        : null,
-                    items: _groupOptions
-                        .map(
-                          (g) => DropdownMenuItem<int>(
-                            value: g.id,
-                            child: Text(g.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: _isLoadingGroups
-                        ? null
-                        : (value) {
-                            setState(() {
-                              _selectedGroupId = value;
-                              GroupItemOption? selected;
-                              for (final g in _groupOptions) {
-                                if (g.id == value) {
-                                  selected = g;
-                                  break;
-                                }
-                              }
-                              _groupController.text = selected?.name ?? '';
-                              _selectedCompositeItemId = null;
-                              _productController.clear();
-                            });
-                            unawaited(_loadCompositeItemsForGroup(value));
-                          },
-                    decoration: InputDecoration(
-                      hintText: _isLoadingGroups
-                          ? 'Loading groups...'
-                          : 'Group :',
-                      filled: true,
+          if (!widget.viewOnly)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF7F7F8),
+                border: Border(top: BorderSide(color: Color(0xFFE4E4E5))),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  children: [
+                    AppTextField(
+                      controller: _blockController,
+                      hintText: 'Name :',
                       fillColor: const Color(0xFFF2F2F3),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      border: const OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                      ),
+                      borderRadius: 12,
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    value:
-                        _productOptions.any(
-                          (item) => item.id == _selectedCompositeItemId,
-                        )
-                        ? _selectedCompositeItemId
-                        : null,
-                    items: _productOptions
-                        .map(
-                          (p) => DropdownMenuItem<int>(
-                            value: p.id,
-                            child: Text(
-                              p.abbreviation.trim().isNotEmpty
-                                  ? '${p.abbreviation.trim()} · ${p.name}'
-                                  : p.name,
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      value: _groupOptions.any((g) => g.id == _selectedGroupId)
+                          ? _selectedGroupId
+                          : null,
+                      items: _groupOptions
+                          .map(
+                            (g) => DropdownMenuItem<int>(
+                              value: g.id,
+                              child: Text(g.name),
                             ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged:
-                        (_selectedGroupId == null || _isLoadingCompositeItems)
-                        ? null
-                        : (value) {
-                            setState(() {
-                              _selectedCompositeItemId = value;
-                              CompositeItemOption? selected;
-                              for (final item in _productOptions) {
-                                if (item.id == value) {
-                                  selected = item;
-                                  break;
+                          )
+                          .toList(),
+                      onChanged: _isLoadingGroups
+                          ? null
+                          : (value) {
+                              setState(() {
+                                _selectedGroupId = value;
+                                GroupItemOption? selected;
+                                for (final g in _groupOptions) {
+                                  if (g.id == value) {
+                                    selected = g;
+                                    break;
+                                  }
                                 }
-                              }
-                              _productController.text = selected?.name ?? '';
-                            });
-                          },
-                    decoration: InputDecoration(
-                      hintText: _selectedGroupId == null
-                          ? 'Select group first'
-                          : (_isLoadingCompositeItems
-                                ? 'Loading products...'
-                                : 'Product :'),
-                      filled: true,
-                      fillColor: const Color(0xFFF2F2F3),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      border: const OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide(color: Color(0xFFE3E3E5)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Text(
-                        'VARIATION',
-                        style: AppFonts.labelMedium(color: AppColors.inkStrong)
-                            .copyWith(
-                              letterSpacing: 1.0,
-                              fontWeight: FontWeight.w800,
-                            ),
-                      ),
-                      const Spacer(),
-                      CupertinoSwitch(
-                        value: _variationOn,
-                        onChanged: (v) => setState(() => _variationOn = v),
-                        activeTrackColor: const Color(0xFF22C55E),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: FilledButton.icon(
-                      onPressed: _isSubmitting ? null : _submitLevelPlots,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F1013),
-                        foregroundColor: AppColors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                                _groupController.text = selected?.name ?? '';
+                                _selectedCompositeItemId = null;
+                                _productController.clear();
+                              });
+                              unawaited(_loadCompositeItemsForGroup(value));
+                            },
+                      decoration: InputDecoration(
+                        hintText: _isLoadingGroups
+                            ? 'Loading groups...'
+                            : 'Group :',
+                        filled: true,
+                        fillColor: const Color(0xFFF2F2F3),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        border: const OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide(color: Color(0xFFE3E3E5)),
                         ),
                       ),
-                      icon: const Icon(Icons.send_rounded, size: 18),
-                      label: Text(
-                        _isSubmitting ? 'Saving...' : 'Submit',
-                        style: AppFonts.titleSmall(
-                          color: AppColors.white,
-                        ).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      value:
+                          _productOptions.any(
+                            (item) => item.id == _selectedCompositeItemId,
+                          )
+                          ? _selectedCompositeItemId
+                          : null,
+                      items: _productOptions
+                          .map(
+                            (p) => DropdownMenuItem<int>(
+                              value: p.id,
+                              child: Text(
+                                p.abbreviation.trim().isNotEmpty
+                                    ? '${p.abbreviation.trim()} · ${p.name}'
+                                    : p.name,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged:
+                          (_selectedGroupId == null || _isLoadingCompositeItems)
+                          ? null
+                          : (value) {
+                              setState(() {
+                                _selectedCompositeItemId = value;
+                                CompositeItemOption? selected;
+                                for (final item in _productOptions) {
+                                  if (item.id == value) {
+                                    selected = item;
+                                    break;
+                                  }
+                                }
+                                _productController.text = selected?.name ?? '';
+                              });
+                            },
+                      decoration: InputDecoration(
+                        hintText: _selectedGroupId == null
+                            ? 'Select group first'
+                            : (_isLoadingCompositeItems
+                                  ? 'Loading products...'
+                                  : 'Product :'),
+                        filled: true,
+                        fillColor: const Color(0xFFF2F2F3),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        border: const OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide(color: Color(0xFFE3E3E5)),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Text(
+                          'VARIATION',
+                          style: AppFonts.labelMedium(color: AppColors.inkStrong)
+                              .copyWith(
+                                letterSpacing: 1.0,
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                        const Spacer(),
+                        CupertinoSwitch(
+                          value: _variationOn,
+                          onChanged: (v) => setState(() => _variationOn = v),
+                          activeTrackColor: const Color(0xFF22C55E),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: FilledButton.icon(
+                        onPressed: _isSubmitting ? null : _submitLevelPlots,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF0F1013),
+                          foregroundColor: AppColors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: const Icon(Icons.send_rounded, size: 18),
+                        label: Text(
+                          _isSubmitting ? 'Saving...' : 'Submit',
+                          style: AppFonts.titleSmall(
+                            color: AppColors.white,
+                          ).copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

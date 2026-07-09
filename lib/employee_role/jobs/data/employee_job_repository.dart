@@ -10,6 +10,7 @@ import 'package:red5/core/network/network_error_utils.dart';
 import 'package:red5/employee_role/jobs/data/assigned_jobs_filter.dart';
 
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/employee_role/offline/operative_offline_store.dart';
@@ -33,10 +34,7 @@ final employeeJobRepositoryProvider = Provider<EmployeeJobRepository>((ref) {
 });
 
 final class EmployeeJobsFetchResult {
-  const EmployeeJobsFetchResult({
-    required this.jobs,
-    this.fromCache = false,
-  });
+  const EmployeeJobsFetchResult({required this.jobs, this.fromCache = false});
 
   final List<EmployeeJobSummary> jobs;
   final bool fromCache;
@@ -71,13 +69,6 @@ final class EmployeeJobRepository {
 
   static final _dayFormat = DateFormat('MMM d');
 
-
-
-  Future<List<EmployeeJobSummary>> fetchJobs() async {
-    final result = await fetchJobsWithSource();
-    return result.jobs;
-  }
-
   Future<EmployeeJobsFetchResult> fetchJobsWithSource() async {
     try {
       final rows = await AssignedJobsFilter.fetchAssignedJobs(
@@ -87,7 +78,9 @@ final class EmployeeJobRepository {
       );
       await _offlineStore.cacheJobList(rows);
       if (kDebugMode) {
-        JobCompletionDebugLog.info('Parsed ${rows.length} job(s) from GET /jobs/');
+        JobCompletionDebugLog.info(
+          'Parsed ${rows.length} job(s) from GET /jobs/',
+        );
         for (final job in rows) {
           final assignments = JobFormAssignment.listFromJobRaw(job.raw);
           if (assignments.isEmpty) continue;
@@ -116,6 +109,20 @@ final class EmployeeJobRepository {
     }
   }
 
+  Future<List<EmployeeJobSummary>> fetchJobs() async {
+    final result = await fetchJobsWithSource();
+    return result.jobs;
+  }
+
+  /// SQLite-only read for instant operative home paint (no network).
+  Future<List<EmployeeJobSummary>> readCachedJobSummaries() async {
+    final cached = AssignedJobsFilter.onlyAssignedToCurrentUser(
+      await _offlineStore.readCachedJobList(),
+      storage: _storage,
+    );
+    return cached.map(_mapSummary).toList(growable: false);
+  }
+
   Future<EmployeeJobDetail> fetchJobDetail({int? jobId}) async {
     final result = await fetchJobDetailWithSource(jobId: jobId);
     return result.detail;
@@ -130,10 +137,9 @@ final class EmployeeJobRepository {
 
     try {
       final job = await _jobsApi.fetchJobById(jobId.toString());
-      final allowed = AssignedJobsFilter.onlyAssignedToCurrentUser(
-        [job],
-        storage: _storage,
-      );
+      final allowed = AssignedJobsFilter.onlyAssignedToCurrentUser([
+        job,
+      ], storage: _storage);
       if (allowed.isEmpty) {
         throw StateError('Job is not assigned to the current user.');
       }
@@ -160,15 +166,87 @@ final class EmployeeJobRepository {
     return JobLinkedFormSummary.listFromJobRaw(job.raw);
   }
 
+  /// Drawing levels from assigned jobs (cache-first, then network per job).
+  Future<List<EmployeeJobDrawingListItem>> fetchDrawingItemsForJobs(
+    List<int> jobIds,
+  ) async {
+    if (jobIds.isEmpty) return const [];
 
+    final items = <EmployeeJobDrawingListItem>[];
+    for (final jobId in jobIds) {
+      JobRead? raw;
+      try {
+        raw = await _jobsApi.fetchJobById(jobId.toString());
+        final allowed = AssignedJobsFilter.onlyAssignedToCurrentUser([
+          raw,
+        ], storage: _storage);
+        if (allowed.isEmpty) continue;
+        await _offlineStore.cacheJobDetail(raw);
+      } catch (error) {
+        if (_connectivity.isOnline && !isRecoverableNetworkError(error)) {
+          continue;
+        }
+        raw = await _offlineStore.readCachedJobDetail(jobId);
+      }
+      if (raw == null) continue;
+
+      final detail = _mapJobRead(raw);
+      final siteName = detail.siteDetail?.name ?? detail.block;
+      for (final level in detail.levels) {
+        if (level.drawingFileUrl?.trim().isNotEmpty != true) continue;
+        items.add(
+          EmployeeJobDrawingListItem(
+            jobId: detail.id,
+            jobTitle: detail.title,
+            siteName: siteName,
+            projectName: detail.project,
+            projectId: detail.projectId,
+            level: level,
+          ),
+        );
+      }
+    }
+
+    items.sort((a, b) {
+      final bySite = a.siteName.compareTo(b.siteName);
+      if (bySite != 0) return bySite;
+      final byOrder = a.level.order.compareTo(b.level.order);
+      if (byOrder != 0) return byOrder;
+      return a.level.name.compareTo(b.level.name);
+    });
+    return items;
+  }
+
+  List<EmployeeJobDrawingListItem> drawingListItemsForDetail(
+    EmployeeJobDetail job,
+  ) {
+    final siteName = job.siteDetail?.name ?? job.block;
+    final items = <EmployeeJobDrawingListItem>[];
+    for (final level in job.levels) {
+      if (level.drawingFileUrl?.trim().isNotEmpty != true) continue;
+      items.add(
+        EmployeeJobDrawingListItem(
+          jobId: job.id,
+          jobTitle: job.title,
+          siteName: siteName,
+          projectName: job.project,
+          projectId: job.projectId,
+          level: level,
+        ),
+      );
+    }
+    return items;
+  }
 
   EmployeeJobSummary _mapSummary(JobRead job) {
-
     final status = _mapStatus(job);
+
+    final siteName = _readSiteName(job);
+    final serial = job.raw['job_serial_number']?.toString().trim();
 
     return EmployeeJobSummary(
       id: job.id,
-      title: job.title,
+      title: _operativeJobTitle(job, siteName: siteName, serial: serial),
       status: status,
       earning: _formatEarning(job),
       location: _formatLocation(job),
@@ -177,52 +255,82 @@ final class EmployeeJobRepository {
       startDate: job.startDate?.toLocal(),
       siteName: _readSiteName(job),
       projectName: _readProjectName(job),
+      projectId: job.project,
     );
-
   }
 
-
-
   EmployeeJobDetail _mapJobRead(JobRead job) {
-
     final checklist = _checklistFromJob(job);
 
     final items = _itemsFromJob(job);
 
-    final formAssignments = JobFormAssignment.listFromJobRaw(job.raw);
-    final jobForms = JobLinkedFormSummary.listFromJobRaw(job.raw);
+    final levels = parseEmployeeJobDrawingLevels(job.raw['levels']);
+    final pinFormTasks = collectPinFormTasks(levels);
+    final siteDetail = parseEmployeeJobSiteDetail(job.raw['site']);
+
+    var formAssignments = JobFormAssignment.listFromJobRaw(job.raw);
+    var jobForms = JobLinkedFormSummary.listFromJobRaw(job.raw);
+
+    if (pinFormTasks.isNotEmpty) {
+      final pinAssignments = pinFormTasks
+          .map(
+            (task) => JobFormAssignment(
+              jobFormId: task.jobFormId ?? task.pinId,
+              formId: task.formId,
+            ),
+          )
+          .toList(growable: false);
+      formAssignments = JobFormAssignment.mergeByFormId(
+        formAssignments,
+        pinAssignments,
+      );
+      if (jobForms.isEmpty) {
+        jobForms = pinFormTasks
+            .map(
+              (task) => JobLinkedFormSummary(
+                formId: task.formId,
+                name: '${task.formName} — ${task.pinLabel}',
+                jobFormId: task.jobFormId ?? task.pinId,
+              ),
+            )
+            .toList(growable: false);
+      }
+    }
+
     final formIds = jobForms.isNotEmpty
         ? jobForms.map((form) => form.formId).toList(growable: false)
+        : pinFormTasks.isNotEmpty
+        ? pinFormTasks.map((task) => task.formId).toList(growable: false)
         : formAssignments.isNotEmpty
-            ? formAssignments.map((a) => a.formId).toList(growable: false)
-            : _formIdsFromJob(job);
+        ? formAssignments.map((a) => a.formId).toList(growable: false)
+        : _formIdsFromJob(job);
+
+    final serial = job.raw['job_serial_number']?.toString().trim();
+    final siteName = siteDetail?.name ?? job.siteName;
 
     return EmployeeJobDetail(
-
       id: job.id,
 
-      title: job.title,
+      title: _operativeJobTitle(job, siteName: siteName, serial: serial),
 
       currentStatus: job.displayStatus.toUpperCase(),
 
-      project: job.projectName ??
-
+      project:
+          job.projectName ??
           (job.project != null ? 'Project ${job.project}' : '—'),
 
-      client: job.clientName ??
-
+      client:
+          job.clientName ??
           (job.client != null ? 'Client ${job.client}' : 'Client'),
 
       siteContact: _readSiteContact(job),
 
-      block: job.siteName ?? job.displayLocation,
+      block: siteName ?? job.displayLocation,
 
-      plot: job.siteName ?? job.displayLocation,
+      plot: _operativePlotLabel(levels, job),
 
       description: job.description?.trim().isNotEmpty == true
-
           ? job.description!.trim()
-
           : 'No description provided.',
 
       items: items,
@@ -237,12 +345,37 @@ final class EmployeeJobRepository {
       jobForms: jobForms,
 
       projectId: job.project,
-
+      levels: levels,
+      pinFormTasks: pinFormTasks,
+      siteDetail: siteDetail,
+      jobSerialNumber: serial?.isNotEmpty == true ? serial : null,
     );
-
   }
 
+  String _operativeJobTitle(JobRead job, {String? siteName, String? serial}) {
+    final site = siteName?.trim();
+    if (site != null && site.isNotEmpty) return site;
+    if (serial != null && serial.isNotEmpty) return serial;
+    final title = job.title.trim();
+    if (title.isNotEmpty && title.toLowerCase() != 'untitled job') {
+      return title;
+    }
+    return job.displayLocation;
+  }
 
+  String _operativePlotLabel(
+    List<EmployeeJobDrawingLevel> levels,
+    JobRead job,
+  ) {
+    if (levels.isEmpty) return job.siteName ?? job.displayLocation;
+    final plotCount = levels.fold<int>(
+      0,
+      (sum, level) => sum + level.plots.length,
+    );
+    final pinCount = levels.fold<int>(0, (sum, level) => sum + level.pinCount);
+    if (plotCount == 0) return '$pinCount pin${pinCount == 1 ? '' : 's'}';
+    return '$plotCount plot${plotCount == 1 ? '' : 's'} • $pinCount pin${pinCount == 1 ? '' : 's'}';
+  }
 
   List<int> _formIdsFromJob(JobRead job) {
     final ids = <int>{...job.formIds};
@@ -364,8 +497,8 @@ final class EmployeeJobRepository {
     if (quantity == null) return '—';
     final qtyText = quantity is num
         ? quantity % 1 == 0
-            ? quantity.toInt().toString()
-            : quantity.toString()
+              ? quantity.toInt().toString()
+              : quantity.toString()
         : quantity.toString().trim();
     if (qtyText.isEmpty) return '—';
 
@@ -391,50 +524,35 @@ final class EmployeeJobRepository {
     return 'default';
   }
 
-
-
   String _readSiteContact(JobRead job) {
-
     final siteRaw = job.raw['site'];
 
     if (siteRaw is Map) {
-
       final contacts = siteRaw['contacts'];
 
       if (contacts is List && contacts.isNotEmpty) {
-
         final first = contacts.first;
 
         if (first is Map) {
-
           final phone = first['phone']?.toString().trim();
 
           if (phone != null && phone.isNotEmpty) return phone;
-
         }
-
       }
-
     }
 
     final clientRaw = job.raw['client'];
 
     if (clientRaw is Map) {
-
       final phone = clientRaw['phone']?.toString().trim();
 
       if (phone != null && phone.isNotEmpty) return phone;
-
     }
 
     return '—';
-
   }
 
-
-
   EmployeeJobStatus _mapStatus(JobRead job) {
-
     if (job.completedAt != null) return EmployeeJobStatus.completed;
 
     final status = job.displayStatus.toUpperCase();
@@ -442,30 +560,21 @@ final class EmployeeJobRepository {
     if (status.contains('PROGRESS')) return EmployeeJobStatus.inProgress;
 
     if (status.contains('TODO') || status.contains('TO DO')) {
-
       return EmployeeJobStatus.upcoming;
-
     }
 
     if (status.contains('COMPLETE')) return EmployeeJobStatus.completed;
 
     return EmployeeJobStatus.pending;
-
   }
 
-
-
   String _formatEarning(JobRead job) {
-
     final total = job.total;
 
     if (total == null) return '—';
 
     return '£ ${total.toStringAsFixed(2)}';
-
   }
-
-
 
   static String? _readSiteName(JobRead job) {
     final site = job.siteName?.trim();
@@ -488,13 +597,9 @@ final class EmployeeJobRepository {
     if (project != null && project.isNotEmpty) return '$site · $project';
 
     return site;
-
   }
 
-
-
   String _formatSchedule(JobRead job) {
-
     final start = job.startDate?.toLocal();
 
     if (start == null) return 'Schedule TBD';
@@ -512,14 +617,11 @@ final class EmployeeJobRepository {
     if (day == today.add(const Duration(days: 1))) return 'Tomorrow · $time';
 
     return '${_dayFormat.format(start)} · $time';
-
   }
 
-
-
   List<EmployeeSafetyChecklistItem> _checklistFromJob(JobRead job) {
-    final checklists = JobChecklistRead.tryFromMap(job.raw['checklists']) ??
-        job.checklists;
+    final checklists =
+        JobChecklistRead.tryFromMap(job.raw['checklists']) ?? job.checklists;
     if (checklists == null || checklists.items.isEmpty) {
       return const [];
     }
@@ -532,6 +634,14 @@ final class EmployeeJobRepository {
             isChecked: item.isChecked,
             isRequired: item.isRequired,
             sequence: item.sequence,
+            fileUrl: resolveEmployeeDrawingFileUrl(item.file),
+            isMarked: item.isMarked,
+            requiresConcentricPoint: item.requiresConcentricPoint,
+            concentricPointConfirmed:
+                item.requiresConcentricPoint &&
+                    (item.isMarked || (item.concentricPoint && item.isChecked))
+                ? true
+                : null,
           ),
         )
         .toList(growable: false);
@@ -561,8 +671,8 @@ final class EmployeeJobRepository {
     }
 
     final job = await _jobsApi.fetchJobById(jobId.toString());
-    final payload = JobWritePayload.buildFromJobRead(
-      job,
+    final payload = JobWritePayload.buildChecklistOnlyUpdate(
+      title: job.title,
       checklists: _checklistWritePayload(items),
     );
 
@@ -587,11 +697,7 @@ final class EmployeeJobRepository {
     bool fromSync = false,
   }) async {
     final items = _checklistItemsFromPayload(itemsPayload);
-    return updateJobChecklists(
-      jobId: jobId,
-      items: items,
-      fromSync: fromSync,
-    );
+    return updateJobChecklists(jobId: jobId, items: items, fromSync: fromSync);
   }
 
   List<EmployeeSafetyChecklistItem> _checklistItemsFromPayload(
@@ -614,6 +720,16 @@ final class EmployeeJobRepository {
               String value => int.tryParse(value) ?? 0,
               _ => 0,
             },
+            fileUrl: map['fileUrl']?.toString(),
+            isMarked: map['isMarked'] == true,
+            requiresConcentricPoint: map.containsKey('requiresConcentricPoint')
+                ? map['requiresConcentricPoint'] == true
+                : map['isRequired'] != false,
+            concentricPointConfirmed: switch (map['concentricPointConfirmed']) {
+              true => true,
+              false => false,
+              _ => null,
+            },
           );
         })
         .whereType<EmployeeSafetyChecklistItem>()
@@ -622,33 +738,39 @@ final class EmployeeJobRepository {
 
   List<Map<String, dynamic>> _checklistPayloadMaps(
     List<EmployeeSafetyChecklistItem> items,
-  ) =>
-      items
-          .map(
-            (item) => <String, dynamic>{
-              'id': item.id,
-              'title': item.title,
-              'isChecked': item.isChecked,
-              'isRequired': item.isRequired,
-              'sequence': item.sequence,
-            },
-          )
-          .toList(growable: false);
+  ) => items
+      .map(
+        (item) => <String, dynamic>{
+          'id': item.id,
+          'title': item.title,
+          'isChecked': item.isChecked,
+          'isRequired': item.isRequired,
+          'sequence': item.sequence,
+          if (item.fileUrl != null) 'fileUrl': item.fileUrl,
+          'isMarked': item.isMarked,
+          'requiresConcentricPoint': item.requiresConcentricPoint,
+          if (item.concentricPointConfirmed != null)
+            'concentricPointConfirmed': item.concentricPointConfirmed,
+        },
+      )
+      .toList(growable: false);
 
   List<Map<String, dynamic>> _checklistWritePayload(
     List<EmployeeSafetyChecklistItem> items,
-  ) =>
-      items
-          .map(
-            (item) => JobChecklistItemRead(
-              id: int.tryParse(item.id) ?? 0,
-              title: item.title,
-              sequence: item.sequence,
-              isRequired: item.isRequired,
-              isChecked: item.isChecked,
-            ).toWriteJson(),
-          )
-          .toList(growable: false);
+  ) => items
+      .map(
+        (item) => JobChecklistItemRead(
+          id: int.tryParse(item.id) ?? 0,
+          title: item.title,
+          sequence: item.sequence,
+          isRequired: item.isRequired,
+          isChecked: item.isChecked,
+          file: item.fileUrl,
+          isMarked: item.isMarked || item.isChecked,
+          concentricPoint: item.submissionConcentricPoint,
+        ).toWriteJson(),
+      )
+      .toList(growable: false);
 
   static String _primaryActionLabel(EmployeeJobStatus status) {
     return switch (status) {
@@ -657,6 +779,67 @@ final class EmployeeJobRepository {
       EmployeeJobStatus.pending => 'Start Job',
       EmployeeJobStatus.completed => 'View Details',
     };
+  }
+
+  /// Saves checklist + moves job to In Progress in one PUT (operative Start Job).
+  Future<JobRead> startJobWithChecklist({
+    required int jobId,
+    required List<EmployeeSafetyChecklistItem> items,
+    bool fromSync = false,
+  }) async {
+    if (!_connectivity.isOnline && !fromSync) {
+      await _syncQueue.enqueue(
+        type: OperativeSyncOperationType.jobChecklistUpdate,
+        payload: <String, dynamic>{
+          'jobId': jobId,
+          'items': _checklistPayloadMaps(items),
+        },
+      );
+      await _syncQueue.enqueue(
+        type: OperativeSyncOperationType.jobStarted,
+        payload: <String, dynamic>{'jobId': jobId},
+      );
+      final cached = await _offlineStore.readCachedJobDetail(jobId);
+      if (cached != null) return cached;
+      return JobRead(
+        id: jobId,
+        title: 'Job $jobId',
+        raw: <String, dynamic>{'id': jobId, 'title': 'Job $jobId'},
+      );
+    }
+
+    final job = await _jobsApi.fetchJobById(jobId.toString());
+    if (job.completedAt != null) return job;
+
+    final statusName = _operativeJobStatusName(job);
+    if (_isInProgressJobStatusName(statusName)) {
+      return updateJobChecklists(
+        jobId: jobId,
+        items: items,
+        fromSync: fromSync,
+      );
+    }
+
+    final inProgressStatusId = await _requireInProgressJobStatusId();
+    final payload = JobWritePayload.buildOperativeJobStart(
+      title: job.title,
+      checklists: _checklistWritePayload(items),
+      inProgressJobStatusId: inProgressStatusId,
+    );
+
+    JobCompletionDebugLog.api(
+      label: 'Start job with checklist',
+      method: 'PUT',
+      url: '/api/v1/jobs/$jobId/',
+      request: payload,
+    );
+
+    final updated = await _jobsApi.updateJob(
+      jobId: jobId.toString(),
+      payload: payload,
+    );
+    await _offlineStore.cacheJobDetail(updated);
+    return updated;
   }
 
   /// Persists operative job start to the API (`job_status` → In Progress).
@@ -682,34 +865,23 @@ final class EmployeeJobRepository {
     );
     final job = await _jobsApi.fetchJobById(jobId.toString());
     if (job.completedAt != null) {
-      JobCompletionDebugLog.info('Job $jobId already completed — skipping start PUT');
+      JobCompletionDebugLog.info(
+        'Job $jobId already completed — skipping start PUT',
+      );
       return job;
     }
 
-    final currentStatus = job.displayStatus.trim().toUpperCase();
-    if (currentStatus.contains('PROGRESS')) {
+    final statusName = _operativeJobStatusName(job);
+    if (_isInProgressJobStatusName(statusName)) {
       JobCompletionDebugLog.info('Job $jobId already in progress on server');
       return job;
     }
 
-    int? inProgressStatusId;
-    try {
-      inProgressStatusId = await _resolveJobStatusId(
-        matches: (name) =>
-            name.contains('in progress') ||
-            (name.contains('progress') && !name.contains('not')),
-      );
-      JobCompletionDebugLog.info('Resolved in-progress job_status id=$inProgressStatusId');
-    } catch (_) {
-      JobCompletionDebugLog.info('job_status lookup failed — keeping current status id');
-      inProgressStatusId = job.jobStatus;
-    }
+    final inProgressStatusId = await _requireInProgressJobStatusId();
 
-    if (inProgressStatusId == null) return job;
-
-    final payload = JobWritePayload.buildFromJobRead(
-      job,
-      jobStatusOverride: inProgressStatusId,
+    final payload = JobWritePayload.buildStatusOnlyUpdate(
+      title: job.title,
+      jobStatusId: inProgressStatusId,
     );
 
     JobCompletionDebugLog.api(
@@ -719,7 +891,10 @@ final class EmployeeJobRepository {
       request: payload,
     );
 
-    final updated = await _jobsApi.updateJob(jobId: jobId.toString(), payload: payload);
+    final updated = await _jobsApi.updateJob(
+      jobId: jobId.toString(),
+      payload: payload,
+    );
     await _offlineStore.cacheJobDetail(updated);
 
     JobCompletionDebugLog.api(
@@ -769,20 +944,34 @@ final class EmployeeJobRepository {
       return job;
     }
 
-    int? completedStatusId = job.jobStatus;
-    try {
-      completedStatusId = await _resolveJobStatusId(
-        matches: (name) => name.contains('complete') && !name.contains('incomplete'),
+    final incompletePins = countIncompleteAssignedPins(
+      parseEmployeeJobDrawingLevels(job.raw['levels']),
+    );
+    if (incompletePins > 0) {
+      throw StateError(
+        incompletePins == 1
+            ? 'Complete the remaining pin form before finishing this job.'
+            : 'Complete all $incompletePins pin forms before finishing this job.',
       );
-      JobCompletionDebugLog.info('Resolved completed job_status id=$completedStatusId');
+    }
+
+    int? completedStatusId;
+    try {
+      completedStatusId = await _resolveCompletedJobStatusId();
+      JobCompletionDebugLog.info(
+        'Resolved completed job_status id=$completedStatusId',
+      );
     } catch (_) {
-      JobCompletionDebugLog.info('job_status lookup failed — using completed_at only');
+      JobCompletionDebugLog.info(
+        'job_status lookup failed — using completed_at only',
+      );
     }
 
     final payload = JobWritePayload.buildFromJobRead(
       job,
       completedAt: DateTime.now(),
       jobStatusOverride: completedStatusId,
+      includeExistingChecklists: false,
     );
 
     JobCompletionDebugLog.api(
@@ -792,7 +981,10 @@ final class EmployeeJobRepository {
       request: payload,
     );
 
-    final updated = await _jobsApi.updateJob(jobId: jobId.toString(), payload: payload);
+    final updated = await _jobsApi.updateJob(
+      jobId: jobId.toString(),
+      payload: payload,
+    );
     await _offlineStore.cacheJobDetail(updated);
 
     JobCompletionDebugLog.api(
@@ -811,6 +1003,63 @@ final class EmployeeJobRepository {
     return updated;
   }
 
+  static String _operativeJobStatusName(JobRead job) {
+    final workflowStatus = job.raw['job_status'];
+    if (workflowStatus is Map) {
+      final statusMap = Map<String, dynamic>.from(
+        workflowStatus.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      final name = statusMap['status_name']?.toString().trim();
+      if (name != null && name.isNotEmpty) return name.toLowerCase();
+    }
+    return (job.jobPinStatus ?? '').trim().toLowerCase();
+  }
+
+  static bool _isCompletedJobStatusName(String name) {
+    final normalized = name.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    return normalized.contains('complete') &&
+        !normalized.contains('incomplete');
+  }
+
+  static bool _isInProgressJobStatusName(String name) {
+    final normalized = name.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    if (_isCompletedJobStatusName(normalized)) return false;
+    return normalized.contains('in progress') ||
+        normalized.contains('in-progress') ||
+        normalized == 'inprogress' ||
+        normalized == 'active';
+  }
+
+  Future<int> _requireInProgressJobStatusId() async {
+    final resolved = await _resolveInProgressJobStatusId();
+    if (resolved != null) return resolved;
+    throw StateError(
+      'No "In Progress" job status is configured. Ask your administrator to add one.',
+    );
+  }
+
+  Future<int?> _resolveInProgressJobStatusId() async {
+    final statuses = await _jobsApi.fetchJobStatusOptions();
+    const exactMatches = {
+      'in progress',
+      'in-progress',
+      'inprogress',
+      'active',
+    };
+    for (final status in statuses) {
+      final name = status.name.trim().toLowerCase();
+      if (_isCompletedJobStatusName(name)) continue;
+      if (exactMatches.contains(name)) return status.id;
+    }
+    return _resolveJobStatusId(matches: _isInProgressJobStatusName);
+  }
+
+  Future<int?> _resolveCompletedJobStatusId() async {
+    return _resolveJobStatusId(matches: _isCompletedJobStatusName);
+  }
+
   Future<int?> _resolveJobStatusId({
     required bool Function(String normalizedName) matches,
   }) async {
@@ -821,7 +1070,4 @@ final class EmployeeJobRepository {
     }
     return null;
   }
-
 }
-
-

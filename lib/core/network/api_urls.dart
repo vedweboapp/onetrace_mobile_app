@@ -133,7 +133,8 @@ abstract final class AppApiUrls {
   static String projectById(String id) => '$_v1/project/$id/';
 
   /// `GET` jobs linked to a project — `GET /project/{id}/jobs/`.
-  static String projectJobs(String projectId) => '$_v1/project/$projectId/jobs/';
+  static String projectJobs(String projectId) =>
+      '$_v1/project/$projectId/jobs/';
 
   /// `GET` list · `POST` create — server route is singular `invoice/`.
   static const String invoices = '$_v1/invoice/';
@@ -164,7 +165,8 @@ abstract final class AppApiUrls {
   static String jobSubmitForm(int jobId) => '$_v1/jobs/$jobId/submit-form/';
 
   /// `GET` all submitted forms for a job.
-  static String jobSubmittedForms(int jobId) => '$_v1/jobs/$jobId/submitted-forms/';
+  static String jobSubmittedForms(int jobId) =>
+      '$_v1/jobs/$jobId/submitted-forms/';
 
   /// `GET` one submission record for a job ([submissionId], not job or form id).
   static String jobSubmittedFormById(int jobId, int submissionId) =>
@@ -179,6 +181,9 @@ abstract final class AppApiUrls {
 
   /// `GET` job status metadata (dropdowns).
   static const String jobStatuses = '$_v1/job-status/';
+
+  /// `GET` [job-status_read] — single job status (`data.id`, `status_name`, …).
+  static String jobStatusById(String id) => '$_v1/job-status/$id/';
 
   /// `GET` [project-type_list] · `POST` [project-type_create]
   static const String projectTypes = '$_v1/project-type/';

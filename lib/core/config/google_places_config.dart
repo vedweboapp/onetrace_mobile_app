@@ -1,16 +1,12 @@
+import 'package:red5/core/config/google_api_config.dart';
+
 /// Google Places API configuration (Autocomplete + Place Details).
 abstract final class GooglePlacesConfig {
   GooglePlacesConfig._();
 
-  /// Default key used by the web purchase-order form.
-  /// Override at build time with `--dart-define=GOOGLE_PLACES_API_KEY=...`.
-  static const defaultApiKey = 'AIzaSyAAgbQXtNsrzIjldTTrrH8beWx7zO-HocI';
+  static String get apiKey => GoogleApiConfig.apiKey;
 
-  static const language = 'en-GB';
+  static String get language => GoogleApiConfig.language;
 
-  static String get apiKey {
-    const fromEnv = String.fromEnvironment('GOOGLE_PLACES_API_KEY');
-    if (fromEnv.isNotEmpty) return fromEnv;
-    return defaultApiKey;
-  }
+  static bool get isConfigured => GoogleApiConfig.isConfigured;
 }

@@ -51,7 +51,9 @@ void main() {
 
   test('JobRead.linkedFormTemplateIds reads forms[] id list', () {
     expect(
-      JobRead.linkedFormTemplateIds({'forms': [10, 11]}),
+      JobRead.linkedFormTemplateIds({
+        'forms': [10, 11],
+      }),
       [10, 11],
     );
   });
