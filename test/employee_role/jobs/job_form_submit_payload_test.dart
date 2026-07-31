@@ -7,6 +7,32 @@ import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
 
 void main() {
+  test('JobFormSubmitPayload sends job_pin_id for pin submit-form', () {
+    const payload = JobFormSubmitPayload(
+      jobPinId: 101,
+      status: 'submitted',
+      values: [
+        JobFormFieldValue(fieldId: 170, value: 'Admin'),
+        JobFormFieldValue(fieldId: 171, value: 'Something some description'),
+        JobFormFieldValue(fieldId: 172, value: 'test@mailinator.com'),
+      ],
+    );
+
+    expect(
+      payload.toFormBody(),
+      {
+        'job_pin_id': 101,
+        'status': 'submitted',
+        'values': jsonEncode([
+          {'field_id': 170, 'value': 'Admin'},
+          {'field_id': 171, 'value': 'Something some description'},
+          {'field_id': 172, 'value': 'test@mailinator.com'},
+        ]),
+      },
+    );
+    expect(payload.toFormBody().containsKey('job_form_id'), isFalse);
+  });
+
   test('JobFormSubmitPayload matches submit-form API contract', () {
     const payload = JobFormSubmitPayload(
       jobFormId: 6,
@@ -63,6 +89,21 @@ void main() {
     expect(values.last.value, 'photo.jpg');
   });
 
+  test('prepareJobFormValuesForApi keeps attachment rows with local file path', () {
+    final values = prepareJobFormValuesForApi([
+      const JobFormFieldValue(
+        fieldId: 41,
+        value: '',
+        fieldType: 'image_upload',
+        localFilePath: '/data/user/0/app/files/f41_photo.jpg',
+      ),
+    ]);
+
+    expect(values, hasLength(1));
+    expect(values.single.value, 'f41_photo.jpg');
+    expect(values.single.localFilePath, '/data/user/0/app/files/f41_photo.jpg');
+  });
+
   test('splitJobFormValuesForSubmit matches website scalar vs file split', () {
     final values = [
       const JobFormFieldValue(
@@ -86,6 +127,19 @@ void main() {
 
     expect(split.scalars.map((v) => v.fieldId), [42, 43, 47]);
     expect(split.attachments.map((v) => v.fieldId), [41, 46]);
+  });
+
+  test('buildJobFormSubmitRequestParts sends job_pin_id for level pin forms', () {
+    final parts = buildJobFormSubmitRequestParts(
+      jobPinId: 14,
+      status: 'submitted',
+      values: const [
+        JobFormFieldValue(fieldId: 1, value: 'answer'),
+      ],
+    );
+
+    expect(parts.formFields['job_pin_id'], 14);
+    expect(parts.formFields.containsKey('job_form_id'), isFalse);
   });
 
   test('buildJobFormSubmitRequestParts excludes files from values JSON', () {
@@ -264,6 +318,35 @@ void main() {
     expect(forms.last.formId, 5);
     expect(forms.last.jobFormId, 6);
     expect(forms.last.name, 'Safety Checklist');
+  });
+
+  test('JobLinkedFormSummary parses service job dynamic_form_id + is_submitted', () {
+    final forms = JobLinkedFormSummary.listFromJobRaw({
+      'forms': [
+        {
+          'job_form_id': 50,
+          'dynamic_form_id': 34,
+          'name': 'Project 2',
+          'is_submitted': false,
+          'submission_id': null,
+        },
+        {
+          'job_form_id': 51,
+          'dynamic_form_id': 72,
+          'name': 'water pump',
+          'is_submitted': true,
+          'submission_id': 9,
+        },
+      ],
+    });
+
+    expect(forms, hasLength(2));
+    expect(forms.first.formId, 34);
+    expect(forms.first.jobFormId, 50);
+    expect(forms.first.isSubmitted, isFalse);
+    expect(forms.last.formId, 72);
+    expect(forms.last.isSubmitted, isTrue);
+    expect(forms.last.submissionId, 9);
   });
 
   test('JobLinkedFormSummary.listFromJobRaw returns empty when forms missing', () {

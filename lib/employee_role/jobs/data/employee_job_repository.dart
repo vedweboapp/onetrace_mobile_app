@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:intl/intl.dart';
 
+import 'package:red5/core/database/technician_form_database.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/network/network_error_utils.dart';
@@ -13,6 +14,7 @@ import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
+import 'package:red5/employee_role/jobs/data/job_pin_completion.dart';
 import 'package:red5/employee_role/offline/operative_offline_store.dart';
 import 'package:red5/employee_role/offline/operative_sync_models.dart';
 
@@ -30,6 +32,7 @@ final employeeJobRepositoryProvider = Provider<EmployeeJobRepository>((ref) {
     ref.read(operativeOfflineStoreProvider),
     sl<ConnectivityService>(),
     ref.read(operativeSyncQueueProvider),
+    sl<TechnicianFormDatabase>(),
   );
 });
 
@@ -57,6 +60,7 @@ final class EmployeeJobRepository {
     this._offlineStore,
     this._connectivity,
     this._syncQueue,
+    this._formDatabase,
   );
 
   final QuoteProjectApiClient _jobsApi;
@@ -64,6 +68,7 @@ final class EmployeeJobRepository {
   final OperativeOfflineStore _offlineStore;
   final ConnectivityService _connectivity;
   final OperativeSyncQueue _syncQueue;
+  final TechnicianFormDatabase _formDatabase;
 
   static final _timeFormat = DateFormat.jm();
 
@@ -272,25 +277,14 @@ final class EmployeeJobRepository {
     var jobForms = JobLinkedFormSummary.listFromJobRaw(job.raw);
 
     if (pinFormTasks.isNotEmpty) {
-      final pinAssignments = pinFormTasks
-          .map(
-            (task) => JobFormAssignment(
-              jobFormId: task.jobFormId ?? task.pinId,
-              formId: task.formId,
-            ),
-          )
-          .toList(growable: false);
-      formAssignments = JobFormAssignment.mergeByFormId(
-        formAssignments,
-        pinAssignments,
-      );
       if (jobForms.isEmpty) {
         jobForms = pinFormTasks
             .map(
               (task) => JobLinkedFormSummary(
                 formId: task.formId,
                 name: '${task.formName} — ${task.pinLabel}',
-                jobFormId: task.jobFormId ?? task.pinId,
+                jobFormId: task.jobPinId,
+                submissionId: task.submissionId,
               ),
             )
             .toList(growable: false);
@@ -349,18 +343,36 @@ final class EmployeeJobRepository {
       pinFormTasks: pinFormTasks,
       siteDetail: siteDetail,
       jobSerialNumber: serial?.isNotEmpty == true ? serial : null,
+      jobCategory: EmployeeJobCategory.fromApi(job.raw['job_category']),
+      hasJobQrField: job.raw.containsKey('qr_code'),
     );
   }
 
   String _operativeJobTitle(JobRead job, {String? siteName, String? serial}) {
-    final site = siteName?.trim();
-    if (site != null && site.isNotEmpty) return site;
     if (serial != null && serial.isNotEmpty) return serial;
+
+    final site = siteName?.trim();
     final title = job.title.trim();
-    if (title.isNotEmpty && title.toLowerCase() != 'untitled job') {
-      return title;
+    final titleIsDistinctJobLabel =
+        title.isNotEmpty &&
+        title.toLowerCase() != 'untitled job' &&
+        (site == null ||
+            site.isEmpty ||
+            title.toLowerCase() != site.toLowerCase());
+    if (titleIsDistinctJobLabel) return title;
+
+    for (final candidate in <String?>[
+      job.pinName,
+      job.plotName,
+      job.itemName,
+      job.sectionName,
+    ]) {
+      final label = candidate?.trim();
+      if (label != null && label.isNotEmpty) return label;
     }
-    return job.displayLocation;
+
+    if (site != null && site.isNotEmpty) return site;
+    return job.displayId;
   }
 
   String _operativePlotLabel(
@@ -568,8 +580,24 @@ final class EmployeeJobRepository {
     return EmployeeJobStatus.pending;
   }
 
+  static double? _readDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    if (value == null) return null;
+    final cleaned = value.toString().trim().replaceAll(',', '');
+    return double.tryParse(cleaned);
+  }
+
   String _formatEarning(JobRead job) {
-    final total = job.total;
+    var total = job.total;
+    total ??=
+        _readDouble(job.raw['total_earning']) ??
+        _readDouble(job.raw['total_earnings']) ??
+        _readDouble(job.raw['job_amount']) ??
+        _readDouble(job.raw['total_amount']) ??
+        _readDouble(job.raw['job_total']) ??
+        _readDouble(job.raw['amount']) ??
+        _readDouble(job.raw['total']);
 
     if (total == null) return '—';
 
@@ -579,6 +607,14 @@ final class EmployeeJobRepository {
   static String? _readSiteName(JobRead job) {
     final site = job.siteName?.trim();
     if (site != null && site.isNotEmpty) return site;
+    final rawSite = job.raw['site'];
+    if (rawSite is Map) {
+      final map = Map<String, dynamic>.from(
+        rawSite.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final nested = map['site_name']?.toString().trim();
+      if (nested != null && nested.isNotEmpty) return nested;
+    }
     final location = job.displayLocation.trim();
     return location.isEmpty ? null : location;
   }
@@ -591,11 +627,8 @@ final class EmployeeJobRepository {
 
   String _formatLocation(JobRead job) {
     final site = _readSiteName(job) ?? job.displayLocation;
-
     final project = job.projectName?.trim();
-
-    if (project != null && project.isNotEmpty) return '$site · $project';
-
+    if (project != null && project.isNotEmpty) return '$site - $project';
     return site;
   }
 
@@ -647,7 +680,7 @@ final class EmployeeJobRepository {
         .toList(growable: false);
   }
 
-  /// Persists operative checklist completion via `PUT /jobs/{id}/`.
+  /// Persists operative checklist completion via `PATCH /jobs/{id}/`.
   Future<JobRead> updateJobChecklists({
     required int jobId,
     required List<EmployeeSafetyChecklistItem> items,
@@ -678,12 +711,12 @@ final class EmployeeJobRepository {
 
     JobCompletionDebugLog.api(
       label: 'Update job checklists',
-      method: 'PUT',
+      method: 'PATCH',
       url: '/api/v1/jobs/$jobId/',
       request: payload,
     );
 
-    final updated = await _jobsApi.updateJob(
+    final updated = await _jobsApi.patchJob(
       jobId: jobId.toString(),
       payload: payload,
     );
@@ -767,7 +800,7 @@ final class EmployeeJobRepository {
           isChecked: item.isChecked,
           file: item.fileUrl,
           isMarked: item.isMarked || item.isChecked,
-          concentricPoint: item.submissionConcentricPoint,
+          concentricPoint: item.isChecked,
         ).toWriteJson(),
       )
       .toList(growable: false);
@@ -781,7 +814,7 @@ final class EmployeeJobRepository {
     };
   }
 
-  /// Saves checklist + moves job to In Progress in one PUT (operative Start Job).
+  /// Saves checklist + moves job to In Progress in one PATCH (operative Start Job).
   Future<JobRead> startJobWithChecklist({
     required int jobId,
     required List<EmployeeSafetyChecklistItem> items,
@@ -829,12 +862,12 @@ final class EmployeeJobRepository {
 
     JobCompletionDebugLog.api(
       label: 'Start job with checklist',
-      method: 'PUT',
+      method: 'PATCH',
       url: '/api/v1/jobs/$jobId/',
       request: payload,
     );
 
-    final updated = await _jobsApi.updateJob(
+    final updated = await _jobsApi.patchJob(
       jobId: jobId.toString(),
       payload: payload,
     );
@@ -886,12 +919,12 @@ final class EmployeeJobRepository {
 
     JobCompletionDebugLog.api(
       label: 'Mark job started',
-      method: 'PUT',
+      method: 'PATCH',
       url: '/api/v1/jobs/$jobId/',
       request: payload,
     );
 
-    final updated = await _jobsApi.updateJob(
+    final updated = await _jobsApi.patchJob(
       jobId: jobId.toString(),
       payload: payload,
     );
@@ -899,7 +932,7 @@ final class EmployeeJobRepository {
 
     JobCompletionDebugLog.api(
       label: 'Mark job started',
-      method: 'PUT',
+      method: 'PATCH',
       url: '/api/v1/jobs/$jobId/',
       response: <String, dynamic>{
         'id': updated.id,
@@ -913,7 +946,11 @@ final class EmployeeJobRepository {
   }
 
   /// Persists operative job completion to the API so admin views stay in sync.
-  Future<JobRead> markJobCompleted(int jobId, {bool fromSync = false}) async {
+  Future<JobRead> markJobCompleted(
+    int jobId, {
+    bool fromSync = false,
+    Set<String> completedPinFormKeys = const {},
+  }) async {
     if (!_connectivity.isOnline && !fromSync) {
       await _syncQueue.enqueue(
         type: OperativeSyncOperationType.jobCompleted,
@@ -944,14 +981,22 @@ final class EmployeeJobRepository {
       return job;
     }
 
-    final incompletePins = countIncompleteAssignedPins(
-      parseEmployeeJobDrawingLevels(job.raw['levels']),
+    final levels = parseEmployeeJobDrawingLevels(job.raw['levels']);
+    await markReadyPinsCompleteStatus(
+      jobId: jobId,
+      levels: levels,
+      completedPinFormKeys: completedPinFormKeys,
     );
+    final refreshed = await _jobsApi.fetchJobById(jobId.toString());
+    final refreshedLevels = parseEmployeeJobDrawingLevels(
+      refreshed.raw['levels'],
+    );
+    final incompletePins = countIncompleteAssignedPins(refreshedLevels);
     if (incompletePins > 0) {
       throw StateError(
         incompletePins == 1
-            ? 'Complete the remaining pin form before finishing this job.'
-            : 'Complete all $incompletePins pin forms before finishing this job.',
+            ? 'Complete the remaining pin status before finishing this job.'
+            : 'Complete all $incompletePins pin statuses before finishing this job.',
       );
     }
 
@@ -968,7 +1013,7 @@ final class EmployeeJobRepository {
     }
 
     final payload = JobWritePayload.buildFromJobRead(
-      job,
+      refreshed,
       completedAt: DateTime.now(),
       jobStatusOverride: completedStatusId,
       includeExistingChecklists: false,
@@ -976,12 +1021,12 @@ final class EmployeeJobRepository {
 
     JobCompletionDebugLog.api(
       label: 'Mark job completed',
-      method: 'PUT',
+      method: 'PATCH',
       url: '/api/v1/jobs/$jobId/',
       request: payload,
     );
 
-    final updated = await _jobsApi.updateJob(
+    final updated = await _jobsApi.patchJob(
       jobId: jobId.toString(),
       payload: payload,
     );
@@ -989,7 +1034,7 @@ final class EmployeeJobRepository {
 
     JobCompletionDebugLog.api(
       label: 'Mark job completed',
-      method: 'PUT',
+      method: 'PATCH',
       url: '/api/v1/jobs/$jobId/',
       response: <String, dynamic>{
         'id': updated.id,
@@ -1001,6 +1046,70 @@ final class EmployeeJobRepository {
     );
 
     return updated;
+  }
+
+  Future<int> incompletePinsForJobCompletion(
+    int jobId,
+    List<EmployeeJobDrawingLevel> levels, {
+    Set<String> completedPinFormKeys = const {},
+  }) async {
+    // Job completion is gated only on server pin status (Complete).
+    // [completedPinFormKeys] is unused here but kept for call-site compatibility.
+    return countIncompleteAssignedPins(levels);
+  }
+
+  /// Marks pins Complete on the server when form/QR work is already done.
+  Future<int> markReadyPinsCompleteStatus({
+    required int jobId,
+    required List<EmployeeJobDrawingLevel> levels,
+    Set<String> completedPinFormKeys = const {},
+    Set<String> scannedPinQrKeys = const {},
+  }) async {
+    final localRows = await _formDatabase.listSubmissionsForJob(jobId);
+    final localPinKeys = pinFormKeysFromLocalSubmissions(
+      levels: levels,
+      rows: localRows,
+    );
+    final ready = pinsReadyToMarkCompleteStatus(
+      levels: levels,
+      completedPinFormKeys: completedPinFormKeys,
+      scannedPinQrKeys: scannedPinQrKeys,
+      locallySubmittedPinFormKeys: localPinKeys,
+    );
+    if (ready.isEmpty) return 0;
+
+    final completeStatusId = await _resolveCompletedPinStatusId();
+    if (completeStatusId == null) {
+      throw StateError(
+        'Could not resolve a Complete pin status. Configure pin statuses and try again.',
+      );
+    }
+
+    final pinStatuses = <({int pinId, int statusId})>[];
+    for (final pin in ready) {
+      if (pin.id <= 0) continue;
+      pinStatuses.add((pinId: pin.id, statusId: completeStatusId));
+    }
+    if (pinStatuses.isEmpty) return 0;
+
+    await _jobsApi.updateJobPinStatuses(jobId: jobId, pinStatuses: pinStatuses);
+    JobCompletionDebugLog.info(
+      'Marked ${pinStatuses.length} pin(s) Complete via PATCH /jobs/$jobId/ | '
+      'status_id=$completeStatusId | '
+      'pin_ids=${pinStatuses.map((row) => row.pinId).join(',')}',
+    );
+    return pinStatuses.length;
+  }
+
+  Future<int?> _resolveCompletedPinStatusId() async {
+    final statuses = await _jobsApi.fetchPinStatuses(isActive: true);
+    for (final status in statuses) {
+      final name = status.statusName.trim().toLowerCase();
+      if (name.contains('complete') && !name.contains('incomplete')) {
+        return int.tryParse(status.id.trim());
+      }
+    }
+    return null;
   }
 
   static String _operativeJobStatusName(JobRead job) {
@@ -1042,12 +1151,7 @@ final class EmployeeJobRepository {
 
   Future<int?> _resolveInProgressJobStatusId() async {
     final statuses = await _jobsApi.fetchJobStatusOptions();
-    const exactMatches = {
-      'in progress',
-      'in-progress',
-      'inprogress',
-      'active',
-    };
+    const exactMatches = {'in progress', 'in-progress', 'inprogress', 'active'};
     for (final status in statuses) {
       final name = status.name.trim().toLowerCase();
       if (_isCompletedJobStatusName(name)) continue;

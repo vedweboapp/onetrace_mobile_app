@@ -161,12 +161,21 @@ abstract final class AppApiUrls {
   /// `GET` [jobs_read] · `PUT` [jobs_update] · `PATCH` [jobs_partial_update] · `DELETE` [jobs_delete]
   static String jobById(String id) => '$_v1/jobs/$id/';
 
+  /// `POST` start/stop a job timer for a worker.
+  static String jobTimer(int jobId) => '$_v1/jobs/$jobId/timer/';
+
+  /// `GET` timer history for a job.
+  static String jobTimers(int jobId) => '$_v1/jobs/$jobId/timers/';
+
   /// `POST` submit a filled form for a job.
   static String jobSubmitForm(int jobId) => '$_v1/jobs/$jobId/submit-form/';
 
   /// `GET` all submitted forms for a job.
   static String jobSubmittedForms(int jobId) =>
       '$_v1/jobs/$jobId/submitted-forms/';
+
+  /// `GET` operative worker earnings summary and list.
+  static const String jobEarnings = '$_v1/job-earnings/';
 
   /// `GET` one submission record for a job ([submissionId], not job or form id).
   static String jobSubmittedFormById(int jobId, int submissionId) =>
@@ -274,6 +283,26 @@ abstract final class AppApiUrls {
 
   /// `GET` [user-profile_read] · `PUT` [user-profile_update] · `PATCH` [user-profile_partial_update]
   static String userProfileById(String id) => '$_v1/user-profile/$id/';
+
+  // ─── Material requests / dispatch / returns ───────────────────────────────
+
+  /// `GET` · `POST` material requests (`?worker=` · `?job=` · `?status=`)
+  static const String materialRequests = '$_v1/material-requests/';
+
+  /// `GET` · `PUT` · `PATCH` · `DELETE` material request by id
+  static String materialRequestById(String id) => '$_v1/material-requests/$id/';
+
+  /// `GET` · `POST` dispatches (`?job=` · `?worker=`)
+  static const String dispatches = '$_v1/dispatch/';
+
+  /// `GET` · `PUT` · `PATCH` · `DELETE` dispatch by id
+  static String dispatchById(String id) => '$_v1/dispatch/$id/';
+
+  /// `GET` · `POST` return requests (`?job=` · `?worker=`)
+  static const String returnRequests = '$_v1/return-request/';
+
+  /// `GET` · `PUT` · `PATCH` · `DELETE` return request by id
+  static String returnRequestById(String id) => '$_v1/return-request/$id/';
 
   // ─── Integrations (Zoho Inventory) ───────────────────────────────────────
 

@@ -356,7 +356,7 @@ class _QuotationDetailPageState extends ConsumerState<QuotationDetailPage>
 
   @override
   Widget build(BuildContext context) {
-    final title = _detail?.quoteName ?? 'Quote Name';
+    final title = _detail?.listTitle ?? 'Quote';
 
     return Scaffold(
       backgroundColor: AppColors.white,

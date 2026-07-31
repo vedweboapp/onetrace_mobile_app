@@ -9,9 +9,10 @@ import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
-import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
+import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
+import 'package:red5/employee_role/jobs/data/job_pin_completion.dart';
 import 'package:red5/employee_role/projects/application/employee_projects_controller.dart';
 
 class EmployeeJobConfirmationPage extends ConsumerStatefulWidget {
@@ -46,25 +47,58 @@ class _EmployeeJobConfirmationPageState
         await ref
             .read(employeeJobDetailControllerProvider.notifier)
             .load(jobId: activeJobId);
-        final job = ref.read(employeeJobDetailControllerProvider).job;
-        final incompletePins = job == null
+        final detailState = ref.read(employeeJobDetailControllerProvider);
+        final job = detailState.job;
+        final localPinKeys = job == null
+            ? const <String>{}
+            : pinFormKeysFromLocalSubmissions(
+                levels: job.levels,
+                rows: await ref
+                    .read(jobFormSubmissionRepositoryProvider)
+                    .listLocalSubmissionsForJob(activeJobId),
+              );
+        final mergedKeys = <String>{
+          ...detailState.completedPinFormKeys,
+          ...localPinKeys,
+        };
+        if (job != null) {
+          await ref
+              .read(employeeJobRepositoryProvider)
+              .markReadyPinsCompleteStatus(
+                jobId: activeJobId,
+                levels: job.levels,
+                completedPinFormKeys: mergedKeys,
+                scannedPinQrKeys: detailState.scannedPinQrKeys,
+              );
+          await ref
+              .read(employeeJobDetailControllerProvider.notifier)
+              .load(jobId: activeJobId);
+        }
+        final afterState = ref.read(employeeJobDetailControllerProvider);
+        final afterJob = afterState.job;
+        final incompletePins = afterJob == null
             ? 0
-            : countIncompleteAssignedPins(job.levels);
+            : countIncompleteAssignedPins(afterJob.levels);
         if (incompletePins > 0) {
           throw StateError(
             incompletePins == 1
-                ? 'Complete the remaining pin form on the Forms tab before finishing this job.'
-                : 'Complete all $incompletePins pin forms on the Forms tab before finishing this job.',
+                ? 'Complete the remaining pin status before finishing this job.'
+                : 'Complete all $incompletePins pin statuses before finishing this job.',
           );
         }
         JobCompletionDebugLog.info(
-          'formAssignments: ${job?.formAssignments.map((a) => 'form=${a.formId}→job_form=${a.jobFormId}').join(', ') ?? 'none'}',
+          'formAssignments: ${afterJob?.formAssignments.map((a) => 'form=${a.formId}→job_form=${a.jobFormId}').join(', ') ?? 'none'}',
         );
       }
 
-      JobCompletionDebugLog.step('Step 2/2 — Mark job completed (PUT /jobs/$activeJobId/)');
-      final completedJob =
-          await ref.read(employeeJobRepositoryProvider).markJobCompleted(activeJobId);
+      JobCompletionDebugLog.step('Step 2/2 — Mark job completed (PATCH /jobs/$activeJobId/)');
+      final detailState = ref.read(employeeJobDetailControllerProvider);
+      final completedJob = await ref
+          .read(employeeJobRepositoryProvider)
+          .markJobCompleted(
+            activeJobId,
+            completedPinFormKeys: detailState.completedPinFormKeys,
+          );
       JobCompletionDebugLog.info(
         'completed_at=${completedJob.completedAt?.toIso8601String() ?? 'n/a'} | status=${completedJob.displayStatus}',
       );
@@ -85,17 +119,16 @@ class _EmployeeJobConfirmationPageState
 
       JobCompletionDebugLog.banner('Complete job finished successfully');
       if (!mounted) return;
+      TechnicianHomePage.go(context, tab: EmployeeShellTab.home);
       if (!isOnline) {
-        context.showTopSnackBar(
-          const SnackBar(
-            content: Text(
-              'Job completed offline. Changes will sync when you are back online.',
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
+        tryShowAppTopToast(
+          title: 'Job successfully completed',
+          subtitle: 'Changes will sync when you are back online.',
+          type: AppTopToastType.info,
         );
+      } else {
+        tryShowSuccessTopPopup(title: 'Job successfully completed');
       }
-      TechnicianHomePage.go(context, tab: EmployeeShellTab.jobs);
     } catch (e) {
       if (!mounted) return;
       JobCompletionDebugLog.api(
@@ -168,8 +201,6 @@ class _EmployeeJobConfirmationPageState
                   title: 'Earning added',
                   subtitle: 'Updated in your Job Sheet',
                 ),
-                SizedBox(height: 34),
-                _VerifiedByRow(),
               ],
             ),
           ),
@@ -190,36 +221,23 @@ class _SuccessMark extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Container(
-        width: 108,
-        height: 108,
+        width: 88,
+        height: 88,
         decoration: BoxDecoration(
+          color: AppColors.inkStrong,
           shape: BoxShape.circle,
-          border: Border.all(color: AppColors.borderLight),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.inkStrong.withValues(alpha: 0.18),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
-        child: Center(
-          child: Container(
-            width: 82,
-            height: 82,
-            decoration: const BoxDecoration(
-              color: Color(0xFFF3F3F5),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: const BoxDecoration(
-                  color: AppColors.inkStrong,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_rounded,
-                  color: AppColors.white,
-                  size: 31,
-                ),
-              ),
-            ),
-          ),
+        child: const Icon(
+          Icons.check_rounded,
+          color: AppColors.white,
+          size: 42,
         ),
       ),
     );
@@ -239,7 +257,7 @@ class _StatusPill extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
-          'VERIFICATION COMPLETE',
+          'COMPLETE JOB',
           style: AppFonts.labelSmall(color: const Color(0xFF4F46E5)).copyWith(
             fontWeight: FontWeight.w900,
             letterSpacing: 0.4,
@@ -369,46 +387,21 @@ class _ConfirmationActivityCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          const Icon(
-            Icons.check_circle_rounded,
-            color: AppColors.inkStrong,
-            size: 18,
+          Container(
+            width: 22,
+            height: 22,
+            decoration: const BoxDecoration(
+              color: AppColors.inkStrong,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.check_rounded,
+              color: AppColors.white,
+              size: 14,
+            ),
           ),
         ],
       ),
-    );
-  }
-}
-
-class _VerifiedByRow extends StatelessWidget {
-  const _VerifiedByRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: const BoxDecoration(
-            color: AppColors.inkStrong,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.person_rounded,
-            color: AppColors.white,
-            size: 17,
-          ),
-        ),
-        const SizedBox(width: 9),
-        Text(
-          'Verified by Site Manager',
-          style: AppFonts.bodySmall(
-            color: AppColors.muted,
-          ).copyWith(fontWeight: FontWeight.w700),
-        ),
-      ],
     );
   }
 }
@@ -452,19 +445,11 @@ class _CompleteJobBar extends StatelessWidget {
                         color: AppColors.white,
                       ),
                     )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Complete Job',
-                          style: AppFonts.titleSmall(
-                            color: AppColors.white,
-                          ).copyWith(fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.check_circle_rounded, size: 17),
-                      ],
+                  : Text(
+                      'Complete Job',
+                      style: AppFonts.titleSmall(
+                        color: AppColors.white,
+                      ).copyWith(fontWeight: FontWeight.w900),
                     ),
             ),
           ),

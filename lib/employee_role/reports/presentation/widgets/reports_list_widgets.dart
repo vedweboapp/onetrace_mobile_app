@@ -16,6 +16,7 @@ class ReportProductListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
+      elevation: 2,
       color: AppColors.white,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
@@ -23,7 +24,7 @@ class ReportProductListCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppColors.borderLight),
@@ -31,15 +32,28 @@ class ReportProductListCard extends StatelessWidget {
               BoxShadow(
                 color: Color(0x0A000000),
                 blurRadius: 10,
-                offset: Offset(0, 3),
+                offset: Offset(0, -3),
               ),
             ],
           ),
-          child: Text(
-            product.name,
-            style: AppFonts.titleMedium(
-              color: AppColors.inkStrong,
-            ).copyWith(fontWeight: FontWeight.w900, fontSize: 17),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  product.name,
+                  style: AppFonts.titleMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w900, fontSize: 17),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                product.totalQuantity,
+                style: AppFonts.titleMedium(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w900, fontSize: 16),
+              ),
+            ],
           ),
         ),
       ),
@@ -74,7 +88,7 @@ class ReportSiteListCard extends StatelessWidget {
               BoxShadow(
                 color: Color(0x0A000000),
                 blurRadius: 10,
-                offset: Offset(0, 3),
+                offset: const Offset(4, 4),
               ),
             ],
           ),
@@ -108,7 +122,10 @@ class ReportSiteListCard extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.surfaceHigh,
                   borderRadius: BorderRadius.circular(10),
@@ -160,14 +177,14 @@ class ReportsSearchField extends StatelessWidget {
       child: TextField(
         controller: controller,
         onChanged: onChanged,
-        style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
-          fontWeight: FontWeight.w600,
-        ),
+        style: AppFonts.bodyMedium(
+          color: AppColors.inkStrong,
+        ).copyWith(fontWeight: FontWeight.w600),
         decoration: InputDecoration(
           hintText: hintText,
-          hintStyle: AppFonts.bodyMedium(color: AppColors.muted).copyWith(
-            fontWeight: FontWeight.w500,
-          ),
+          hintStyle: AppFonts.bodyMedium(
+            color: AppColors.muted,
+          ).copyWith(fontWeight: FontWeight.w500),
           prefixIcon: const Icon(Icons.search_rounded, color: AppColors.muted),
           filled: true,
           fillColor: AppColors.white,
@@ -182,7 +199,10 @@ class ReportsSearchField extends StatelessWidget {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppColors.inkStrong, width: 1.2),
+            borderSide: const BorderSide(
+              color: AppColors.inkStrong,
+              width: 1.2,
+            ),
           ),
         ),
       ),

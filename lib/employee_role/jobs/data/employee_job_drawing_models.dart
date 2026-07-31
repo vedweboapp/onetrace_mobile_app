@@ -44,6 +44,23 @@ final class EmployeeJobDrawingPlot {
 }
 
 @immutable
+final class EmployeeJobPinAttachment {
+  const EmployeeJobPinAttachment({
+    required this.name,
+    required this.url,
+    this.id,
+    this.contentType,
+  });
+
+  final int? id;
+  final String name;
+  final String url;
+  final String? contentType;
+
+  bool get hasUrl => url.trim().isNotEmpty;
+}
+
+@immutable
 final class EmployeeJobDrawingPin {
   const EmployeeJobDrawingPin({
     required this.id,
@@ -57,8 +74,14 @@ final class EmployeeJobDrawingPin {
     required this.statusForeground,
     required this.itemName,
     required this.attachmentCount,
+    this.attachments = const [],
+    this.jobPinId,
     this.projectFormId,
     this.projectFormName,
+    this.projectFormSubmissionId,
+    this.projectFormSubmissionStatus,
+    this.qrCode,
+    this.qrCodeFieldPresent = false,
     this.levelId,
     this.plotId,
   });
@@ -74,22 +97,60 @@ final class EmployeeJobDrawingPin {
   final Color statusForeground;
   final String itemName;
   final int attachmentCount;
+
+  /// Pin-level and item_detail attachments the operative can open.
+  final List<EmployeeJobPinAttachment> attachments;
+
+  /// `job_pin_id` from API — used as `job_form_id` when submitting pin forms.
+  final int? jobPinId;
   final int? projectFormId;
   final String? projectFormName;
+  final int? projectFormSubmissionId;
+  final String? projectFormSubmissionStatus;
+  final String? qrCode;
+
+  /// True when the API payload includes a `qr_code` key (even if null/empty).
+  final bool qrCodeFieldPresent;
   final int? levelId;
   final int? plotId;
 
+  bool get hasAttachments =>
+      attachments.any((attachment) => attachment.hasUrl);
+
   bool get hasForm => projectFormId != null && projectFormId! > 0;
+
+  bool get hasQrCode {
+    final value = qrCode?.trim() ?? '';
+    if (value.isEmpty) return false;
+    if (value.toLowerCase() == 'null') return false;
+    return true;
+  }
+
+  bool get isFormSubmitted {
+    if (projectFormSubmissionId != null && projectFormSubmissionId! > 0) {
+      return true;
+    }
+    final status = projectFormSubmissionStatus?.trim().toLowerCase();
+    return status == 'submitted' || status == 'complete' || status == 'completed';
+  }
 
   bool get isStatusComplete {
     final normalized = statusName.trim().toLowerCase();
     return normalized.contains('complete') && !normalized.contains('incomplete');
   }
 
+  int? get resolvedJobFormId {
+    if (jobPinId != null && jobPinId! > 0) return jobPinId;
+    if (id > 0) return id;
+    return null;
+  }
+
   String get formKey =>
       hasForm ? '${id}_$projectFormId' : 'pin_$id';
 
   String get displayLabel {
+    final locationLabel = location.trim();
+    if (locationLabel.isNotEmpty) return 'Pin $locationLabel';
     if (name.trim().isNotEmpty) return name.trim();
     if (itemName.trim().isNotEmpty) return itemName.trim();
     return 'Pin $id';
@@ -105,7 +166,8 @@ final class EmployeeJobPinFormTask {
     required this.pinLabel,
     required this.levelName,
     required this.plotName,
-    this.jobFormId,
+    this.jobPinId,
+    this.submissionId,
   });
 
   final int pinId;
@@ -114,7 +176,8 @@ final class EmployeeJobPinFormTask {
   final String pinLabel;
   final String levelName;
   final String plotName;
-  final int? jobFormId;
+  final int? jobPinId;
+  final int? submissionId;
 
   String get key => '${pinId}_$formId';
 }
@@ -318,15 +381,25 @@ EmployeeJobDrawingPin? _parsePin(
   final id = _readInt(map['id']);
   if (id == null) return null;
 
-  final projectForm = map['project_form'];
-  int? projectFormId;
+  // Project jobs nest under `project_form`; service-style links use
+  // `dynamic_form` / `dynamic_form_id`.
+  final nestedForm = map['project_form'] ?? map['dynamic_form'] ?? map['form'];
+  int? projectFormId = _readInt(map['dynamic_form_id']) ??
+      _readInt(map['project_form_id']) ??
+      _readInt(map['form_id']);
   String? projectFormName;
-  if (projectForm is Map) {
+  int? projectFormSubmissionId;
+  String? projectFormSubmissionStatus;
+  if (nestedForm is Map) {
     final formMap = Map<String, dynamic>.from(
-      projectForm.map((k, v) => MapEntry(k.toString(), v)),
+      nestedForm.map((k, v) => MapEntry(k.toString(), v)),
     );
-    projectFormId = _readInt(formMap['id']);
+    projectFormId ??= _readInt(formMap['id']) ??
+        _readInt(formMap['dynamic_form_id']) ??
+        _readInt(formMap['project_form_id']);
     projectFormName = formMap['name']?.toString().trim();
+    projectFormSubmissionId = _readInt(formMap['submission_id']);
+    projectFormSubmissionStatus = formMap['submission_status']?.toString();
   }
 
   final statusDetail = map['status_detail'];
@@ -346,12 +419,28 @@ EmployeeJobDrawingPin? _parsePin(
 
   final itemDetail = map['item_detail'];
   var itemName = '';
+  Map<String, dynamic>? itemDetailMap;
   if (itemDetail is Map) {
-    itemName = itemDetail['name']?.toString().trim() ?? '';
+    itemDetailMap = Map<String, dynamic>.from(
+      itemDetail.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    itemName = itemDetailMap['name']?.toString().trim() ?? '';
   }
 
-  final attachments = map['attachments'];
-  final attachmentCount = attachments is List ? attachments.length : 0;
+  final attachments = parseEmployeeJobPinAttachments(
+    pinAttachments: map['attachments'],
+    itemDetailAttachments: itemDetailMap?['attachments'],
+  );
+
+  final hasQrField = map.containsKey('qr_code');
+  final rawQr = map['qr_code'];
+  String? qrCode;
+  if (rawQr != null) {
+    final text = rawQr.toString().trim();
+    if (text.isNotEmpty && text.toLowerCase() != 'null') {
+      qrCode = text;
+    }
+  }
 
   return EmployeeJobDrawingPin(
     id: id,
@@ -364,11 +453,82 @@ EmployeeJobDrawingPin? _parsePin(
     statusBackground: statusBg,
     statusForeground: statusFg,
     itemName: itemName,
-    attachmentCount: attachmentCount,
+    attachmentCount: attachments.length,
+    attachments: attachments,
+    jobPinId: _readInt(map['job_pin_id']),
     projectFormId: projectFormId,
     projectFormName: projectFormName,
+    projectFormSubmissionId: projectFormSubmissionId,
+    projectFormSubmissionStatus: projectFormSubmissionStatus,
+    qrCode: qrCode,
+    qrCodeFieldPresent: hasQrField,
     levelId: levelId,
     plotId: plotId,
+  );
+}
+
+/// Merges pin `attachments` and `item_detail.attachments`, preferring entries
+/// that include a usable file URL.
+List<EmployeeJobPinAttachment> parseEmployeeJobPinAttachments({
+  dynamic pinAttachments,
+  dynamic itemDetailAttachments,
+}) {
+  final byKey = <String, EmployeeJobPinAttachment>{};
+
+  void addAll(dynamic raw) {
+    if (raw is! List) return;
+    for (final entry in raw) {
+      final parsed = _parsePinAttachmentEntry(entry);
+      if (parsed == null || !parsed.hasUrl) continue;
+      final key = parsed.id != null
+          ? 'id:${parsed.id}'
+          : 'url:${parsed.url.trim().toLowerCase()}';
+      byKey.putIfAbsent(key, () => parsed);
+    }
+  }
+
+  addAll(pinAttachments);
+  addAll(itemDetailAttachments);
+  return byKey.values.toList(growable: false);
+}
+
+EmployeeJobPinAttachment? _parsePinAttachmentEntry(dynamic entry) {
+  if (entry is! Map) {
+    final text = entry?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+    final resolved = resolveEmployeeDrawingFileUrl(text);
+    if (resolved == null || resolved.isEmpty) return null;
+    return EmployeeJobPinAttachment(
+      name: text.split('/').last,
+      url: resolved,
+    );
+  }
+
+  final map = Map<String, dynamic>.from(
+    entry.map((k, v) => MapEntry(k.toString(), v)),
+  );
+  final rawUrl = map['file'] ??
+      map['url'] ??
+      map['file_url'] ??
+      map['fileUrl'] ??
+      map['path'];
+  final resolvedUrl = resolveEmployeeDrawingFileUrl(rawUrl);
+  if (resolvedUrl == null || resolvedUrl.trim().isEmpty) return null;
+
+  final name = map['file_name']?.toString().trim() ??
+      map['filename']?.toString().trim() ??
+      map['name']?.toString().trim() ??
+      '';
+  final resolvedName = name.isNotEmpty
+      ? name
+      : resolvedUrl.split('/').last;
+
+  return EmployeeJobPinAttachment(
+    id: _readInt(map['id']),
+    name: resolvedName,
+    url: resolvedUrl,
+    contentType: map['content_type_value']?.toString().trim() ??
+        map['content_type']?.toString().trim(),
   );
 }
 
@@ -425,12 +585,6 @@ EmployeeJobDrawingPin? findEmployeeJobPinById(
   return null;
 }
 
-int countIncompleteAssignedPins(List<EmployeeJobDrawingLevel> levels) {
-  return collectJobPinEntries(levels)
-      .where((entry) => !entry.pin.isStatusComplete)
-      .length;
-}
-
 List<EmployeeJobPinListEntry> collectJobPinEntries(
   List<EmployeeJobDrawingLevel> levels,
 ) {
@@ -470,7 +624,8 @@ List<EmployeeJobPinFormTask> collectPinFormTasks(
             pinLabel: pin.displayLabel,
             levelName: level.name,
             plotName: plot.name,
-            jobFormId: pin.id,
+            jobPinId: pin.jobPinId ?? pin.resolvedJobFormId,
+            submissionId: pin.projectFormSubmissionId,
           ),
         );
       }

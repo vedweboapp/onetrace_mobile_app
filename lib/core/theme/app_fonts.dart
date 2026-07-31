@@ -107,8 +107,8 @@ abstract final class AppFonts {
   );
 
   /// 16 sp · Medium · +0.15 tracking  (M3 titleMedium)
-  static TextStyle titleMedium({Color? color, bool italic = false}) => inter(
-    fontSize: 16,
+  static TextStyle titleMedium({Color? color, bool italic = false, double? fontSize}) => inter(
+    fontSize: fontSize ?? 16,
     fontWeight: FontWeight.w500,
     fontStyle: italic ? FontStyle.italic : FontStyle.normal,
     letterSpacing: 0.15,

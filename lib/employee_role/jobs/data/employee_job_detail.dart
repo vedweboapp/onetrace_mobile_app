@@ -1,6 +1,22 @@
 import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 
+enum EmployeeJobCategory {
+  project,
+  service,
+  unknown;
+
+  static EmployeeJobCategory fromApi(dynamic raw) {
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    if (value.contains('service')) return EmployeeJobCategory.service;
+    if (value.contains('project')) return EmployeeJobCategory.project;
+    return EmployeeJobCategory.unknown;
+  }
+
+  bool get isProject => this == EmployeeJobCategory.project;
+  bool get isService => this == EmployeeJobCategory.service;
+}
+
 final class EmployeeJobDetail {
   const EmployeeJobDetail({
     required this.id,
@@ -23,6 +39,8 @@ final class EmployeeJobDetail {
     this.pinFormTasks = const [],
     this.siteDetail,
     this.jobSerialNumber,
+    this.jobCategory = EmployeeJobCategory.unknown,
+    this.hasJobQrField = false,
   });
 
   final int id;
@@ -45,8 +63,41 @@ final class EmployeeJobDetail {
   final List<EmployeeJobPinFormTask> pinFormTasks;
   final EmployeeJobSiteDetail? siteDetail;
   final String? jobSerialNumber;
+  final EmployeeJobCategory jobCategory;
 
-  bool get hasDrawingHierarchy => levels.any((level) => level.pinCount > 0);
+  /// True when the job payload includes a top-level `qr_code` key.
+  final bool hasJobQrField;
+
+  bool get hasDrawingHierarchy =>
+      levels.any(
+        (level) =>
+            level.pinCount > 0 ||
+            (level.drawingFileUrl?.trim().isNotEmpty ?? false),
+      );
+
+  /// Project jobs use drawings/pins; service jobs use linked forms only.
+  bool get usesDesignsWorkflow {
+    if (jobCategory.isService) return false;
+    if (jobCategory.isProject) return hasDrawingHierarchy;
+    return collectJobPinEntries(levels).isNotEmpty;
+  }
+
+  String get siteLocationTitle =>
+      siteDetail?.name.trim().isNotEmpty == true
+          ? siteDetail!.name.trim()
+          : block.trim().isNotEmpty
+              ? block.trim()
+              : title;
+
+  String get siteLocationAddress {
+    final siteAddress = siteDetail?.address.trim() ?? '';
+    if (siteAddress.isNotEmpty) return siteAddress;
+    final blockPlot = [
+      if (block.trim().isNotEmpty) block.trim(),
+      if (plot.trim().isNotEmpty) plot.trim(),
+    ].join(', ');
+    return blockPlot;
+  }
 
   List<int> get linkedFormIds {
     if (pinFormTasks.isNotEmpty) {
@@ -70,13 +121,13 @@ final class EmployeeJobDetail {
     return null;
   }
 
-  int? jobFormIdForPin(int pinId, int formTemplateId) {
+  int? jobPinIdForPin(int pinId, int formTemplateId) {
     for (final task in pinFormTasks) {
       if (task.pinId == pinId && task.formId == formTemplateId) {
-        return task.jobFormId ?? task.pinId;
+        return task.jobPinId;
       }
     }
-    return jobFormIdFor(formTemplateId);
+    return null;
   }
 
   EmployeeJobDetail copyWith({
@@ -87,6 +138,8 @@ final class EmployeeJobDetail {
     List<EmployeeJobDrawingLevel>? levels,
     List<EmployeeJobPinFormTask>? pinFormTasks,
     List<EmployeeSafetyChecklistItem>? safetyChecklist,
+    EmployeeJobCategory? jobCategory,
+    bool? hasJobQrField,
   }) {
     return EmployeeJobDetail(
       id: id,
@@ -109,6 +162,8 @@ final class EmployeeJobDetail {
       pinFormTasks: pinFormTasks ?? this.pinFormTasks,
       siteDetail: siteDetail,
       jobSerialNumber: jobSerialNumber,
+      jobCategory: jobCategory ?? this.jobCategory,
+      hasJobQrField: hasJobQrField ?? this.hasJobQrField,
     );
   }
 }
@@ -139,6 +194,30 @@ final class EmployeeJobSummary {
   final String? siteName;
   final String? projectName;
   final int? projectId;
+
+  /// Primary site label for operative job cards.
+  String get displaySiteName {
+    final site = siteName?.trim();
+    if (site != null && site.isNotEmpty) return site;
+    return title;
+  }
+
+  /// Location line under the job title (site and project).
+  String get displayLocationLine => displaySiteSubtitle;
+
+  /// Secondary line under the job name (site + project when available).
+  String get displaySiteSubtitle {
+    final site = siteName?.trim();
+    final project = projectName?.trim();
+    if (site != null &&
+        site.isNotEmpty &&
+        project != null &&
+        project.isNotEmpty) {
+      return '$site - $project';
+    }
+    if (project != null && project.isNotEmpty) return project;
+    return location;
+  }
 }
 
 enum EmployeeJobStatus {

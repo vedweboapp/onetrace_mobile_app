@@ -13,13 +13,14 @@ class EmployeeJobDesignsPanel extends StatefulWidget {
   const EmployeeJobDesignsPanel({
     super.key,
     required this.job,
-    required this.completedPinFormKeys,
-    required this.onPinFormTap,
+    this.completedPinFormKeys = const {},
+    this.onPinFormTap,
     this.scannedPinQrKeys = const {},
     this.formHasQrFields = const {},
     this.onPinQrTap,
     this.showDrawingCards = true,
     this.showSiteSummary = true,
+    this.showPinFormActions = false,
     this.isJobCompleted = false,
     this.formsEnabled = true,
   });
@@ -28,10 +29,11 @@ class EmployeeJobDesignsPanel extends StatefulWidget {
   final Set<String> completedPinFormKeys;
   final Set<String> scannedPinQrKeys;
   final Map<int, bool> formHasQrFields;
-  final EmployeeJobPinFormTap onPinFormTap;
+  final EmployeeJobPinFormTap? onPinFormTap;
   final EmployeeJobPinQrTap? onPinQrTap;
   final bool showDrawingCards;
   final bool showSiteSummary;
+  final bool showPinFormActions;
   final bool isJobCompleted;
   final bool formsEnabled;
 
@@ -47,7 +49,9 @@ class _EmployeeJobDesignsPanelState extends State<EmployeeJobDesignsPanel> {
   @override
   void initState() {
     super.initState();
-    final levels = widget.job.levels;
+    final levels = widget.job.levels
+        .where((level) => level.drawingFileUrl?.trim().isNotEmpty == true)
+        .toList();
     if (levels.length == 1) {
       _expandedLevels.add(levels.first.id);
       if (levels.first.plots.length == 1) {
@@ -78,15 +82,12 @@ class _EmployeeJobDesignsPanelState extends State<EmployeeJobDesignsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final levels = widget.job.levels;
-    if (levels.isEmpty) {
-      return _EmptyDesignsState(siteDetail: widget.job.siteDetail);
-    }
-
-    final siteName = widget.job.siteDetail?.name ?? widget.job.block;
-    final drawingLevels = levels
+    final designLevels = widget.job.levels
         .where((level) => level.drawingFileUrl?.trim().isNotEmpty == true)
         .toList(growable: false);
+    if (designLevels.isEmpty) {
+      return _EmptyDesignsState(siteDetail: widget.job.siteDetail);
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -94,51 +95,42 @@ class _EmployeeJobDesignsPanelState extends State<EmployeeJobDesignsPanel> {
         if (widget.showSiteSummary && widget.job.siteDetail != null) ...[
           _SiteSummaryCard(site: widget.job.siteDetail!),
           const SizedBox(height: 16),
-        ],
-        if (widget.showDrawingCards && drawingLevels.isNotEmpty) ...[
-          for (var i = 0; i < drawingLevels.length; i++) ...[
-            if (i > 0) const SizedBox(height: 14),
-            EmployeeJobDrawingCard(
-              title: drawingLevels[i].name,
-              subtitle: _levelSubtitle(siteName, drawingLevels[i]),
-              updatedLabel: _levelUpdatedLabel(drawingLevels[i]),
-              drawingFileUrl: resolveEmployeeDrawingFileUrl(
-                drawingLevels[i].drawingFileUrl,
-              ),
-              cacheKey: 'job-${widget.job.id}-level-${drawingLevels[i].id}',
-              onTap: () => _openDrawing(drawingLevels[i]),
-            ),
-          ],
-          const SizedBox(height: 22),
-        ],
-        Text(
-          widget.showDrawingCards ? 'DESIGNS & PINS' : 'LEVELS & PINS',
-          style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.8,
+        ] else ...[
+          Text(
+            'Designs',
+            style: AppFonts.titleLarge(
+              color: AppColors.inkStrong,
+            ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
           ),
-        ),
-        const SizedBox(height: 12),
-        for (var i = 0; i < levels.length; i++) ...[
-          if (i > 0) const SizedBox(height: 10),
-          _LevelCard(
-            level: levels[i],
-            expanded: _expandedLevels.contains(levels[i].id),
+          const SizedBox(height: 4),
+          Text(
+            '${designLevels.length} design${designLevels.length == 1 ? '' : 's'}',
+            style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+        for (var i = 0; i < designLevels.length; i++) ...[
+          if (i > 0) const SizedBox(height: 14),
+          _DesignLevelSection(
+            level: designLevels[i],
+            expanded: _expandedLevels.contains(designLevels[i].id),
             onExpandedChanged: (expanded) {
               setState(() {
                 if (expanded) {
-                  _expandedLevels.add(levels[i].id);
+                  _expandedLevels.add(designLevels[i].id);
                 } else {
-                  _expandedLevels.remove(levels[i].id);
+                  _expandedLevels.remove(designLevels[i].id);
                 }
               });
             },
-            onOpenDrawing: () => _openDrawing(levels[i]),
+            onOpenDrawing: () => _openDrawing(designLevels[i]),
             plotExpanded: (plotId) =>
-                _expandedPlots.contains(_plotKey(levels[i].id, plotId)),
+                _expandedPlots.contains(_plotKey(designLevels[i].id, plotId)),
             onPlotExpandedChanged: (plotId, expanded) {
               setState(() {
-                final key = _plotKey(levels[i].id, plotId);
+                final key = _plotKey(designLevels[i].id, plotId);
                 if (expanded) {
                   _expandedPlots.add(key);
                 } else {
@@ -149,29 +141,196 @@ class _EmployeeJobDesignsPanelState extends State<EmployeeJobDesignsPanel> {
             completedPinFormKeys: widget.completedPinFormKeys,
             scannedPinQrKeys: widget.scannedPinQrKeys,
             formHasQrFields: widget.formHasQrFields,
+            showPinFormActions: widget.showPinFormActions,
             isJobCompleted: widget.isJobCompleted,
             formsEnabled: widget.formsEnabled,
             onPinFormTap: widget.onPinFormTap,
             onPinQrTap: widget.onPinQrTap,
+            jobId: widget.job.id,
           ),
         ],
       ],
     );
   }
 
-  String _levelSubtitle(String siteName, EmployeeJobDrawingLevel level) {
-    final site = siteName.trim();
-    final levelLabel = 'Level ${level.order}';
-    if (site.isEmpty) return levelLabel;
-    return '$site • $levelLabel';
+}
+
+class _DesignLevelSection extends StatelessWidget {
+  const _DesignLevelSection({
+    required this.level,
+    required this.expanded,
+    required this.onExpandedChanged,
+    required this.onOpenDrawing,
+    required this.plotExpanded,
+    required this.onPlotExpandedChanged,
+    required this.completedPinFormKeys,
+    required this.scannedPinQrKeys,
+    required this.formHasQrFields,
+    required this.showPinFormActions,
+    required this.isJobCompleted,
+    required this.formsEnabled,
+    required this.jobId,
+    this.onPinFormTap,
+    this.onPinQrTap,
+  });
+
+  final EmployeeJobDrawingLevel level;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
+  final VoidCallback onOpenDrawing;
+  final bool Function(int plotId) plotExpanded;
+  final void Function(int plotId, bool expanded) onPlotExpandedChanged;
+  final Set<String> completedPinFormKeys;
+  final Set<String> scannedPinQrKeys;
+  final Map<int, bool> formHasQrFields;
+  final bool showPinFormActions;
+  final bool isJobCompleted;
+  final bool formsEnabled;
+  final int jobId;
+  final EmployeeJobPinFormTap? onPinFormTap;
+  final EmployeeJobPinQrTap? onPinQrTap;
+
+  String get _levelSubtitle {
+    final parts = <String>[];
+    if (level.order > 0) {
+      parts.add('Level ${level.order}');
+    }
+    final plotCount = level.plots.length;
+    if (plotCount > 0) {
+      parts.add('$plotCount plot${plotCount == 1 ? '' : 's'}');
+    }
+    return parts.isEmpty ? level.name : parts.join(' • ');
   }
 
-  String _levelUpdatedLabel(EmployeeJobDrawingLevel level) {
+  String get _updatedLabel {
     final pinCount = level.pinCount;
     if (pinCount > 0) {
       return '$pinCount pin${pinCount == 1 ? '' : 's'} on drawing';
     }
     return 'Drawing available';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDrawing = level.drawingFileUrl?.trim().isNotEmpty == true;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hasDrawing)
+          EmployeeJobDrawingCard(
+            title: level.name,
+            subtitle: _levelSubtitle,
+            updatedLabel: _updatedLabel,
+            drawingFileUrl: resolveEmployeeDrawingFileUrl(level.drawingFileUrl),
+            cacheKey: 'job-$jobId-level-${level.id}',
+            onTap: onOpenDrawing,
+          )
+        else
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          level.name,
+                          style: AppFonts.titleSmall(
+                            color: AppColors.inkStrong,
+                          ).copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _levelSubtitle,
+                          style: AppFonts.bodySmall(color: AppColors.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    _updatedLabel,
+                    style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 10),
+        _CollapsibleCard(
+          title: 'Pins',
+          trailing: '${level.pinCount} pin${level.pinCount == 1 ? '' : 's'}',
+          expanded: expanded,
+          onExpandedChanged: onExpandedChanged,
+          nested: true,
+          child: level.pinCount == 0
+              ? Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Text(
+                    'No pins on this design yet.',
+                    style: AppFonts.bodySmall(color: AppColors.muted),
+                  ),
+                )
+              : showPinFormActions
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < level.plots.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 8),
+                            _PlotCard(
+                              plot: level.plots[i],
+                              expanded: plotExpanded(level.plots[i].id),
+                              onExpandedChanged: (value) =>
+                                  onPlotExpandedChanged(
+                                level.plots[i].id,
+                                value,
+                              ),
+                              completedPinFormKeys: completedPinFormKeys,
+                              scannedPinQrKeys: scannedPinQrKeys,
+                              formHasQrFields: formHasQrFields,
+                              showPinFormActions: showPinFormActions,
+                              isJobCompleted: isJobCompleted,
+                              formsEnabled: formsEnabled,
+                              onPinFormTap: onPinFormTap,
+                              onPinQrTap: onPinQrTap,
+                            ),
+                          ],
+                        ],
+                      ),
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
+                      child: Column(
+                        children: [
+                          for (final plot in level.plots)
+                            for (final pin in plot.pins) ...[
+                              _PinCard(
+                                pin: pin,
+                                showPinFormActions: false,
+                                isFormComplete: false,
+                                showQrAction: false,
+                                isQrComplete: false,
+                                isJobCompleted: isJobCompleted,
+                                formsEnabled: formsEnabled,
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                        ],
+                      ),
+                    ),
+        ),
+      ],
+    );
   }
 }
 
@@ -268,91 +427,6 @@ class _SiteSummaryCard extends StatelessWidget {
   }
 }
 
-class _LevelCard extends StatelessWidget {
-  const _LevelCard({
-    required this.level,
-    required this.expanded,
-    required this.onExpandedChanged,
-    required this.onOpenDrawing,
-    required this.plotExpanded,
-    required this.onPlotExpandedChanged,
-    required this.completedPinFormKeys,
-    required this.scannedPinQrKeys,
-    required this.formHasQrFields,
-    required this.isJobCompleted,
-    required this.formsEnabled,
-    required this.onPinFormTap,
-    this.onPinQrTap,
-  });
-
-  final EmployeeJobDrawingLevel level;
-  final bool expanded;
-  final ValueChanged<bool> onExpandedChanged;
-  final VoidCallback onOpenDrawing;
-  final bool Function(int plotId) plotExpanded;
-  final void Function(int plotId, bool expanded) onPlotExpandedChanged;
-  final Set<String> completedPinFormKeys;
-  final Set<String> scannedPinQrKeys;
-  final Map<int, bool> formHasQrFields;
-  final bool isJobCompleted;
-  final bool formsEnabled;
-  final EmployeeJobPinFormTap onPinFormTap;
-  final EmployeeJobPinQrTap? onPinQrTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasDrawing = level.drawingFileUrl?.trim().isNotEmpty == true;
-    return _CollapsibleCard(
-      title: level.name,
-      trailing: '${level.pinCount} pin${level.pinCount == 1 ? '' : 's'}',
-      expanded: expanded,
-      onExpandedChanged: onExpandedChanged,
-      headerAction: hasDrawing
-          ? TextButton.icon(
-              onPressed: onOpenDrawing,
-              icon: const Icon(Icons.open_in_new_rounded, size: 16),
-              label: const Text('View'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.inkStrong,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-            )
-          : null,
-      child: level.plots.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(14),
-              child: Text(
-                'No plots on this drawing.',
-                style: AppFonts.bodySmall(color: AppColors.muted),
-              ),
-            )
-          : Padding(
-              padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
-              child: Column(
-                children: [
-                  for (var i = 0; i < level.plots.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 8),
-                    _PlotCard(
-                      plot: level.plots[i],
-                      expanded: plotExpanded(level.plots[i].id),
-                      onExpandedChanged: (value) =>
-                          onPlotExpandedChanged(level.plots[i].id, value),
-                      completedPinFormKeys: completedPinFormKeys,
-                      scannedPinQrKeys: scannedPinQrKeys,
-                      formHasQrFields: formHasQrFields,
-                      isJobCompleted: isJobCompleted,
-                      formsEnabled: formsEnabled,
-                      onPinFormTap: onPinFormTap,
-                      onPinQrTap: onPinQrTap,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-    );
-  }
-}
-
 class _PlotCard extends StatelessWidget {
   const _PlotCard({
     required this.plot,
@@ -361,9 +435,10 @@ class _PlotCard extends StatelessWidget {
     required this.completedPinFormKeys,
     required this.scannedPinQrKeys,
     required this.formHasQrFields,
+    required this.showPinFormActions,
     required this.isJobCompleted,
     required this.formsEnabled,
-    required this.onPinFormTap,
+    this.onPinFormTap,
     this.onPinQrTap,
   });
 
@@ -373,9 +448,10 @@ class _PlotCard extends StatelessWidget {
   final Set<String> completedPinFormKeys;
   final Set<String> scannedPinQrKeys;
   final Map<int, bool> formHasQrFields;
+  final bool showPinFormActions;
   final bool isJobCompleted;
   final bool formsEnabled;
-  final EmployeeJobPinFormTap onPinFormTap;
+  final EmployeeJobPinFormTap? onPinFormTap;
   final EmployeeJobPinQrTap? onPinQrTap;
 
   @override
@@ -403,25 +479,26 @@ class _PlotCard extends StatelessWidget {
                     if (i > 0) const SizedBox(height: 8),
                     _PinCard(
                       pin: plot.pins[i],
+                      showPinFormActions: showPinFormActions,
                       isFormComplete: completedPinFormKeys.contains(
                         plot.pins[i].formKey,
                       ),
-                      showQrAction: _pinShowsQr(
-                        plot.pins[i],
-                        formHasQrFields: formHasQrFields,
-                      ),
-                      isQrComplete: scannedPinQrKeys.contains(
-                        plot.pins[i].formKey,
-                      ),
+                      showQrAction:
+                          showPinFormActions &&
+                          _pinShowsQr(plot.pins[i]) &&
+                          !plot.pins[i].hasForm,
+                      isQrComplete: plot.pins[i].hasQrCode ||
+                          scannedPinQrKeys.contains(plot.pins[i].formKey),
                       isJobCompleted: isJobCompleted,
                       formsEnabled: formsEnabled,
-                      onFillForm: plot.pins[i].hasForm
-                          ? () => onPinFormTap(plot.pins[i])
+                      onFillForm: showPinFormActions &&
+                              plot.pins[i].hasForm &&
+                              onPinFormTap != null
+                          ? () => onPinFormTap!(plot.pins[i])
                           : null,
-                      onScanQr: _pinShowsQr(
-                                plot.pins[i],
-                                formHasQrFields: formHasQrFields,
-                              ) &&
+                      onScanQr: showPinFormActions &&
+                              _pinShowsQr(plot.pins[i]) &&
+                              !plot.pins[i].hasForm &&
                               onPinQrTap != null
                           ? () => onPinQrTap!(plot.pins[i])
                           : null,
@@ -434,18 +511,12 @@ class _PlotCard extends StatelessWidget {
   }
 }
 
-bool _pinShowsQr(
-  EmployeeJobDrawingPin pin, {
-  required Map<int, bool> formHasQrFields,
-}) {
-  final formId = pin.projectFormId;
-  if (formId == null || formId <= 0) return false;
-  return formHasQrFields[formId] == true;
-}
+bool _pinShowsQr(EmployeeJobDrawingPin pin) => pin.qrCodeFieldPresent;
 
 class _PinCard extends StatefulWidget {
   const _PinCard({
     required this.pin,
+    required this.showPinFormActions,
     required this.isFormComplete,
     required this.showQrAction,
     required this.isQrComplete,
@@ -456,6 +527,7 @@ class _PinCard extends StatefulWidget {
   });
 
   final EmployeeJobDrawingPin pin;
+  final bool showPinFormActions;
   final bool isFormComplete;
   final bool showQrAction;
   final bool isQrComplete;
@@ -474,9 +546,11 @@ class _PinCardState extends State<_PinCard> {
   @override
   Widget build(BuildContext context) {
     final pin = widget.pin;
-    final trailing = pin.hasForm
-        ? (widget.isFormComplete ? 'Form done' : 'Form pending')
-        : 'No form';
+    final trailing = widget.showPinFormActions
+        ? (pin.hasForm
+            ? (widget.isFormComplete ? 'Form done' : 'Form pending')
+            : 'No form')
+        : (pin.location.isNotEmpty ? pin.location : pin.statusName);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -549,14 +623,22 @@ class _PinCardState extends State<_PinCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (pin.location.isNotEmpty) ...[
+                  if (pin.location.isNotEmpty &&
+                      !widget.showPinFormActions) ...[
                     Text(
                       'Location: ${pin.location}',
                       style: AppFonts.bodySmall(color: AppColors.muted),
                     ),
-                    const SizedBox(height: 8),
                   ],
-                  if (pin.hasForm) ...[
+                  if (widget.showPinFormActions) ...[
+                    if (pin.location.isNotEmpty) ...[
+                      Text(
+                        'Location: ${pin.location}',
+                        style: AppFonts.bodySmall(color: AppColors.muted),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    if (pin.hasForm) ...[
                     Row(
                       children: [
                         Icon(
@@ -578,6 +660,13 @@ class _PinCardState extends State<_PinCard> {
                         ),
                       ],
                     ),
+                    if (_pinShowsQr(pin)) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'QR scanning is available at the bottom of the form.',
+                        style: AppFonts.bodySmall(color: AppColors.muted),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
@@ -631,7 +720,7 @@ class _PinCardState extends State<_PinCard> {
                           child: Text(
                             widget.isQrComplete
                                 ? 'QR code scanned'
-                                : 'QR code required in form',
+                                : 'QR code required',
                             style: AppFonts.bodySmall(color: AppColors.inkStrong)
                                 .copyWith(fontWeight: FontWeight.w700),
                           ),
@@ -667,6 +756,7 @@ class _PinCardState extends State<_PinCard> {
                         ),
                       ),
                     ),
+                  ],
                   ],
                 ],
               ),

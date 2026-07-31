@@ -11,6 +11,7 @@ import 'package:red5/employee_role/jobs/application/employee_job_session_control
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
+import 'package:red5/employee_role/employee_earnings/presentation/employee_earning_view.dart';
 import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
@@ -67,6 +68,10 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
     openEmployeeJob(context, job: job);
   }
 
+  void _openEarningDetails(EmployeeJobSummary job) {
+    context.push(EmployeeEarningsPage.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(employeeJobsControllerProvider);
@@ -79,9 +84,8 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
       children: [
         if (widget.showHeader)
           _JobsHeader(
-            onSettings: () => context.push(
-              EmployeeTechnicianSettingsRoutes.personalProfile,
-            ),
+            onSettings: () =>
+                context.push(EmployeeTechnicianSettingsRoutes.personalProfile),
           ),
         _JobsFilterTabs(
           selected: state.filter,
@@ -124,7 +128,11 @@ class _EmployeeJobsContentState extends ConsumerState<EmployeeJobsContent> {
                   const _JobsEmptyState()
                 else
                   for (final job in visibleJobs) ...[
-                    _EmployeeJobCard(job: job, onTap: () => _openDetails(job)),
+                    _EmployeeJobCard(
+                      job: job,
+                      onTap: () => _openDetails(job),
+                      onEarningTap: () => _openEarningDetails(job),
+                    ),
                     const SizedBox(height: 14),
                   ],
               ],
@@ -270,7 +278,10 @@ class _FilterFields extends ConsumerWidget {
                   ).copyWith(fontWeight: FontWeight.w700),
                 ),
                 trailing: !state.hasDateRangeFilter
-                    ? const Icon(Icons.check_rounded, color: AppColors.inkStrong)
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: AppColors.inkStrong,
+                      )
                     : null,
                 onTap: () => Navigator.of(context).pop('all'),
               ),
@@ -289,7 +300,8 @@ class _FilterFields extends ConsumerWidget {
 
     final now = DateTime.now();
     final initialStart = state.filterDateRangeStart ?? now;
-    final initialEnd = state.filterDateRangeEnd ?? now.add(const Duration(days: 7));
+    final initialEnd =
+        state.filterDateRangeEnd ?? now.add(const Duration(days: 7));
     final picked = await showDateRangePicker(
       context: context,
       firstDate: DateTime(now.year - 2),
@@ -299,9 +311,9 @@ class _FilterFields extends ConsumerWidget {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: Theme.of(context).colorScheme.copyWith(
-                  primary: AppColors.inkStrong,
-                  onSurface: AppColors.inkStrong,
-                ),
+              primary: AppColors.inkStrong,
+              onSurface: AppColors.inkStrong,
+            ),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -345,7 +357,10 @@ class _FilterFields extends ConsumerWidget {
                   ).copyWith(fontWeight: FontWeight.w600),
                 ),
                 trailing: selected == null
-                    ? const Icon(Icons.check_rounded, color: AppColors.inkStrong)
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: AppColors.inkStrong,
+                      )
                     : null,
                 onTap: () => Navigator.of(context).pop<String?>(null),
               ),
@@ -443,11 +458,7 @@ class _FilterFields extends ConsumerWidget {
 }
 
 class _PillField extends StatelessWidget {
-  const _PillField({
-    required this.icon,
-    required this.label,
-    this.onTap,
-  });
+  const _PillField({required this.icon, required this.label, this.onTap});
 
   final IconData icon;
   final String label;
@@ -497,11 +508,7 @@ class _PillField extends StatelessWidget {
 }
 
 class _FilterSelect extends StatelessWidget {
-  const _FilterSelect({
-    required this.title,
-    required this.value,
-    this.onTap,
-  });
+  const _FilterSelect({required this.title, required this.value, this.onTap});
 
   final String title;
   final String value;
@@ -562,10 +569,15 @@ class _FilterSelect extends StatelessWidget {
 }
 
 class _EmployeeJobCard extends StatelessWidget {
-  const _EmployeeJobCard({required this.job, required this.onTap});
+  const _EmployeeJobCard({
+    required this.job,
+    required this.onTap,
+    required this.onEarningTap,
+  });
 
   final EmployeeJobSummary job;
   final VoidCallback onTap;
+  final VoidCallback onEarningTap;
 
   @override
   Widget build(BuildContext context) {
@@ -608,13 +620,27 @@ class _EmployeeJobCard extends StatelessWidget {
                           ).copyWith(fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          job.earning,
-                          style: AppFonts.titleSmall(
-                            color: active
-                                ? const Color(0xFF00A553)
-                                : AppColors.inkStrong,
-                          ).copyWith(fontWeight: FontWeight.w900, fontSize: 17),
+                        InkWell(
+                          onTap: onEarningTap,
+                          borderRadius: BorderRadius.circular(6),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            child: Text(
+                              job.earning,
+                              style:
+                                  AppFonts.titleSmall(
+                                    color: active
+                                        ? const Color(0xFF00A553)
+                                        : AppColors.inkStrong,
+                                  ).copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 17,
+                                  ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -623,16 +649,18 @@ class _EmployeeJobCard extends StatelessWidget {
                 const SizedBox(height: 10),
                 Text(
                   job.title,
-                  style: AppFonts.titleMedium(
-                    color: AppColors.inkStrong,
-                  ).copyWith(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    height: 1.1,
-                  ),
+                  style: AppFonts.titleMedium(color: AppColors.inkStrong)
+                      .copyWith(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                        height: 1.1,
+                      ),
                 ),
                 const SizedBox(height: 12),
-                _MetaRow(icon: Icons.location_on_outlined, label: job.location),
+                _MetaRow(
+                  icon: Icons.location_on_outlined,
+                  label: job.displayLocationLine,
+                ),
                 const SizedBox(height: 6),
                 _MetaRow(icon: Icons.access_time_rounded, label: job.schedule),
               ],
@@ -743,14 +771,18 @@ class _OfflineJobsBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.cloud_off_rounded, size: 18, color: Color(0xFFC2410C)),
+          const Icon(
+            Icons.cloud_off_rounded,
+            size: 18,
+            color: Color(0xFFC2410C),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Showing saved jobs. Updates will appear when you are back online.',
-              style: AppFonts.bodySmall(color: const Color(0xFF9A3412)).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: AppFonts.bodySmall(
+                color: const Color(0xFF9A3412),
+              ).copyWith(fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -809,7 +841,7 @@ class _EmployeeJobsBottomNav extends StatelessWidget {
           EmployeeSiteMenuButton(
             label: 'More',
             sections: EmployeeSiteMenu.buildSections(
-              onJobSheet: () => context.push(EmployeeJobSheetPage.path),
+              onEarnings: () => context.push(EmployeeEarningsPage.path),
               onReport: () => context.push(EmployeeReportsPage.path),
               onMaterialRequests: () =>
                   context.push(EmployeeMaterialRequestsPage.path),

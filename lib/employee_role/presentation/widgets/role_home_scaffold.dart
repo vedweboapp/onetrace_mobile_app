@@ -17,6 +17,7 @@ import 'package:red5/core/notifications/app_notifications_controller.dart';
 import 'package:red5/core/notifications/widgets/notification_bell_button.dart';
 import 'package:red5/employee_role/data/app_role.dart';
 import 'package:red5/employee_role/data/role_session.dart';
+import 'package:red5/employee_role/employee_earnings/presentation/employee_earning_view.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
@@ -1265,7 +1266,7 @@ class _HomeJobCard extends StatelessWidget {
               const SizedBox(width: 5),
               Expanded(
                 child: Text(
-                  job.location,
+                  job.displayLocationLine,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppFonts.bodyMedium(
@@ -1372,7 +1373,7 @@ class _WeekTaskTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${job.schedule} · ${job.location}',
+                      '${job.schedule} · ${job.displayLocationLine}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: AppFonts.bodySmall(
@@ -1432,7 +1433,7 @@ class _EmployeeBottomNav extends StatelessWidget {
           EmployeeSiteMenuButton(
             label: 'More',
             sections: EmployeeSiteMenu.buildSections(
-              onJobSheet: () => context.push(EmployeeJobSheetPage.path),
+              onEarnings: () => context.push(EmployeeEarningsPage.path),
               onReport: () => context.push(EmployeeReportsPage.path),
               onMaterialRequests: () =>
                   context.push(EmployeeMaterialRequestsPage.path),

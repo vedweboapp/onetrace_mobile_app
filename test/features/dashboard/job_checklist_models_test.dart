@@ -32,7 +32,7 @@ void main() {
     expect(checklists.items.last.isChecked, isTrue);
   });
 
-  test('JobChecklistRead toWriteList matches PUT /jobs/{id}/ contract', () {
+  test('JobChecklistRead toWriteList matches PATCH /jobs/{id}/ contract', () {
     final checklists = JobChecklistRead.tryFromMap({
       'is_marked': false,
       'items': [
@@ -60,9 +60,9 @@ void main() {
     expect(writeList, isA<List<Map<String, dynamic>>>());
     expect(writeList.first['checklist_id'], 1);
     expect(writeList.first['is_checked'], isTrue);
-    expect(writeList.first['concentric_point'], isFalse);
+    expect(writeList.first['concentric_point'], isTrue);
     expect(writeList.last['checklist_id'], 2);
-    expect(writeList.last['concentric_point'], isTrue);
+    expect(writeList.last['concentric_point'], isFalse);
     expect(writeList.first.containsKey('id'), isFalse);
     expect(writeList.first.containsKey('is_marked'), isFalse);
   });

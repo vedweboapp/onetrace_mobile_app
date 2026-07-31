@@ -10,7 +10,6 @@ import 'package:red5/employee_role/jobs/presentation/employee_job_confirmation_p
 import 'package:red5/employee_role/jobs/presentation/employee_job_form_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_safety_verification_page.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
-import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_designs_panel.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_detail_widgets.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_form_picker_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_pin_forms_panel.dart';
@@ -21,6 +20,7 @@ import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
 import 'package:red5/employee_role/jobs/application/employee_qr_scan_flow.dart';
 import 'package:red5/employee_role/jobs/application/job_form_submission_sync_listener.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/operative_job_form_sync_result_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
 
 class EmployeeJobDetailsPage extends ConsumerStatefulWidget {
@@ -128,17 +128,18 @@ class _EmployeeJobDetailsPageState
   Future<void> _scanQrCode({EmployeeJobDrawingPin? pin}) async {
     final jobId = ref.read(employeeJobDetailControllerProvider).job?.id ??
         widget.jobId;
-    final success = await runEmployeeQrScanFlow(
+    final scannedQr = await runEmployeeQrScanFlow(
       context,
-      ref,
+      ProviderScope.containerOf(context),
       jobId: jobId,
+      jobPinId: pin?.jobPinId,
     );
-    if (!mounted || !success) return;
+    if (!mounted || scannedQr == null) return;
     final controller = ref.read(employeeJobDetailControllerProvider.notifier);
-    if (pin != null && pin.projectFormId != null) {
-      controller.markQrCodeScanned(
-        pinId: pin.id,
-        formId: pin.projectFormId,
+    if (pin != null) {
+      controller.markPinQrCodeScanned(
+        pinFormKey: pin.formKey,
+        qrCode: scannedQr,
       );
     } else {
       controller.markQrCodeScanned();
@@ -146,17 +147,24 @@ class _EmployeeJobDetailsPageState
   }
 
   void _onRequiredFormItemTap(String itemId) {
+    if (itemId.startsWith('form_')) {
+      _openFormPicker();
+      return;
+    }
     switch (itemId) {
       case 'linked_forms':
         _openFormPicker();
+        return;
       case 'pin_forms_summary':
-        break;
+        return;
       case 'safety_checklist':
         _openSafetyChecklist();
+        return;
       case 'qr_scan':
         _scanQrCode();
+        return;
       default:
-        break;
+        return;
     }
   }
 
@@ -229,6 +237,9 @@ class _EmployeeJobDetailsPageState
     final formId = pin.projectFormId;
     if (formId == null || formId <= 0) return;
 
+    final jobPinId = pin.jobPinId ?? pin.resolvedJobFormId;
+    if (jobPinId == null || jobPinId <= 0) return;
+
     final controller = ref.read(employeeJobDetailControllerProvider.notifier);
     await controller.refreshAttachedForms();
     if (!mounted) return;
@@ -236,29 +247,17 @@ class _EmployeeJobDetailsPageState
     final state = ref.read(employeeJobDetailControllerProvider);
     final job = state.job;
     final activeJobId = job?.id ?? widget.jobId;
-    var jobFormId = job?.jobFormIdForPin(pin.id, formId);
-    if ((jobFormId == null || jobFormId <= 0) && activeJobId != null) {
-      jobFormId = await ref
-          .read(jobFormSubmissionRepositoryProvider)
-          .resolveJobFormId(
-            jobId: activeJobId,
-            formTemplateId: formId,
-            assignments: job?.formAssignments ?? const [],
-          );
-    }
-    if ((jobFormId == null || jobFormId <= 0) && pin.id > 0) {
-      jobFormId = pin.id;
-    }
 
-    final submissionId = controller.submissionIdFor(formId);
+    final submissionId = pin.projectFormSubmissionId;
     final submitted = await context.push<bool>(
       EmployeeJobFormPage.path,
       extra: <String, Object?>{
         'formId': formId,
         'jobId': activeJobId,
-        if (jobFormId != null && jobFormId > 0) 'jobFormId': jobFormId,
-        if (submissionId != null) 'submissionId': submissionId,
+        'jobPinId': jobPinId,
+        if (submissionId != null && submissionId > 0) 'submissionId': submissionId,
         'pinId': pin.id,
+        'requiresPinQr': pin.qrCodeFieldPresent,
       },
     );
     if (!mounted || submitted != true) return;
@@ -304,6 +303,8 @@ class _EmployeeJobDetailsPageState
             dynamicFormComplete: dynamicFormComplete,
             isJobCompleted: controller.isJobCompleted,
             formHasQrFields: state.formHasQrFields,
+            showJobQrScan: job.hasJobQrField,
+            formTitles: state.formTitles,
           );
 
     final timerElapsed = widget.jobId == null
@@ -378,16 +379,10 @@ class _EmployeeJobDetailsPageState
                       EmployeeJobTabs(
                         selectedTab: state.selectedTab,
                         onChanged: controller.selectTab,
-                        showDesignsTab: job.hasDrawingHierarchy,
                       ),
                       const SizedBox(height: 18),
                       if (state.selectedTab == EmployeeJobDetailTab.forms) ...[
-                        EmployeeRequiredFormChecklist(
-                          items: requiredItems,
-                          onItemTap: _onRequiredFormItemTap,
-                        ),
-                        if (showPinFormsPanel) ...[
-                          const SizedBox(height: 22),
+                        if (showPinFormsPanel)
                           EmployeeJobPinFormsPanel(
                             pinEntries: pinEntries,
                             completedPinFormKeys: state.completedPinFormKeys,
@@ -397,22 +392,14 @@ class _EmployeeJobDetailsPageState
                             formsEnabled: jobStarted,
                             onPinFormTap: _openPinForm,
                             onPinQrTap: (pin) => _scanQrCode(pin: pin),
+                          )
+                        else
+                          EmployeeRequiredFormChecklist(
+                            items: requiredItems,
+                            onItemTap: _onRequiredFormItemTap,
                           ),
-                        ],
-                      ] else if (state.selectedTab ==
-                          EmployeeJobDetailTab.designs)
-                        EmployeeJobDesignsPanel(
-                          job: job,
-                          completedPinFormKeys: state.completedPinFormKeys,
-                          scannedPinQrKeys: state.scannedPinQrKeys,
-                          formHasQrFields: state.formHasQrFields,
-                          isJobCompleted: controller.isJobCompleted,
-                          formsEnabled: jobStarted,
-                          onPinFormTap: _openPinForm,
-                          onPinQrTap: (pin) => _scanQrCode(pin: pin),
-                        )
-                      else
-                        const EmployeeJobLocationPanel(),
+                      ] else
+                        EmployeeJobLocationPanel(job: job),
                     ],
                   ),
                 ),
@@ -434,7 +421,7 @@ class _EmployeeJobDetailsPageState
                                 JobCompletionDebugLog.banner(
                                   'Submit Form — POST submit-form from SQLite | jobId=${job.id}',
                                 );
-                                await ref
+                                final syncResult = await ref
                                     .read(jobFormSubmissionRepositoryProvider)
                                     .syncPendingSubmissionsForJob(
                                       jobId: job.id,
@@ -442,6 +429,16 @@ class _EmployeeJobDetailsPageState
                                     );
                                 await controller.refreshAttachedForms();
                                 await controller.load(jobId: job.id);
+                                if (!context.mounted) return;
+                                if (!syncResult.isEmpty) {
+                                  await showOperativeJobFormSyncResultSheet(
+                                    context: context,
+                                    result: syncResult,
+                                  );
+                                }
+                                if (syncResult.hasFailures) {
+                                  throw StateError(syncResult.summaryMessage);
+                                }
                               }
                               if (!context.mounted) return;
                               if (!isOnline) {

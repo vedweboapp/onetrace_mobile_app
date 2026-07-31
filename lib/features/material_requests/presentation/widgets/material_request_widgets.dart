@@ -4,13 +4,22 @@ import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/features/material_requests/data/material_request_models.dart';
 
 class MaterialRequestStatusBadge extends StatelessWidget {
-  const MaterialRequestStatusBadge({super.key, required this.status});
+  const MaterialRequestStatusBadge({
+    super.key,
+    required this.status,
+    this.label,
+    this.background,
+    this.foreground,
+  });
 
   final MaterialRequestStatus status;
+  final String? label;
+  final Color? background;
+  final Color? foreground;
 
   @override
   Widget build(BuildContext context) {
-    final colors = switch (status) {
+    final fallback = switch (status) {
       MaterialRequestStatus.pending => (
           dot: const Color(0xFF9CA3AF),
           bg: const Color(0xFFF3F4F6),
@@ -27,11 +36,16 @@ class MaterialRequestStatusBadge extends StatelessWidget {
           fg: const Color(0xFF15803D),
         ),
     };
+    final bg = background ?? fallback.bg;
+    final fg = foreground ?? fallback.fg;
+    final text = (label != null && label!.trim().isNotEmpty)
+        ? label!.trim().toUpperCase()
+        : status.label;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: colors.bg,
+        color: bg,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -41,14 +55,14 @@ class MaterialRequestStatusBadge extends StatelessWidget {
             width: 7,
             height: 7,
             decoration: BoxDecoration(
-              color: colors.dot,
+              color: fg,
               shape: BoxShape.circle,
             ),
           ),
           const SizedBox(width: 6),
           Text(
-            status.label,
-            style: AppFonts.labelMedium(color: colors.fg).copyWith(
+            text,
+            style: AppFonts.labelMedium(color: fg).copyWith(
               fontWeight: FontWeight.w700,
               fontSize: 10,
               letterSpacing: 0.4,

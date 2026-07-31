@@ -3,9 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_job_safety_verification_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
+import 'package:red5/employee_role/jobs/presentation/operative_job_workflow_page.dart';
 import 'package:red5/employee_role/projects/data/employee_project_detail.dart';
 
 void openEmployeeJob(
@@ -28,16 +27,15 @@ void openEmployeeJob(
     return;
   }
 
-  final needsSafety = session.needsSafetyVerification(
-    jobId: displayJob.id,
-    status: displayJob.status,
+  final skipChecklist = session.isJobStarted(displayJob.id);
+
+  context.push(
+    OperativeJobWorkflowPage.path,
+    extra: <String, Object?>{
+      'jobId': displayJob.id,
+      'skipChecklist': skipChecklist,
+    },
   );
-
-  final path = needsSafety
-      ? EmployeeJobSafetyVerificationPage.path
-      : EmployeeJobDetailsPage.path;
-
-  context.push(path, extra: <String, Object?>{'jobId': displayJob.id});
 }
 
 EmployeeJobSummary employeeJobSummaryFromProjectItem(

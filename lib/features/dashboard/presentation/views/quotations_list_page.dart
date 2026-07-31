@@ -201,7 +201,7 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                q.quoteName,
+                q.listTitle,
                 style: AppFonts.titleMedium(color: AppColors.inkStrong)
                     .copyWith(
                       fontWeight: FontWeight.w700,
@@ -209,6 +209,19 @@ class _QuotationsListPageState extends ConsumerState<QuotationsListPage> {
                       height: 1.2,
                     ),
               ),
+              if (q.quotationSerialNumber != null &&
+                  q.quotationSerialNumber!.trim().isNotEmpty &&
+                  q.quoteName.trim().isNotEmpty &&
+                  q.quoteName.trim() != q.listTitle) ...[
+                vGap(4),
+                Text(
+                  q.quoteName,
+                  style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
               vGap(10),
               _metaLine("assets/images/inperson.png", _clientLine(q)),
               _metaLine("assets/images/projects.png", _projectLine(q)),

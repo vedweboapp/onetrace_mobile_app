@@ -124,7 +124,8 @@ final class JobFormAssignment {
 
   /// Parses `GET /jobs/{id}/` → `data.forms[]` where each row has:
   /// - `job_form_id` — sent in `POST .../submit-form/` (e.g. 14)
-  /// - `project_form_id` — form template id / operative picker id (e.g. 18)
+  /// - `project_form_id` — project-job form template id (e.g. 18)
+  /// - `dynamic_form_id` — service-job form template id (e.g. 34)
   static List<JobFormAssignment> listFromJobRaw(Map<String, dynamic> raw) {
     for (final key in const [
       'forms',
@@ -296,7 +297,8 @@ final class JobFormSubmitRequestParts {
 }
 
 JobFormSubmitRequestParts buildJobFormSubmitRequestParts({
-  required int jobFormId,
+  int? jobFormId,
+  int? jobPinId,
   required String status,
   required List<JobFormFieldValue> values,
   String? remarks,
@@ -304,11 +306,14 @@ JobFormSubmitRequestParts buildJobFormSubmitRequestParts({
   final prepared = prepareJobFormValuesForApi(values);
   final split = splitJobFormValuesForSubmit(prepared);
   final preparedRemarks = prepareJobFormRemarksForApi(remarks);
+  final linkField = jobPinId != null && jobPinId > 0
+      ? <String, dynamic>{'job_pin_id': jobPinId}
+      : <String, dynamic>{'job_form_id': jobFormId ?? 0};
   return JobFormSubmitRequestParts(
     scalarValues: split.scalars,
     attachments: split.attachments,
     formFields: <String, dynamic>{
-      'job_form_id': jobFormId,
+      ...linkField,
       'status': status,
       if (preparedRemarks != null) 'remarks': preparedRemarks,
       'values': encodeJobFormValuesField(split.scalars),
@@ -338,13 +343,15 @@ JobFormSubmitRequestParts buildJobFormUpdateRequestParts({
 @immutable
 final class JobFormSubmitPayload {
   const JobFormSubmitPayload({
-    required this.jobFormId,
     required this.status,
     required this.values,
+    this.jobFormId,
+    this.jobPinId,
     this.remarks,
   });
 
-  final int jobFormId;
+  final int? jobFormId;
+  final int? jobPinId;
   final String status;
   final String? remarks;
   final List<JobFormFieldValue> values;
@@ -353,6 +360,7 @@ final class JobFormSubmitPayload {
   Map<String, dynamic> toFormBody() =>
       buildJobFormSubmitRequestParts(
         jobFormId: jobFormId,
+        jobPinId: jobPinId,
         status: status,
         values: values,
         remarks: remarks,
@@ -373,20 +381,39 @@ List<JobFormFieldValue> prepareJobFormValuesForApi(
   List<JobFormFieldValue> values,
 ) {
   return values
-      .map(
-        (row) => JobFormFieldValue(
-          fieldId: row.fieldId,
-          value: clampJobFormFieldValueForApi(
-            row.value,
-            fieldId: row.fieldId,
-            fieldType: row.fieldType,
-          ),
-          localFilePath: row.localFilePath,
-          fieldType: row.fieldType,
-        ),
-      )
-      .where((row) => row.fieldId > 0 && row.value.trim().isNotEmpty)
+      .map(_prepareJobFormValueRowForApi)
+      .where(_shouldIncludeJobFormValueRow)
       .toList(growable: false);
+}
+
+JobFormFieldValue _prepareJobFormValueRowForApi(JobFormFieldValue row) {
+  var value = row.value.trim();
+  if (value.isEmpty) {
+    value = _filenameFromLocalAttachmentPath(row.localFilePath);
+  }
+  return JobFormFieldValue(
+    fieldId: row.fieldId,
+    value: clampJobFormFieldValueForApi(
+      value,
+      fieldId: row.fieldId,
+      fieldType: row.fieldType,
+    ),
+    localFilePath: row.localFilePath,
+    fieldType: row.fieldType,
+  );
+}
+
+bool _shouldIncludeJobFormValueRow(JobFormFieldValue row) {
+  if (row.fieldId <= 0) return false;
+  if (row.value.trim().isNotEmpty) return true;
+  return row.localFilePath?.trim().isNotEmpty ?? false;
+}
+
+String _filenameFromLocalAttachmentPath(String? localFilePath) {
+  final path = localFilePath?.trim();
+  if (path == null || path.isEmpty) return '';
+  final parts = path.split(RegExp(r'[\\/]'));
+  return parts.isNotEmpty ? parts.last : '';
 }
 
 String? prepareJobFormRemarksForApi(String? remarks) {
@@ -497,6 +524,7 @@ final class CachedJobFormSubmission {
     required this.syncStatus,
     required this.updatedAt,
     required this.createdAt,
+    this.jobPinId,
     this.remarks,
     this.serverSubmissionId,
     this.lastError,
@@ -506,6 +534,7 @@ final class CachedJobFormSubmission {
   final int jobId;
   final int formId;
   final int jobFormId;
+  final int? jobPinId;
   final String status;
   final String? remarks;
   final List<JobFormFieldValue> values;
@@ -522,6 +551,7 @@ final class CachedJobFormSubmission {
         'job_id': jobId,
         'form_id': formId,
         'job_form_id': jobFormId,
+        if (jobPinId != null) 'job_pin_id': jobPinId,
         'status': status,
         'remarks': remarks,
         'values_json': jsonEncode(values.map((v) => v.toDbJson()).toList()),
@@ -552,6 +582,7 @@ final class CachedJobFormSubmission {
       jobId: row['job_id'] as int,
       formId: row['form_id'] as int,
       jobFormId: row['job_form_id'] as int,
+      jobPinId: row['job_pin_id'] as int?,
       status: row['status'] as String? ?? 'submitted',
       remarks: row['remarks'] as String?,
       values: values,
@@ -642,12 +673,14 @@ final class JobLinkedFormSummary {
     final rowId = _readInt(map['id']);
     var jobFormId = _readInt(map['job_form_id']) ?? _readInt(map['job_form']);
     var formId = _readInt(map['form_id']) ??
+        _readInt(map['dynamic_form_id']) ??
         _readInt(map['project_form_id']) ??
         _readInt(map['project_form']) ??
         _readInt(map['template_id']) ??
         _readInt(map['form_template_id']) ??
         (nestedMap != null ? _readInt(nestedMap['id']) : null);
     final hasExplicitFormId = map.containsKey('form_id') ||
+        map.containsKey('dynamic_form_id') ||
         map.containsKey('project_form_id') ||
         map.containsKey('project_form') ||
         map.containsKey('template_id') ||
@@ -671,13 +704,20 @@ final class JobLinkedFormSummary {
         '';
     final resolvedName = name.isNotEmpty ? name : 'Form $formId';
 
+    final isSubmittedFlag = map['is_submitted'] == true ||
+        map['is_submitted']?.toString().toLowerCase() == 'true';
+    final status = isSubmittedFlag
+        ? 'submitted'
+        : map['status']?.toString() ??
+            map['submission_status']?.toString();
+
     return JobLinkedFormSummary(
       formId: formId,
       name: resolvedName,
       apiName: map['api_name']?.toString() ?? nestedMap?['api_name']?.toString(),
       jobFormId: jobFormId,
       submissionId: _readSubmissionId(map, formId: formId),
-      status: map['status']?.toString(),
+      status: status,
     );
   }
 }
@@ -732,6 +772,7 @@ final class SubmittedJobForm {
 
     final formId =
         _readInt(map['form_id']) ??
+        _readInt(map['dynamic_form_id']) ??
         _readInt(map['project_form_id']) ??
         (nestedMap != null ? _readInt(nestedMap['id']) : null);
 
@@ -801,6 +842,7 @@ List<JobFormAssignment> _parseFormsList(dynamic raw) {
     final rowId = _readInt(map['id']);
     var jobFormId = _readInt(map['job_form_id']) ?? _readInt(map['job_form']);
     var formId = _readInt(map['form_id']) ??
+        _readInt(map['dynamic_form_id']) ??
         _readInt(map['project_form_id']) ??
         _readInt(map['project_form']) ??
         _readInt(map['template_id']) ??
@@ -808,6 +850,7 @@ List<JobFormAssignment> _parseFormsList(dynamic raw) {
         (nestedMap != null ? _readInt(nestedMap['id']) : null) ??
         _readInt(nestedForm);
     final hasExplicitFormId = map.containsKey('form_id') ||
+        map.containsKey('dynamic_form_id') ||
         map.containsKey('project_form_id') ||
         map.containsKey('project_form') ||
         map.containsKey('template_id') ||

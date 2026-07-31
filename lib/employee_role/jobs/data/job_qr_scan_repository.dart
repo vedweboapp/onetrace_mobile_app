@@ -50,11 +50,12 @@ final class JobQrScanRepository {
 
   /// Registers the scan on a job (`POST .../scan-qr/`) and loads public details.
   ///
-  /// When [jobId] is set (job completion / job details), the POST runs first so
-  /// the operative job is linked even if the public details lookup is slow.
+  /// When [jobId] is set, the scanned value is assigned to the job (or pin via
+  /// [jobPinId]) and the call returns after POST — no pre-attached QR required.
   Future<JobQrScanResult> processScan({
     required String qrCode,
     int? jobId,
+    int? jobPinId,
     bool fromSync = false,
   }) async {
     final normalized = QrCodeUtils.normalizeScannedValue(qrCode);
@@ -67,6 +68,7 @@ final class JobQrScanRepository {
         payload: <String, dynamic>{
           'qrCode': normalized,
           if (jobId != null) 'jobId': jobId,
+          if (jobPinId != null && jobPinId > 0) 'jobPinId': jobPinId,
         },
       );
       return JobQrScanResult(
@@ -85,8 +87,23 @@ final class JobQrScanRepository {
     final activeJobId = jobId;
 
     if (activeJobId != null && activeJobId > 0) {
-      await _jobFormsApi.scanJobQr(jobId: activeJobId, qrCode: normalized);
+      await _jobFormsApi.scanJobQr(
+        jobId: activeJobId,
+        qrCode: normalized,
+        jobPinId: jobPinId,
+      );
       registered = true;
+
+      // Assignment flow: POST links the scanned QR to job/pin qr_code field.
+      return JobQrScanResult(
+        details: QrCodeJobDetails(
+          jobId: activeJobId,
+          title: 'Job',
+          qrCode: normalized,
+        ),
+        registeredWithJob: true,
+        qrCode: normalized,
+      );
     }
 
     QrCodeJobDetails details;
@@ -105,7 +122,11 @@ final class JobQrScanRepository {
     }
 
     if (!registered && details.jobId > 0) {
-      await _jobFormsApi.scanJobQr(jobId: details.jobId, qrCode: normalized);
+      await _jobFormsApi.scanJobQr(
+        jobId: details.jobId,
+        qrCode: normalized,
+        jobPinId: jobPinId,
+      );
       registered = true;
     }
 

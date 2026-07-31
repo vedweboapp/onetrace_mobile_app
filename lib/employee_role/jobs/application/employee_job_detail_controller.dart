@@ -9,6 +9,7 @@ import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
+import 'package:red5/employee_role/jobs/data/job_pin_completion.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_detail_widgets.dart';
 
@@ -24,7 +25,7 @@ final employeeJobDetailControllerProvider =
       );
     });
 
-enum EmployeeJobDetailTab { forms, designs, location }
+enum EmployeeJobDetailTab { forms, location }
 
 final class EmployeeJobDetailState {
   const EmployeeJobDetailState({
@@ -48,6 +49,7 @@ final class EmployeeJobDetailState {
     this.completedPinFormKeys = const {},
     this.formHasQrFields = const {},
     this.scannedPinQrKeys = const {},
+    this.scannedPinQrCodes = const {},
   });
 
   final EmployeeJobDetail? job;
@@ -73,8 +75,10 @@ final class EmployeeJobDetailState {
   final Set<String> completedPinFormKeys;
   final Map<int, bool> formHasQrFields;
   final Set<String> scannedPinQrKeys;
+  final Map<String, String> scannedPinQrCodes;
 
-  bool get hasPinQrForms => formHasQrFields.values.any((value) => value);
+  bool get hasPinQrForms =>
+      hasPinFormTasks || formHasQrFields.values.any((value) => value);
 
   bool get hasMultipleForms => formIds.length > 1;
 
@@ -118,6 +122,7 @@ final class EmployeeJobDetailState {
     Set<String>? completedPinFormKeys,
     Map<int, bool>? formHasQrFields,
     Set<String>? scannedPinQrKeys,
+    Map<String, String>? scannedPinQrCodes,
   }) {
     return EmployeeJobDetailState(
       job: job ?? this.job,
@@ -141,6 +146,7 @@ final class EmployeeJobDetailState {
       completedPinFormKeys: completedPinFormKeys ?? this.completedPinFormKeys,
       formHasQrFields: formHasQrFields ?? this.formHasQrFields,
       scannedPinQrKeys: scannedPinQrKeys ?? this.scannedPinQrKeys,
+      scannedPinQrCodes: scannedPinQrCodes ?? this.scannedPinQrCodes,
     );
   }
 
@@ -306,6 +312,20 @@ final class EmployeeJobDetailController
         jobForms: jobForms,
       );
 
+      final pinQrState = _pinQrStateFromJob(enrichedJobWithLinks);
+      final mergedPinQrKeys = <String>{
+        ...pinQrState.keys,
+        ...state.scannedPinQrKeys,
+      };
+      final mergedPinQrCodes = <String, String>{
+        ...pinQrState.codes,
+        ...state.scannedPinQrCodes,
+      };
+      final submittedFromJob = {
+        for (final form in jobForms)
+          if (form.isSubmitted) form.formId,
+      };
+
       state = state.copyWith(
         job: enrichedJobWithLinks,
         isLoading: false,
@@ -313,9 +333,11 @@ final class EmployeeJobDetailController
         clearError: true,
         formIds: formsState.formIds,
         selectedFormId: null,
-        completedFormIds: const {},
+        completedFormIds: submittedFromJob,
         formTitles: formsState.formTitles,
         formSubmissionIds: formsState.formSubmissionIds,
+        scannedPinQrKeys: mergedPinQrKeys,
+        scannedPinQrCodes: mergedPinQrCodes,
       );
 
       if (formsState.formIds.isNotEmpty || job.pinFormTasks.isNotEmpty) {
@@ -376,19 +398,36 @@ final class EmployeeJobDetailController
     final keys = Set<String>.from(state.completedPinFormKeys);
     for (final task in tasks) {
       final pin = findEmployeeJobPinById(job.levels, task.pinId);
-      if (pin?.isStatusComplete == true) {
+      if (pin?.isStatusComplete == true || pin?.isFormSubmitted == true) {
+        keys.add(task.key);
+        continue;
+      }
+      if (task.submissionId != null && task.submissionId! > 0) {
         keys.add(task.key);
         continue;
       }
 
-      final jobFormId = task.jobFormId ?? task.pinId;
-      final linkedForm = job.jobForms
-          .where((form) => form.jobFormId == jobFormId)
-          .toList(growable: false);
-      if (linkedForm.any((form) => form.isSubmitted)) {
-        keys.add(task.key);
+      final jobFormId = task.jobPinId;
+      if (jobFormId != null && jobFormId > 0) {
+        final linkedForm = job.jobForms
+            .where((form) => form.jobFormId == jobFormId)
+            .toList(growable: false);
+        if (linkedForm.any((form) => form.isSubmitted)) {
+          keys.add(task.key);
+        }
       }
     }
+
+    try {
+      final localRows =
+          await _submissionRepository.listLocalSubmissionsForJob(job.id);
+      keys.addAll(
+        pinFormKeysFromLocalSubmissions(
+          levels: job.levels,
+          rows: localRows,
+        ),
+      );
+    } catch (_) {}
 
     state = state.copyWith(completedPinFormKeys: keys);
   }
@@ -398,6 +437,11 @@ final class EmployeeJobDetailController
     List<int> formIds,
     List<JobFormAssignment> assignments,
   ) async {
+    final seeded = <int>{
+      for (final form in state.job?.jobForms ?? const <JobLinkedFormSummary>[])
+        if (form.isSubmitted && formIds.contains(form.formId)) form.formId,
+      ...state.completedFormIds.where(formIds.contains),
+    };
     try {
       final completed = await _submissionRepository.completedFormIdsForJob(
         jobId: jobId,
@@ -405,12 +449,13 @@ final class EmployeeJobDetailController
         assignments: assignments,
       );
       state = state.copyWith(
-        completedFormIds: completed
-            .where((formId) => formIds.contains(formId))
-            .toSet(),
+        completedFormIds: {
+          ...seeded,
+          ...completed.where(formIds.contains),
+        },
       );
     } catch (_) {
-      // Best-effort: local cache still drives completion when offline.
+      state = state.copyWith(completedFormIds: seeded);
     }
   }
 
@@ -573,25 +618,71 @@ final class EmployeeJobDetailController
     }
   }
 
-  void markQrCodeScanned({int? pinId, int? formId}) {
-    if (pinId != null && formId != null && formId > 0) {
-      final pinKeys = Set<String>.from(state.scannedPinQrKeys)
-        ..add('${pinId}_$formId');
-      state = state.copyWith(scannedPinQrKeys: pinKeys);
+  void markQrCodeScanned({int? pinId, int? formId, String? qrCode}) {
+    if (pinId != null) {
+      final key = formId != null && formId > 0
+          ? '${pinId}_$formId'
+          : 'pin_$pinId';
+      final pinKeys = Set<String>.from(state.scannedPinQrKeys)..add(key);
+      Map<String, String>? codes;
+      final normalized = qrCode?.trim();
+      if (normalized != null && normalized.isNotEmpty) {
+        codes = Map<String, String>.from(state.scannedPinQrCodes)
+          ..[key] = normalized;
+      }
+      state = state.copyWith(
+        scannedPinQrKeys: pinKeys,
+        scannedPinQrCodes: codes ?? state.scannedPinQrCodes,
+      );
       return;
     }
     state = state.copyWith(qrCodeScanned: true);
+  }
+
+  void markPinQrCodeScanned({
+    required String pinFormKey,
+    required String qrCode,
+  }) {
+    final normalized = qrCode.trim();
+    if (normalized.isEmpty) return;
+    final pinKeys = Set<String>.from(state.scannedPinQrKeys)..add(pinFormKey);
+    final codes = Map<String, String>.from(state.scannedPinQrCodes)
+      ..[pinFormKey] = normalized;
+    state = state.copyWith(
+      scannedPinQrKeys: pinKeys,
+      scannedPinQrCodes: codes,
+    );
+  }
+
+  ({Set<String> keys, Map<String, String> codes}) _pinQrStateFromJob(
+    EmployeeJobDetail job,
+  ) {
+    final keys = <String>{};
+    final codes = <String, String>{};
+    for (final entry in collectJobPinEntries(job.levels)) {
+      final pin = entry.pin;
+      final qr = pin.qrCode?.trim();
+      if (qr != null && qr.isNotEmpty) {
+        keys.add(pin.formKey);
+        codes[pin.formKey] = qr;
+      }
+    }
+    return (keys: keys, codes: codes);
   }
 
   void markFormComplete(int formId, {int? pinId}) {
     final pinTasks = state.job?.pinFormTasks ?? const [];
     final isPinForm = pinTasks.any((task) => task.formId == formId);
     if (!state.formIds.contains(formId) && !isPinForm) return;
-    final updated = Set<int>.from(state.completedFormIds)..add(formId);
+
     final pinKeys = Set<String>.from(state.completedPinFormKeys);
     if (pinId != null) {
       pinKeys.add('${pinId}_$formId');
+      state = state.copyWith(completedPinFormKeys: pinKeys);
+      return;
     }
+
+    final updated = Set<int>.from(state.completedFormIds)..add(formId);
     state = state.copyWith(
       completedFormIds: updated,
       completedPinFormKeys: pinKeys,
@@ -623,6 +714,8 @@ final class EmployeeJobDetailController
       dynamicFormComplete: dynamicFormComplete,
       isJobCompleted: isJobCompleted,
       formHasQrFields: state.formHasQrFields,
+      showJobQrScan: job.hasJobQrField,
+      formTitles: state.formTitles,
     );
     return items
         .where((item) => !item.isOptional)

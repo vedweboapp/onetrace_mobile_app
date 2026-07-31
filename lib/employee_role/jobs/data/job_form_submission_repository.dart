@@ -6,6 +6,7 @@ import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_forms_api_client.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
+import 'package:red5/employee_role/jobs/data/job_form_attachment_storage.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
 final jobFormSubmissionRepositoryProvider =
@@ -30,6 +31,50 @@ final class JobFormSubmissionResult {
   final SubmittedJobForm? serverSubmission;
 }
 
+final class JobFormBulkSyncEntry {
+  const JobFormBulkSyncEntry({
+    required this.formId,
+    this.jobPinId,
+    required this.success,
+    this.submissionId,
+    this.status,
+    this.error,
+  });
+
+  final int formId;
+  final int? jobPinId;
+  final bool success;
+  final int? submissionId;
+  final String? status;
+  final String? error;
+
+  String get label => jobPinId != null && jobPinId! > 0
+      ? 'Pin form (job_pin_id: $jobPinId)'
+      : 'Form $formId';
+}
+
+final class JobFormBulkSyncResult {
+  const JobFormBulkSyncResult({required this.entries});
+
+  final List<JobFormBulkSyncEntry> entries;
+
+  int get syncedCount => entries.where((entry) => entry.success).length;
+
+  int get failedCount => entries.where((entry) => !entry.success).length;
+
+  bool get hasFailures => failedCount > 0;
+
+  bool get isEmpty => entries.isEmpty;
+
+  String get summaryMessage {
+    if (isEmpty) return 'No forms were waiting to submit.';
+    if (hasFailures) {
+      return 'Submitted $syncedCount form(s). $failedCount failed.';
+    }
+    return 'Submitted $syncedCount form(s) successfully.';
+  }
+}
+
 final class JobFormSubmissionRepository {
   JobFormSubmissionRepository({
     required EmployeeJobFormsApiClient api,
@@ -46,8 +91,16 @@ final class JobFormSubmissionRepository {
   final ConnectivityService _connectivity;
   final QuoteProjectApiClient _jobsApi;
 
-  static String _localIdFor({required int jobId, required int formId}) =>
-      'job_${jobId}_form_$formId';
+  static String _localIdFor({
+    required int jobId,
+    required int formId,
+    int? jobPinId,
+  }) {
+    if (jobPinId != null && jobPinId > 0) {
+      return 'job_${jobId}_job_pin_${jobPinId}_form_$formId';
+    }
+    return 'job_${jobId}_form_$formId';
+  }
 
   /// Resolves the job-form link id (`job_form_id` in API body), not the template id.
   Future<int?> resolveJobFormId({
@@ -133,6 +186,7 @@ final class JobFormSubmissionRepository {
           jobId: existing.jobId,
           formId: existing.formId,
           jobFormId: assignment.jobFormId,
+          jobPinId: existing.jobPinId,
           status: existing.status,
           remarks: existing.remarks,
           values: existing.values,
@@ -226,6 +280,10 @@ final class JobFormSubmissionRepository {
     List<JobFormAssignment> links, {
     bool allowJobFormFallback = false,
   }) async {
+    if (row.jobPinId != null && row.jobPinId! > 0) {
+      return row;
+    }
+
     if (links.isEmpty) {
       links = await _database.listJobFormLinks(row.jobId);
     }
@@ -265,6 +323,7 @@ final class JobFormSubmissionRepository {
       jobId: row.jobId,
       formId: formId,
       jobFormId: jobFormId,
+      jobPinId: row.jobPinId,
       status: row.status,
       remarks: row.remarks,
       values: row.values,
@@ -303,11 +362,16 @@ final class JobFormSubmissionRepository {
   Future<int?> resolveSubmissionId({
     required int jobId,
     required int formTemplateId,
+    int? jobPinId,
   }) async {
     final local = await _database.readSubmission(
       jobId: jobId,
       formId: formTemplateId,
+      jobPinId: jobPinId,
     );
+    if (jobPinId != null && jobPinId > 0) {
+      return local?.serverSubmissionId;
+    }
     return _resolveSubmissionIdForForm(
       jobId: jobId,
       formTemplateId: formTemplateId,
@@ -318,32 +382,49 @@ final class JobFormSubmissionRepository {
   Future<JobFormSubmissionResult> saveAndSubmit({
     required int jobId,
     required int formTemplateId,
-    required int jobFormId,
     required List<JobFormFieldValue> values,
+    int? jobFormId,
+    int? jobPinId,
     String status = 'submitted',
     String? remarks,
     int? submissionId,
   }) async {
-    if (jobFormId <= 0) {
+    final isPinForm = jobPinId != null && jobPinId > 0;
+    if (isPinForm) {
+      if (jobPinId! <= 0) {
+        throw StateError(
+          'Could not resolve job_pin_id for form $formTemplateId.',
+        );
+      }
+    } else if (jobFormId == null || jobFormId <= 0) {
       throw StateError(
         'Could not resolve job_form_id for form $formTemplateId.',
       );
     }
 
+    final resolvedJobPinId = isPinForm ? jobPinId : null;
+    final resolvedJobFormId = isPinForm ? 0 : jobFormId!;
+
     final existing = await _database.readSubmission(
       jobId: jobId,
       formId: formTemplateId,
+      jobPinId: resolvedJobPinId,
     );
 
     final now = DateTime.now();
     final localId = existing?.localId ??
-        _localIdFor(jobId: jobId, formId: formTemplateId);
+        _localIdFor(
+          jobId: jobId,
+          formId: formTemplateId,
+          jobPinId: resolvedJobPinId,
+        );
 
     var cached = CachedJobFormSubmission(
       localId: localId,
       jobId: jobId,
       formId: formTemplateId,
-      jobFormId: jobFormId,
+      jobFormId: resolvedJobFormId,
+      jobPinId: resolvedJobPinId,
       status: status,
       remarks: remarks,
       values: values,
@@ -359,7 +440,7 @@ final class JobFormSubmissionRepository {
         label: 'Form submit (offline)',
         jobId: jobId,
         projectFormId: formTemplateId,
-        jobFormId: jobFormId,
+        jobFormId: resolvedJobPinId ?? resolvedJobFormId,
         status: status,
         remarks: remarks,
         submissionId: submissionId,
@@ -373,7 +454,8 @@ final class JobFormSubmissionRepository {
 
     try {
       final payload = JobFormSubmitPayload(
-        jobFormId: jobFormId,
+        jobFormId: isPinForm ? null : resolvedJobFormId,
+        jobPinId: resolvedJobPinId,
         status: status,
         remarks: remarks,
         values: values,
@@ -388,7 +470,8 @@ final class JobFormSubmissionRepository {
         localId: localId,
         jobId: jobId,
         formId: formTemplateId,
-        jobFormId: jobFormId,
+        jobFormId: resolvedJobFormId,
+        jobPinId: resolvedJobPinId,
         status: status,
         remarks: remarks,
         values: values,
@@ -496,50 +579,69 @@ final class JobFormSubmissionRepository {
     required int formTemplateId,
     required List<JobFormFieldValue> values,
     int? jobFormId,
+    int? jobPinId,
     String? remarks,
     List<JobFormAssignment> assignments = const [],
   }) async {
+    final isPinForm = jobPinId != null && jobPinId > 0;
     final now = DateTime.now();
     final existing = await _database.readSubmission(
       jobId: jobId,
       formId: formTemplateId,
+      jobPinId: jobPinId,
     );
     final resolvedRemarks = remarks?.trim().isNotEmpty == true
         ? remarks!.trim()
         : existing?.remarks;
-    var resolvedJobFormId = await _resolveStoredJobFormId(
-      jobId: jobId,
-      formTemplateId: formTemplateId,
-      jobFormId: jobFormId,
-      existing: existing,
-      assignments: assignments,
-      allowRemoteLookup: _connectivity.isOnline,
-    );
-    if (resolvedJobFormId <= 0 && _connectivity.isOnline) {
-      await refreshJobFormLinksFromApi(jobId);
+    final resolvedJobPinId = isPinForm ? jobPinId! : null;
+    var resolvedJobFormId = 0;
+    if (!isPinForm) {
       resolvedJobFormId = await _resolveStoredJobFormId(
         jobId: jobId,
         formTemplateId: formTemplateId,
         jobFormId: jobFormId,
         existing: existing,
         assignments: assignments,
-        allowRemoteLookup: true,
+        allowRemoteLookup: _connectivity.isOnline,
       );
+      if (resolvedJobFormId <= 0 && _connectivity.isOnline) {
+        await refreshJobFormLinksFromApi(jobId);
+        resolvedJobFormId = await _resolveStoredJobFormId(
+          jobId: jobId,
+          formTemplateId: formTemplateId,
+          jobFormId: jobFormId,
+          existing: existing,
+          assignments: assignments,
+          allowRemoteLookup: true,
+        );
+      }
     }
     final submissionId =
         existing?.syncStatus == JobFormSubmissionSyncStatus.synced
             ? existing?.serverSubmissionId
             : null;
 
+    final persistedValues = await JobFormAttachmentStorage.persistValues(
+      jobId: jobId,
+      formId: formTemplateId,
+      jobPinId: resolvedJobPinId,
+      values: values,
+    );
+
     var cached = CachedJobFormSubmission(
       localId: existing?.localId ??
-          _localIdFor(jobId: jobId, formId: formTemplateId),
+          _localIdFor(
+            jobId: jobId,
+            formId: formTemplateId,
+            jobPinId: resolvedJobPinId,
+          ),
       jobId: jobId,
       formId: formTemplateId,
       jobFormId: resolvedJobFormId,
+      jobPinId: resolvedJobPinId,
       status: 'draft',
       remarks: resolvedRemarks,
-      values: values,
+      values: persistedValues,
       syncStatus: existing?.syncStatus == JobFormSubmissionSyncStatus.synced
           ? JobFormSubmissionSyncStatus.synced
           : JobFormSubmissionSyncStatus.pending,
@@ -549,7 +651,7 @@ final class JobFormSubmissionRepository {
     );
     await _database.upsertSubmission(cached);
 
-    if (resolvedJobFormId > 0) {
+    if (!isPinForm && resolvedJobFormId > 0) {
       await _database.upsertJobFormLink(
         jobId: jobId,
         formId: formTemplateId,
@@ -562,7 +664,7 @@ final class JobFormSubmissionRepository {
       label: 'Draft auto-save',
       jobId: jobId,
       projectFormId: formTemplateId,
-      jobFormId: resolvedJobFormId,
+      jobFormId: resolvedJobPinId ?? resolvedJobFormId,
       status: 'draft',
       remarks: resolvedRemarks,
       submissionId: submissionId,
@@ -576,38 +678,45 @@ final class JobFormSubmissionRepository {
     required int formTemplateId,
     required List<JobFormFieldValue> values,
     int? jobFormId,
+    int? jobPinId,
     String? remarks,
     int? submissionId,
     String status = 'submitted',
     List<JobFormAssignment> assignments = const [],
   }) async {
+    final isPinForm = jobPinId != null && jobPinId > 0;
     final existing = await _database.readSubmission(
       jobId: jobId,
       formId: formTemplateId,
+      jobPinId: jobPinId,
     );
-    var resolvedJobFormId = await _resolveStoredJobFormId(
-      jobId: jobId,
-      formTemplateId: formTemplateId,
-      jobFormId: jobFormId,
-      existing: existing,
-      assignments: assignments,
-      allowRemoteLookup: _connectivity.isOnline,
-    );
-    if (resolvedJobFormId <= 0 && _connectivity.isOnline) {
-      await refreshJobFormLinksFromApi(jobId);
+    final resolvedJobPinId = isPinForm ? jobPinId! : null;
+    var resolvedJobFormId = 0;
+    if (!isPinForm) {
       resolvedJobFormId = await _resolveStoredJobFormId(
         jobId: jobId,
         formTemplateId: formTemplateId,
         jobFormId: jobFormId,
         existing: existing,
         assignments: assignments,
-        allowRemoteLookup: true,
+        allowRemoteLookup: _connectivity.isOnline,
       );
-    }
-    if (resolvedJobFormId <= 0) {
-      throw StateError(
-        'Could not resolve job_form_id for form $formTemplateId.',
-      );
+      if (resolvedJobFormId <= 0 && _connectivity.isOnline) {
+        await refreshJobFormLinksFromApi(jobId);
+        resolvedJobFormId = await _resolveStoredJobFormId(
+          jobId: jobId,
+          formTemplateId: formTemplateId,
+          jobFormId: jobFormId,
+          existing: existing,
+          assignments: assignments,
+          allowRemoteLookup: true,
+        );
+      }
+      if (resolvedJobFormId <= 0) {
+        throw StateError(
+          'Could not resolve job_form_id for form $formTemplateId.',
+        );
+      }
     }
     final resolvedSubmissionId = submissionId ??
         (existing?.syncStatus == JobFormSubmissionSyncStatus.synced
@@ -616,16 +725,28 @@ final class JobFormSubmissionRepository {
 
     final now = DateTime.now();
     final localId = existing?.localId ??
-        _localIdFor(jobId: jobId, formId: formTemplateId);
+        _localIdFor(
+          jobId: jobId,
+          formId: formTemplateId,
+          jobPinId: resolvedJobPinId,
+        );
+
+    final persistedValues = await JobFormAttachmentStorage.persistValues(
+      jobId: jobId,
+      formId: formTemplateId,
+      jobPinId: resolvedJobPinId,
+      values: values,
+    );
 
     var cached = CachedJobFormSubmission(
       localId: localId,
       jobId: jobId,
       formId: formTemplateId,
       jobFormId: resolvedJobFormId,
+      jobPinId: resolvedJobPinId,
       status: status,
       remarks: remarks,
-      values: values,
+      values: persistedValues,
       syncStatus: JobFormSubmissionSyncStatus.pending,
       serverSubmissionId: resolvedSubmissionId,
       updatedAt: now,
@@ -633,7 +754,7 @@ final class JobFormSubmissionRepository {
     );
     await _database.upsertSubmission(cached);
 
-    if (resolvedJobFormId > 0) {
+    if (!isPinForm && resolvedJobFormId > 0) {
       await _database.upsertJobFormLink(
         jobId: jobId,
         formId: formTemplateId,
@@ -646,7 +767,7 @@ final class JobFormSubmissionRepository {
       label: 'Form saved',
       jobId: jobId,
       projectFormId: formTemplateId,
-      jobFormId: resolvedJobFormId,
+      jobFormId: resolvedJobPinId ?? resolvedJobFormId,
       status: status,
       remarks: remarks,
       submissionId: resolvedSubmissionId,
@@ -659,12 +780,72 @@ final class JobFormSubmissionRepository {
     );
   }
 
+  /// POSTs (or PUT-updates) one locally stored form — pin forms submit only
+  /// the row for [jobPinId], never other pins sharing the same template.
+  Future<JobFormSubmissionResult> submitStoredForm({
+    required int jobId,
+    required int formTemplateId,
+    int? jobPinId,
+    List<JobFormAssignment> assignments = const [],
+  }) async {
+    final isPinForm = jobPinId != null && jobPinId > 0;
+    final row = await _database.readSubmission(
+      jobId: jobId,
+      formId: formTemplateId,
+      jobPinId: isPinForm ? jobPinId : null,
+    );
+    if (row == null || row.values.isEmpty) {
+      throw StateError('No saved form data to submit.');
+    }
+
+    if (!_connectivity.isOnline) {
+      return const JobFormSubmissionResult(
+        syncedToServer: false,
+        queuedOffline: true,
+      );
+    }
+
+    try {
+      final server = await _syncStoredSubmissionRow(
+        row,
+        assignments: assignments,
+      );
+      return JobFormSubmissionResult(
+        syncedToServer: true,
+        queuedOffline: false,
+        serverSubmission: server,
+      );
+    } on DioException catch (error) {
+      if (!_isNetworkError(error)) rethrow;
+      return const JobFormSubmissionResult(
+        syncedToServer: false,
+        queuedOffline: true,
+      );
+    }
+  }
+
+  Future<List<CachedJobFormSubmission>> listLocalSubmissionsForJob(int jobId) {
+    return _database.listSubmissionsForJob(jobId);
+  }
+
+  Future<int> countUnsyncedSubmissionsForJob(int jobId) async {
+    final rows = await _database.listUnsyncedSubmissionsForJob(jobId);
+    return rows.where((row) => row.isSubmitted).length;
+  }
+
   Future<String?> loadSavedRemarks({
     required int jobId,
     required int formId,
+    int? jobPinId,
   }) async {
-    final local = await _database.readSubmission(jobId: jobId, formId: formId);
+    final local = await _database.readSubmission(
+      jobId: jobId,
+      formId: formId,
+      jobPinId: jobPinId,
+    );
     if (local?.remarks?.trim().isNotEmpty == true) return local!.remarks;
+
+    if (jobPinId != null && jobPinId > 0) return null;
 
     if (!_connectivity.isOnline) return null;
 
@@ -678,10 +859,32 @@ final class JobFormSubmissionRepository {
   Future<List<JobFormFieldValue>?> loadSavedValues({
     required int jobId,
     required int formId,
+    int? jobPinId,
   }) async {
-    final local = await _database.readSubmission(jobId: jobId, formId: formId);
+    final local = await _database.readSubmission(
+      jobId: jobId,
+      formId: formId,
+      jobPinId: jobPinId,
+    );
     if (local != null && local.values.isNotEmpty) {
       return local.values;
+    }
+
+    if (jobPinId != null && jobPinId > 0) {
+      final submissionId = local?.serverSubmissionId;
+      if (submissionId == null || submissionId <= 0 || !_connectivity.isOnline) {
+        return null;
+      }
+      try {
+        final remote = await _api.fetchSubmittedJobForm(
+          jobId: jobId,
+          submissionId: submissionId,
+        );
+        if (remote.values.isNotEmpty) return remote.values;
+      } on DioException catch (error) {
+        if (!_isNetworkError(error) && !_isMissingSubmission(error)) rethrow;
+      }
+      return null;
     }
 
     if (!_connectivity.isOnline) return null;
@@ -714,17 +917,22 @@ final class JobFormSubmissionRepository {
     required int jobId,
     required int formTemplateId,
     int? submissionId,
+    int? jobPinId,
     List<JobFormAssignment> assignments = const [],
   }) async {
-    final resolvedSubmissionId = submissionId ??
-        await resolveSubmissionId(
-          jobId: jobId,
-          formTemplateId: formTemplateId,
-        );
     final local = await _database.readSubmission(
       jobId: jobId,
       formId: formTemplateId,
+      jobPinId: jobPinId,
     );
+    final resolvedSubmissionId = submissionId ??
+        local?.serverSubmissionId ??
+        (jobPinId != null && jobPinId > 0
+            ? null
+            : await resolveSubmissionId(
+                jobId: jobId,
+                formTemplateId: formTemplateId,
+              ));
 
     if (resolvedSubmissionId != null &&
         resolvedSubmissionId > 0 &&
@@ -734,20 +942,27 @@ final class JobFormSubmissionRepository {
           jobId: jobId,
           submissionId: resolvedSubmissionId,
         );
-        final jobFormId = await _resolveStoredJobFormId(
-          jobId: jobId,
-          formTemplateId: formTemplateId,
-          jobFormId: remote.jobFormId,
-          existing: local,
-          assignments: assignments,
-        );
+        final jobFormId = jobPinId != null && jobPinId > 0
+            ? 0
+            : await _resolveStoredJobFormId(
+                jobId: jobId,
+                formTemplateId: formTemplateId,
+                jobFormId: remote.jobFormId,
+                existing: local,
+                assignments: assignments,
+              );
         await _database.upsertSubmission(
           CachedJobFormSubmission(
             localId: local?.localId ??
-                _localIdFor(jobId: jobId, formId: formTemplateId),
+                _localIdFor(
+                  jobId: jobId,
+                  formId: formTemplateId,
+                  jobPinId: jobPinId,
+                ),
             jobId: jobId,
             formId: formTemplateId,
             jobFormId: jobFormId,
+            jobPinId: jobPinId,
             status: remote.status,
             remarks: remote.remarks,
             values: remote.values,
@@ -767,7 +982,11 @@ final class JobFormSubmissionRepository {
       return (values: local.values, remarks: local.remarks);
     }
 
-    final saved = await loadSavedValues(jobId: jobId, formId: formTemplateId);
+    final saved = await loadSavedValues(
+      jobId: jobId,
+      formId: formTemplateId,
+      jobPinId: jobPinId,
+    );
     if (saved == null || saved.isEmpty) return null;
     return (values: saved, remarks: local?.remarks);
   }
@@ -847,11 +1066,8 @@ final class JobFormSubmissionRepository {
     return completed;
   }
 
-  /// Syncs locally saved forms to `POST /jobs/{jobId}/submit-form/` (Submit Form tap).
-  ///
-  /// POSTs the full submit-form payload (`job_form_id`, `status`, `remarks`,
-  /// `values`) for each locally saved form. Throws if offline or sync fails.
-  Future<void> syncPendingSubmissionsForJob({
+  /// Syncs locally saved forms to `POST /jobs/{jobId}/submit-form/`.
+  Future<JobFormBulkSyncResult> syncPendingSubmissionsForJob({
     required int jobId,
     List<JobFormAssignment> assignments = const [],
   }) async {
@@ -869,7 +1085,7 @@ final class JobFormSubmissionRepository {
     final repairLinks =
         apiAssignments.isNotEmpty ? apiAssignments : mergedAssignments;
 
-    final pending = await _database.listPendingSubmissionsForJob(jobId);
+    final pending = await _database.listUnsyncedSubmissionsForJob(jobId);
     final toSync = pending.where((row) => row.isSubmitted).toList();
 
     JobCompletionDebugLog.info(
@@ -879,39 +1095,82 @@ final class JobFormSubmissionRepository {
 
     if (toSync.isEmpty) {
       JobCompletionDebugLog.info('No local forms — submit-form API skipped');
-    } else {
-      JobCompletionDebugLog.banner(
-        'API CALL | ${toSync.length} form(s) → POST submit-form (from SQLite)',
-      );
+      return const JobFormBulkSyncResult(entries: []);
     }
 
-    final failures = <String>[];
+    JobCompletionDebugLog.banner(
+      'API CALL | ${toSync.length} form(s) → POST submit-form (from SQLite)',
+    );
+
+    final entries = <JobFormBulkSyncEntry>[];
 
     for (final row in toSync) {
       try {
-        final repaired = await _repairPendingSubmission(
-          row,
-          repairLinks,
-          allowJobFormFallback:
-              toSync.length == 1 && repairLinks.isNotEmpty,
+        CachedJobFormSubmission syncRow = row;
+        if (row.jobPinId == null || row.jobPinId! <= 0) {
+          syncRow = await _repairPendingSubmission(
+            row,
+            repairLinks,
+            allowJobFormFallback:
+                toSync.length == 1 && repairLinks.isNotEmpty,
+          );
+          if (syncRow.jobFormId <= 0) {
+            throw StateError(
+              'Could not resolve job_form_id for form ${row.formId}.',
+            );
+          }
+        }
+
+        final server = await _syncStoredSubmissionRow(
+          syncRow,
+          assignments: mergedAssignments,
         );
-        await _postSubmitFormFromSqlite(repaired);
+        entries.add(
+          JobFormBulkSyncEntry(
+            formId: syncRow.formId,
+            jobPinId: syncRow.jobPinId,
+            success: true,
+            submissionId: server.resolvedSubmissionId ?? server.id,
+            status: server.status,
+          ),
+        );
       } catch (error) {
-        failures.add(
-          error is StateError
-              ? error.message
-              : 'Form ${row.formId}: ${error.toString()}',
+        final message = error is StateError
+            ? error.message
+            : error.toString();
+        entries.add(
+          JobFormBulkSyncEntry(
+            formId: row.formId,
+            jobPinId: row.jobPinId,
+            success: false,
+            error: message,
+          ),
+        );
+        await _database.upsertSubmission(
+          CachedJobFormSubmission(
+            localId: row.localId,
+            jobId: row.jobId,
+            formId: row.formId,
+            jobFormId: row.jobFormId,
+            jobPinId: row.jobPinId,
+            status: row.status,
+            remarks: row.remarks,
+            values: row.values,
+            syncStatus: JobFormSubmissionSyncStatus.failed,
+            serverSubmissionId: row.serverSubmissionId,
+            lastError: message,
+            updatedAt: DateTime.now(),
+            createdAt: row.createdAt,
+          ),
         );
       }
     }
 
-    if (failures.isNotEmpty) {
-      throw StateError(failures.join('\n'));
+    final result = JobFormBulkSyncResult(entries: entries);
+    if (!result.isEmpty && !result.hasFailures) {
+      JobCompletionDebugLog.info('Synced ${result.syncedCount} form(s) to API');
     }
-
-    if (toSync.isNotEmpty) {
-      JobCompletionDebugLog.info('Synced ${toSync.length} form(s) to API');
-    }
+    return result;
   }
 
   Future<int> syncPendingSubmissions() async {
@@ -933,6 +1192,7 @@ final class JobFormSubmissionRepository {
             jobId: row.jobId,
             formId: row.formId,
             jobFormId: row.jobFormId,
+            jobPinId: row.jobPinId,
             status: row.status,
             remarks: row.remarks,
             values: row.values,
@@ -950,23 +1210,53 @@ final class JobFormSubmissionRepository {
   }
 
   /// Reads a pending SQLite row and POSTs it to `jobs/{jobId}/submit-form/`.
-  Future<void> _postSubmitFormFromSqlite(CachedJobFormSubmission row) async {
-    if (row.jobFormId <= 0) {
+  Future<SubmittedJobForm> _syncStoredSubmissionRow(
+    CachedJobFormSubmission row, {
+    List<JobFormAssignment> assignments = const [],
+  }) async {
+    final isPinForm = row.jobPinId != null && row.jobPinId! > 0;
+    final submissionId = row.serverSubmissionId;
+    if (submissionId != null && submissionId > 0) {
+      return _syncPendingRow(row, assignments: assignments);
+    }
+    if (!isPinForm && row.jobFormId <= 0) {
+      throw StateError(
+        'Could not resolve job_form_id for form ${row.formId}. '
+        'Re-open the job and try again.',
+      );
+    }
+    return _postSubmitFormFromSqlite(row);
+  }
+
+  Future<SubmittedJobForm> _postSubmitFormFromSqlite(
+    CachedJobFormSubmission row,
+  ) async {
+    final isPinForm = row.jobPinId != null && row.jobPinId! > 0;
+    if (!isPinForm && row.jobFormId <= 0) {
       throw StateError(
         'Could not resolve job_form_id for form ${row.formId}. '
         'Re-open the job and try again.',
       );
     }
 
-    final payload = JobFormSubmitPayload(
-      jobFormId: row.jobFormId,
-      status: row.status.isNotEmpty ? row.status : 'submitted',
-      remarks: row.remarks,
+    final persistedValues = await JobFormAttachmentStorage.persistValues(
+      jobId: row.jobId,
+      formId: row.formId,
+      jobPinId: row.jobPinId,
       values: row.values,
     );
 
+    final payload = JobFormSubmitPayload(
+      jobFormId: isPinForm ? null : row.jobFormId,
+      jobPinId: row.jobPinId,
+      status: row.status.isNotEmpty ? row.status : 'submitted',
+      remarks: row.remarks,
+      values: persistedValues,
+    );
+
     JobCompletionDebugLog.info(
-      'SQLite → POST | job_id=${row.jobId} | job_form_id=${row.jobFormId} | '
+      'SQLite → POST | job_id=${row.jobId} | '
+      '${isPinForm ? 'job_pin_id=${row.jobPinId}' : 'job_form_id=${row.jobFormId}'} | '
       '${row.values.length} field(s)',
     );
     JobCompletionDebugLog.api(
@@ -990,9 +1280,10 @@ final class JobFormSubmissionRepository {
         jobId: row.jobId,
         formId: row.formId,
         jobFormId: row.jobFormId,
+        jobPinId: row.jobPinId,
         status: row.status,
         remarks: row.remarks,
-        values: row.values,
+        values: persistedValues,
         syncStatus: JobFormSubmissionSyncStatus.synced,
         serverSubmissionId: serverSubmissionId,
         lastError: null,
@@ -1013,16 +1304,18 @@ final class JobFormSubmissionRepository {
         'status': server.status,
       },
     );
+    return server;
   }
 
-  Future<void> _syncPendingRow(
+  Future<SubmittedJobForm> _syncPendingRow(
     CachedJobFormSubmission row, {
     List<JobFormAssignment> assignments = const [],
   }) async {
+    final isPinForm = row.jobPinId != null && row.jobPinId! > 0;
     var jobFormId = row.jobFormId;
     var formId = row.formId;
     JobFormAssignment? match;
-    if (jobFormId <= 0) {
+    if (!isPinForm && jobFormId <= 0) {
       final links = assignments.isNotEmpty
           ? assignments
           : await _database.listJobFormLinks(row.jobId);
@@ -1050,10 +1343,15 @@ final class JobFormSubmissionRepository {
       }
       if (jobFormId != row.jobFormId || formId != row.formId) {
         row = CachedJobFormSubmission(
-          localId: _localIdFor(jobId: row.jobId, formId: formId),
+          localId: _localIdFor(
+            jobId: row.jobId,
+            formId: formId,
+            jobPinId: row.jobPinId,
+          ),
           jobId: row.jobId,
           formId: formId,
           jobFormId: jobFormId,
+          jobPinId: row.jobPinId,
           status: row.status,
           remarks: row.remarks,
           values: row.values,
@@ -1087,7 +1385,8 @@ final class JobFormSubmissionRepository {
       );
     } else {
       final submitPayload = JobFormSubmitPayload(
-        jobFormId: jobFormId,
+        jobFormId: isPinForm ? null : jobFormId,
+        jobPinId: row.jobPinId,
         status: row.status,
         remarks: row.remarks,
         values: row.values,
@@ -1128,6 +1427,7 @@ final class JobFormSubmissionRepository {
         jobId: row.jobId,
         formId: row.formId,
         jobFormId: jobFormId,
+        jobPinId: row.jobPinId,
         status: row.status,
         remarks: row.remarks,
         values: row.values,
@@ -1137,6 +1437,7 @@ final class JobFormSubmissionRepository {
         createdAt: row.createdAt,
       ),
     );
+    return server;
   }
 
   int? resolveJobFormIdFromLists({

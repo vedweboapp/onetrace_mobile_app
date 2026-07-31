@@ -30,7 +30,7 @@ abstract final class EmployeeSiteMenu {
 
   /// More menu short card — Job Shift, Reports, Material Required.
   static List<EmployeeSiteMenuSection> buildSections({
-    VoidCallback? onJobSheet,
+    VoidCallback? onEarnings,
     VoidCallback? onReport,
     VoidCallback? onMaterialRequests,
   }) {
@@ -39,9 +39,9 @@ abstract final class EmployeeSiteMenu {
         title: '',
         items: [
           EmployeeSiteMenuItem(
-            label: 'Job Shift',
-            icon: Icons.work_rounded,
-            onTap: onJobSheet,
+            label: 'Earnings',
+            icon: Icons.payments_rounded,
+            onTap: onEarnings,
           ),
           EmployeeSiteMenuItem(
             label: 'Reports',
@@ -193,10 +193,7 @@ class _EmployeeSiteShortCard extends StatelessWidget {
 }
 
 class _CompactMenuTile extends StatelessWidget {
-  const _CompactMenuTile({
-    required this.item,
-    required this.onTap,
-  });
+  const _CompactMenuTile({required this.item, required this.onTap});
 
   final EmployeeSiteMenuItem item;
   final VoidCallback onTap;
@@ -224,10 +221,9 @@ class _CompactMenuTile extends StatelessWidget {
                 Expanded(
                   child: Text(
                     item.label,
-                    style: AppFonts.bodyMedium(color: color).copyWith(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                    ),
+                    style: AppFonts.bodyMedium(
+                      color: color,
+                    ).copyWith(fontWeight: FontWeight.w800, fontSize: 14),
                   ),
                 ),
               ],

@@ -66,9 +66,11 @@ final class OperativeSyncProcessor {
         final qrCode = item.payload['qrCode']?.toString().trim();
         if (qrCode == null || qrCode.isEmpty) return;
         final jobId = _readJobId(item.payload);
+        final jobPinId = _readJobPinId(item.payload);
         await _qrScanRepository.processScan(
           qrCode: qrCode,
           jobId: jobId,
+          jobPinId: jobPinId,
           fromSync: true,
         );
     }
@@ -76,6 +78,13 @@ final class OperativeSyncProcessor {
 
   int? _readJobId(Map<String, dynamic> payload) {
     final raw = payload['jobId'];
+    if (raw is int) return raw;
+    if (raw != null) return int.tryParse(raw.toString());
+    return null;
+  }
+
+  int? _readJobPinId(Map<String, dynamic> payload) {
+    final raw = payload['jobPinId'];
     if (raw is int) return raw;
     if (raw != null) return int.tryParse(raw.toString());
     return null;

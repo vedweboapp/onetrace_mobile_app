@@ -97,13 +97,14 @@ class _SiteHeader extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.surfaceHigh,
+                color: const Color(0xFFE8F8EF),
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: AppColors.borderLight),
               ),
               child: Text(
                 site.status,
-                style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
+                style: AppFonts.labelSmall(
+                  color: const Color(0xFF0B8F49),
+                ).copyWith(
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.3,
                   fontSize: 10,

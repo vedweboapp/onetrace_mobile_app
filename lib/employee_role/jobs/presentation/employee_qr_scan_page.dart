@@ -23,7 +23,10 @@ class _EmployeeQrScanPageState extends ConsumerState<EmployeeQrScanPage> {
   }
 
   Future<void> _startScan() async {
-    await runEmployeeQrScanFlow(context, ref);
+    await runEmployeeQrScanFlow(
+      context,
+      ProviderScope.containerOf(context),
+    );
     if (mounted && context.canPop()) {
       context.pop();
     }

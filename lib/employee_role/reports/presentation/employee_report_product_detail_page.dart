@@ -28,9 +28,11 @@ class EmployeeReportProductDetailPage extends StatelessWidget {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
                 children: [
-                  _ProductHeaderCard(product: product),
+                  _ProductIdentityCard(product: product),
+                  const SizedBox(height: 12),
+                  _QuantitySummaryCard(quantity: product.totalQuantity),
                   const SizedBox(height: 22),
                   Text(
                     'Site Distribution',
@@ -88,15 +90,81 @@ class _DetailAppBar extends StatelessWidget {
   }
 }
 
-class _ProductHeaderCard extends StatelessWidget {
-  const _ProductHeaderCard({required this.product});
+class _ProductIdentityCard extends StatelessWidget {
+  const _ProductIdentityCard({required this.product});
 
   final EmployeeReportProduct product;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderLight),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A000000),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceHigh,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: const Icon(
+              Icons.inventory_2_outlined,
+              color: AppColors.muted,
+              size: 26,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  product.name,
+                  style: AppFonts.titleMedium(
+                    color: AppColors.inkStrong,
+                  ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Last Updated: ${product.lastUpdated}',
+                  style: AppFonts.bodySmall(
+                    color: AppColors.muted,
+                  ).copyWith(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuantitySummaryCard extends StatelessWidget {
+  const _QuantitySummaryCard({required this.quantity});
+
+  final String quantity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(16),
@@ -112,47 +180,6 @@ class _ProductHeaderCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceHigh,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.borderLight),
-                ),
-                child: const Icon(
-                  Icons.inventory_2_outlined,
-                  color: AppColors.muted,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      product.name,
-                      style: AppFonts.titleMedium(
-                        color: AppColors.inkStrong,
-                      ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Last Updated: ${product.lastUpdated}',
-                      style: AppFonts.bodySmall(
-                        color: AppColors.muted,
-                      ).copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
           Text(
             'QUANTITY',
             style: AppFonts.labelSmall(color: AppColors.muted).copyWith(
@@ -161,9 +188,9 @@ class _ProductHeaderCard extends StatelessWidget {
               fontSize: 11,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Text(
-            product.totalQuantity,
+            quantity,
             style: AppFonts.headlineSmall(
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 32),
@@ -198,7 +225,7 @@ class _SiteAllocationCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(
-              Icons.inventory_2_outlined,
+              Icons.apartment_rounded,
               color: AppColors.muted,
               size: 22,
             ),

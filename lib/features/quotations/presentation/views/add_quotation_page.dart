@@ -44,8 +44,6 @@ class AddQuotationPage extends ConsumerStatefulWidget {
 class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   final _formKey = GlobalKey<FormState>();
   final _quoteName = TextEditingController();
-  final _costCentre = TextEditingController();
-  final _orderNo = TextEditingController();
   final _dueDate = TextEditingController();
   final _blockName = TextEditingController();
   final _sectionName = TextEditingController();
@@ -72,8 +70,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   List<UserProfileModel> _userProfiles = const [];
 
   ContactModel? _primaryContact;
-  ContactModel? _secondaryContact;
-  ContactModel? _siteContactPerson;
+  List<ContactModel?> _additionalContacts = <ContactModel?>[null];
 
   UserProfileModel? _projectManagerUser;
   UserProfileModel? _salespersonUser;
@@ -101,8 +98,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   @override
   void dispose() {
     _quoteName.dispose();
-    _costCentre.dispose();
-    _orderNo.dispose();
     _dueDate.dispose();
     _descriptionQuill.dispose();
     _descriptionFocus.dispose();
@@ -200,8 +195,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
         _contacts = (results[1] as ContactsPageResult).items;
         _site = null;
         _primaryContact = null;
-        _secondaryContact = null;
-        _siteContactPerson = null;
+        _additionalContacts = <ContactModel?>[null];
         _plotGroups = newGroups;
         _blockExpandedList = hasLevels
             ? List<bool>.filled(newGroups.length, true)
@@ -230,8 +224,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           _contacts = const [];
           _site = null;
           _primaryContact = null;
-          _secondaryContact = null;
-          _siteContactPerson = null;
+          _additionalContacts = <ContactModel?>[null];
           _plotGroups = [];
           _blockExpandedList = [];
           _loadedLevelSummary = null;
@@ -568,10 +561,118 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
       'state': s.state,
       'country': s.country,
       'pincode': s.postalCode,
-      'site_contact': _siteContactPerson != null
-          ? _jsonPk(_siteContactPerson!.id)
-          : null,
     };
+  }
+
+  List<ContactModel> get _clientContactsList =>
+      _contactsForPicker.toList(growable: false);
+
+  void _addAdditionalContactRow() {
+    if (_submitting) return;
+    setState(() => _additionalContacts = [..._additionalContacts, null]);
+  }
+
+  void _removeAdditionalContactRow(int index) {
+    if (_submitting) return;
+    setState(() {
+      if (_additionalContacts.length <= 1) {
+        _additionalContacts = <ContactModel?>[null];
+      } else {
+        _additionalContacts = [
+          for (var i = 0; i < _additionalContacts.length; i++)
+            if (i != index) _additionalContacts[i],
+        ];
+      }
+    });
+  }
+
+  Widget _buildAdditionalContactsSection() {
+    final contacts = _clientContactsList;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Additional contacts',
+                style: AppFonts.titleSmall(color: AppColors.inkStrong)
+                    .copyWith(fontWeight: FontWeight.w700, fontSize: 15),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: (_submitting || _client == null)
+                  ? null
+                  : _addAdditionalContactRow,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add additional contact'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_client == null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE0E0E0)),
+            ),
+            child: Text(
+              'Select a client first to add additional contacts.',
+              style: AppFonts.bodySmall(color: AppColors.muted),
+            ),
+          )
+        else if (contacts.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFE0E0E0)),
+            ),
+            child: Text(
+              'No contacts for this client yet.',
+              style: AppFonts.bodySmall(color: AppColors.muted),
+            ),
+          )
+        else
+          for (var i = 0; i < _additionalContacts.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _contactDropdown(
+                    fieldKey: 'add_$i',
+                    hint: 'Optional',
+                    value: _additionalContacts[i],
+                    onChanged: (c) => setState(() {
+                      final next = List<ContactModel?>.from(
+                        _additionalContacts,
+                      );
+                      next[i] = c;
+                      _additionalContacts = next;
+                    }),
+                  ),
+                ),
+                if (_additionalContacts.length > 1) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => _removeAdditionalContactRow(i),
+                    icon: const Icon(Icons.close, size: 20),
+                    color: AppColors.muted,
+                  ),
+                ],
+              ],
+            ),
+          ],
+      ],
+    );
   }
 
   List<Map<String, dynamic>> _buildQuoteSections() {
@@ -777,7 +878,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
     final mm = value.month.toString().padLeft(2, '0');
     final dd = value.day.toString().padLeft(2, '0');
     final yyyy = value.year.toString().padLeft(4, '0');
-    return '$mm/$dd/$yyyy';
+    return '$dd-$mm-$yyyy';
   }
 
   String _formatDueDateForApi(DateTime value) {
@@ -790,6 +891,29 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
   DateTime? _parseDueDateField(String raw) {
     final t = raw.trim();
     if (t.isEmpty) return null;
+    final dash = t.split('-');
+    if (dash.length == 3) {
+      // dd-mm-yyyy (UI) or yyyy-mm-dd (API)
+      if (dash[0].length == 4) {
+        final y = int.tryParse(dash[0]);
+        final m = int.tryParse(dash[1]);
+        final d = int.tryParse(dash[2]);
+        if (y != null && m != null && d != null) {
+          try {
+            return DateTime(y, m, d);
+          } catch (_) {}
+        }
+      } else {
+        final d = int.tryParse(dash[0]);
+        final m = int.tryParse(dash[1]);
+        final y = int.tryParse(dash[2]);
+        if (y != null && m != null && d != null) {
+          try {
+            return DateTime(y, m, d);
+          } catch (_) {}
+        }
+      }
+    }
     final parts = t.split('/');
     if (parts.length == 3) {
       final m = int.tryParse(parts[0]);
@@ -1068,29 +1192,32 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
           sum + ((sec['section_total'] as num?)?.round() ?? 0),
     );
 
+    final additionalIds = _additionalContacts
+        .whereType<ContactModel>()
+        .map((c) => _jsonPk(c.id))
+        .toList(growable: false);
+
     final body = <String, dynamic>{
       'customer': _jsonPk(_client!.id),
       'site': _jsonPk(_site!.id),
+      'sites': <Object>[_jsonPk(_site!.id)],
       'quote_name': _quoteName.text.trim(),
       'tags': _selectedTags
           .map((t) => int.tryParse(t.id.trim()) ?? t.id.trim())
           .toList(),
-      'order_number': _orderNo.text.trim(),
       'due_date': _dueDatePayloadValue(),
       'description': _descriptionQuill.document.toPlainText().trim(),
       'project': _jsonPk(_project!.id),
       'levels': levels,
-      'select_all_levels': false,
+      'select_all_levels': true,
       'quote_sections': quoteSections,
       'grand_total': grandTotal,
       'site_snapshot': _siteSnapshotMap(),
+      'additional_customer_contact': additionalIds,
     };
 
     if (_primaryContact != null) {
       body['primary_customer_contact'] = _jsonPk(_primaryContact!.id);
-    }
-    if (_secondaryContact != null) {
-      body['additional_customer_contact'] = _jsonPk(_secondaryContact!.id);
     }
     if (_salespersonUser != null) {
       body['salesperson'] = _jsonPk(_salespersonUser!.id);
@@ -1099,14 +1226,18 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
       body['project_manager'] = _jsonPk(_projectManagerUser!.id);
     }
     if (_selectedTechnicians.isNotEmpty) {
-      body['technicians'] =
+      final techIds =
           _selectedTechnicians.map((u) => _jsonPk(u.id)).toList();
+      body['technicians'] = techIds;
+      body['technician'] = techIds;
     }
 
     body.removeWhere((key, value) {
       if (key == 'quote_sections' ||
           key == 'levels' ||
           key == 'tags' ||
+          key == 'sites' ||
+          key == 'additional_customer_contact' ||
           key == 'site_snapshot') {
         return false;
       }
@@ -1151,12 +1282,6 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
             'No quotable sections: ensure each level has plots with pins and composite items. Deselect empty plots if needed.',
           ),
         ),
-      );
-      return;
-    }
-    if (_salespersonUser == null) {
-      context.showTopSnackBar(
-        const SnackBar(content: Text('Select salesperson')),
       );
       return;
     }
@@ -1340,17 +1465,47 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                          _sectionLabel('Basic info'),
-                          _label('Quote Name', required: true),
+                          _label('Quote name', required: true),
                           const SizedBox(height: 8),
                           AppTextField(
                             controller: _quoteName,
-                            hintText: 'e.g. Apex Structural Group',
+                            hintText: 'Quote name',
                             validator: _required('Quote name'),
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 14),
-                          _label('Project Name', required: true),
+                          _label('Client', required: true),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<ClientModel>(
+                            key: ValueKey<String>(
+                              'quotation_client_${_client?.id ?? 'none'}',
+                            ),
+                            initialValue: _client,
+                            isExpanded: true,
+                            hint: const Text('Select client'),
+                            decoration: _dropdownDecoration(),
+                            items: _clients
+                                .map(
+                                  (c) => DropdownMenuItem<ClientModel>(
+                                    value: c,
+                                    child: Text(
+                                      c.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: _submitting
+                                ? null
+                                : (v) => setState(() {
+                                    _client = v;
+                                    _primaryContact = null;
+                                    _additionalContacts =
+                                        <ContactModel?>[null];
+                                  }),
+                          ),
+                          const SizedBox(height: 14),
+                          _label('Project', required: true),
                           const SizedBox(height: 8),
                           DropdownButtonFormField<QuoteSummary>(
                             key: ValueKey<String>(
@@ -1358,7 +1513,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                             ),
                             initialValue: _project,
                             isExpanded: true,
-                            hint: const Text('e.g. John Doe'),
+                            hint: const Text('Select project'),
                             decoration: _dropdownDecoration(),
                             items: _projects
                                 .map(
@@ -1380,8 +1535,8 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                                       _sites = const [];
                                       _contacts = const [];
                                       _primaryContact = null;
-                                      _secondaryContact = null;
-                                      _siteContactPerson = null;
+                                      _additionalContacts =
+                                          <ContactModel?>[null];
                                       _loadedLevelSummary = null;
                                       _plotGroups = [];
                                       _blockExpandedList = [];
@@ -1413,40 +1568,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                             ),
                           ],
                           const SizedBox(height: 14),
-                          _buildProjectScopeSection(),
-                          const SizedBox(height: 14),
-                          _label('Client Name', required: true),
-                          const SizedBox(height: 8),
-                          DropdownButtonFormField<ClientModel>(
-                            key: ValueKey<String>(
-                              'quotation_client_${_client?.id ?? 'none'}',
-                            ),
-                            initialValue: _client,
-                            isExpanded: true,
-                            hint: const Text('e.g. Apex Structural Group'),
-                            decoration: _dropdownDecoration(),
-                            items: _clients
-                                .map(
-                                  (c) => DropdownMenuItem<ClientModel>(
-                                    value: c,
-                                    child: Text(
-                                      c.name,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: _submitting
-                                ? null
-                                : (v) => setState(() {
-                                    _client = v;
-                                    _primaryContact = null;
-                                    _secondaryContact = null;
-                                    _siteContactPerson = null;
-                                  }),
-                          ),
-                          const SizedBox(height: 14),
-                          _label('Site', required: true),
+                          _label('Sites', required: true),
                           const SizedBox(height: 8),
                           DropdownButtonFormField<SiteModel>(
                             key: ValueKey<String>(
@@ -1457,7 +1579,7 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                             hint: Text(
                               _project == null
                                   ? 'Select a project first'
-                                  : 'e.g. Apex Structural Group',
+                                  : 'Select site',
                             ),
                             decoration: _dropdownDecoration(),
                             items: _sites
@@ -1490,180 +1612,107 @@ class _AddQuotationPageState extends ConsumerState<AddQuotationPage> {
                             ),
                           ],
                           const SizedBox(height: 14),
-                          _label('Cost Centre', required: true),
-                          const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _costCentre,
-                            hintText: 'e.g. Apex Structural Group',
-                            validator: _required('Cost centre'),
-                            textInputAction: TextInputAction.next,
-                          ),
-                          _sectionLabel('Contact'),
-                          _label('Primary Customer Contact'),
+                          _buildProjectScopeSection(),
+                          const SizedBox(height: 14),
+                          _label('Primary contact'),
                           const SizedBox(height: 8),
                           _contactDropdown(
                             fieldKey: 'primary_customer',
-                            hint: 'Select contact (optional)',
+                            hint: 'Optional',
                             value: _primaryContact,
                             onChanged: (c) =>
                                 setState(() => _primaryContact = c),
                           ),
                           const SizedBox(height: 14),
-                          _label('Secondary Customer Contact'),
+                          _label('Due date'),
                           const SizedBox(height: 8),
-                          _contactDropdown(
-                            fieldKey: 'secondary_customer',
-                            hint: 'Select contact (optional)',
-                            value: _secondaryContact,
-                            onChanged: (c) =>
-                                setState(() => _secondaryContact = c),
+                          _dateField(
+                            controller: _dueDate,
+                            hint: 'dd-mm-yyyy',
+                            onTap: _submitting ? null : _pickDueDate,
+                            enabled: !_submitting,
+                          ),
+                          const SizedBox(height: 18),
+                          _buildAdditionalContactsSection(),
+                          const SizedBox(height: 18),
+                          _label('Salesperson'),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<UserProfileModel?>(
+                            key: ValueKey<String>(
+                              'sp_${_salespersonUser?.id ?? 'none'}',
+                            ),
+                            initialValue: _salespersonUser,
+                            isExpanded: true,
+                            hint: Text(
+                              'Optional',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ),
+                            ),
+                            decoration: _dropdownDecoration(),
+                            items: <DropdownMenuItem<UserProfileModel?>>[
+                              const DropdownMenuItem<UserProfileModel?>(
+                                value: null,
+                                child: Text('— None —'),
+                              ),
+                              ..._userProfiles.map(
+                                (u) => DropdownMenuItem<UserProfileModel?>(
+                                  value: u,
+                                  child: Text(
+                                    _userLabel(u),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            onChanged: _submitting
+                                ? null
+                                : (u) => setState(() => _salespersonUser = u),
                           ),
                           const SizedBox(height: 14),
-                          _label('Site Contact'),
+                          _label('Project manager'),
                           const SizedBox(height: 8),
-                          _contactDropdown(
-                            fieldKey: 'site_contact',
-                            hint: 'Select contact (optional)',
-                            value: _siteContactPerson,
-                            onChanged: (c) =>
-                                setState(() => _siteContactPerson = c),
+                          DropdownButtonFormField<UserProfileModel?>(
+                            key: ValueKey<String>(
+                              'pm_${_projectManagerUser?.id ?? 'none'}',
+                            ),
+                            initialValue: _projectManagerUser,
+                            isExpanded: true,
+                            hint: Text(
+                              'Optional',
+                              style: AppFonts.bodySmall(
+                                color: AppColors.muted,
+                              ),
+                            ),
+                            decoration: _dropdownDecoration(),
+                            items: <DropdownMenuItem<UserProfileModel?>>[
+                              const DropdownMenuItem<UserProfileModel?>(
+                                value: null,
+                                child: Text('— None —'),
+                              ),
+                              ..._userProfiles.map(
+                                (u) => DropdownMenuItem<UserProfileModel?>(
+                                  value: u,
+                                  child: Text(
+                                    _userLabel(u),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            onChanged: _submitting
+                                ? null
+                                : (u) =>
+                                    setState(() => _projectManagerUser = u),
                           ),
-                          _sectionLabel('Additional information'),
+                          const SizedBox(height: 14),
                           _label('Tags'),
                           const SizedBox(height: 8),
                           _buildTagsField(),
                           const SizedBox(height: 14),
-                          _label('Order No.'),
-                          const SizedBox(height: 8),
-                          AppTextField(
-                            controller: _orderNo,
-                            hintText: 'Order number',
-                            textInputAction: TextInputAction.next,
-                          ),
-                          const SizedBox(height: 14),
-                          _label('Due Date'),
-                          const SizedBox(height: 8),
-                          _dateField(
-                            controller: _dueDate,
-                            hint: 'mm/dd/yyyy',
-                            onTap: _submitting ? null : _pickDueDate,
-                            enabled: !_submitting,
-                          ),
-                          const SizedBox(height: 14),
-                          _label('Project Manager'),
-                          const SizedBox(height: 8),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<
-                                    UserProfileModel?>(
-                                  key: ValueKey<String>(
-                                    'pm_${_projectManagerUser?.id ?? 'none'}',
-                                  ),
-                                  initialValue: _projectManagerUser,
-                                  isExpanded: true,
-                                  hint: Text(
-                                    'Select user (optional)',
-                                    style: AppFonts.bodySmall(
-                                      color: AppColors.muted,
-                                    ),
-                                  ),
-                                  decoration: _dropdownDecoration(),
-                                  items: <DropdownMenuItem<
-                                      UserProfileModel?>>[
-                                    const DropdownMenuItem<
-                                        UserProfileModel?>(
-                                      value: null,
-                                      child: Text('— None —'),
-                                    ),
-                                    ..._userProfiles.map(
-                                      (u) => DropdownMenuItem<
-                                          UserProfileModel?>(
-                                        value: u,
-                                        child: Text(
-                                          _userLabel(u),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                  onChanged: _submitting
-                                      ? null
-                                      : (u) => setState(
-                                            () => _projectManagerUser = u,
-                                          ),
-                                ),
-                              ),
-                              if (_projectManagerUser != null) ...[
-                                const SizedBox(width: 8),
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: TextButton(
-                                    onPressed: _submitting
-                                        ? null
-                                        : () => setState(
-                                              () => _projectManagerUser =
-                                                  null,
-                                            ),
-                                    child: const Text('Clear'),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 14),
                           _label('Technicians'),
                           const SizedBox(height: 8),
                           _buildTechniciansField(),
-                          const SizedBox(height: 14),
-                          _label('Salesperson', required: true),
-                          const SizedBox(height: 8),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<
-                                    UserProfileModel?>(
-                                  key: ValueKey<String>(
-                                    'sp_${_salespersonUser?.id ?? 'none'}',
-                                  ),
-                                  initialValue: _salespersonUser,
-                                  isExpanded: true,
-                                  hint: Text(
-                                    'Select salesperson',
-                                    style: AppFonts.bodySmall(
-                                      color: AppColors.muted,
-                                    ),
-                                  ),
-                                  decoration: _dropdownDecoration(),
-                                  items: <DropdownMenuItem<
-                                      UserProfileModel?>>[
-                                    const DropdownMenuItem<
-                                        UserProfileModel?>(
-                                      value: null,
-                                      child: Text('— Select —'),
-                                    ),
-                                    ..._userProfiles.map(
-                                      (u) => DropdownMenuItem<
-                                          UserProfileModel?>(
-                                        value: u,
-                                        child: Text(
-                                          _userLabel(u),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                  onChanged: _submitting
-                                      ? null
-                                      : (u) => setState(
-                                            () => _salespersonUser = u,
-                                          ),
-                                ),
-                              ),
-                            ],
-                          ),
                           const SizedBox(height: 14),
                           _label('Description'),
                           const SizedBox(height: 8),

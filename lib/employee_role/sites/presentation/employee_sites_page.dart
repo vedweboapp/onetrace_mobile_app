@@ -46,19 +46,12 @@ class _EmployeeSitesPageState extends State<EmployeeSitesPage> {
 
     return Scaffold(
       backgroundColor: AppColors.surface,
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {},
-        backgroundColor: AppColors.inkStrong,
-        foregroundColor: AppColors.white,
-        elevation: 4,
-        child: const Icon(Icons.add, size: 28),
-      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             EmployeeToolbarHeader(
-              title: 'Site',
+              title: 'Reports',
               onBack: () => context.pop(),
               onSettingsPressed: () => context.push(
                 EmployeeTechnicianSettingsRoutes.personalProfile,
@@ -71,7 +64,7 @@ class _EmployeeSitesPageState extends State<EmployeeSitesPage> {
             ),
             Expanded(
               child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 88),
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
                 itemCount: sites.length,
                 separatorBuilder: (context, index) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {

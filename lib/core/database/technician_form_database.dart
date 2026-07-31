@@ -22,7 +22,7 @@ final class TechnicianFormDatabase {
     final path = p.join(dbPath, _dbName);
     final db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (database, version) async {
         await _createFormCacheTable(database);
         await _createSubmissionTable(database);
@@ -38,6 +38,11 @@ final class TechnicianFormDatabase {
         }
         if (oldVersion < 4) {
           await _createOperativeCacheTables(database);
+        }
+        if (oldVersion < 5) {
+          await database.execute(
+            'ALTER TABLE $_submissionTable ADD COLUMN job_pin_id INTEGER',
+          );
         }
       },
     );
@@ -64,6 +69,7 @@ final class TechnicianFormDatabase {
         job_id INTEGER NOT NULL,
         form_id INTEGER NOT NULL,
         job_form_id INTEGER NOT NULL,
+        job_pin_id INTEGER,
         status TEXT NOT NULL,
         remarks TEXT,
         values_json TEXT NOT NULL,
@@ -146,7 +152,20 @@ final class TechnicianFormDatabase {
   Future<CachedJobFormSubmission?> readSubmission({
     required int jobId,
     required int formId,
+    int? jobPinId,
   }) async {
+    if (jobPinId != null && jobPinId > 0) {
+      final rows = await _db.query(
+        _submissionTable,
+        where: 'job_id = ? AND form_id = ? AND job_pin_id = ?',
+        whereArgs: [jobId, formId, jobPinId],
+        orderBy: 'updated_at DESC',
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      return CachedJobFormSubmission.fromDbRow(rows.first);
+    }
+
     final rows = await _db.query(
       _submissionTable,
       where: 'job_id = ? AND form_id = ?',
@@ -185,6 +204,23 @@ final class TechnicianFormDatabase {
       _submissionTable,
       where: 'sync_status = ? AND job_id = ?',
       whereArgs: [JobFormSubmissionSyncStatus.pending.name, jobId],
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(CachedJobFormSubmission.fromDbRow).toList(growable: false);
+  }
+
+  Future<List<CachedJobFormSubmission>> listUnsyncedSubmissionsForJob(
+    int jobId,
+  ) async {
+    final rows = await _db.query(
+      _submissionTable,
+      where:
+          'job_id = ? AND sync_status IN (?, ?)',
+      whereArgs: [
+        jobId,
+        JobFormSubmissionSyncStatus.pending.name,
+        JobFormSubmissionSyncStatus.failed.name,
+      ],
       orderBy: 'created_at ASC',
     );
     return rows.map(CachedJobFormSubmission.fromDbRow).toList(growable: false);

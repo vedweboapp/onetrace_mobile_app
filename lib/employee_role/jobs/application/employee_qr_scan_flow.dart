@@ -7,30 +7,35 @@ import 'package:red5/employee_role/jobs/data/job_qr_scan_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/qr_code_details_sheet.dart';
 
 /// Opens the camera, registers the scan with the API, and shows job details.
-/// Returns `true` when scan + POST succeeded.
-Future<bool> runEmployeeQrScanFlow(
+/// Returns the normalized QR code when scan + POST succeeded.
+Future<String?> runEmployeeQrScanFlow(
   BuildContext context,
-  WidgetRef ref, {
+  ProviderContainer container, {
   int? jobId,
+  int? jobPinId,
 }) async {
   final code = await openFormQrScanner(context);
   final qrCode = code?.trim();
-  if (qrCode == null || qrCode.isEmpty || !context.mounted) return false;
+  if (qrCode == null || qrCode.isEmpty || !context.mounted) return null;
 
   try {
-    final result = await ref.read(jobQrScanRepositoryProvider).processScan(
+    final result = await container.read(jobQrScanRepositoryProvider).processScan(
           qrCode: qrCode,
           jobId: jobId,
+          jobPinId: jobPinId,
         );
-    if (!context.mounted) return false;
+    if (!context.mounted) return null;
 
+    final pinScan = jobPinId != null && jobPinId > 0;
     context.showTopSnackBar(
       SnackBar(
         content: Text(
           result.queuedOffline
               ? 'QR scan saved offline. It will sync when you are back online.'
               : result.registeredWithJob
-                  ? 'QR ${result.qrCode} linked to job.'
+                  ? pinScan
+                      ? 'QR ${result.qrCode} assigned to pin.'
+                      : 'QR ${result.qrCode} assigned to job.'
                   : 'QR details loaded for ${result.details.title}.',
         ),
         behavior: SnackBarBehavior.floating,
@@ -38,19 +43,21 @@ Future<bool> runEmployeeQrScanFlow(
     );
 
     if (result.queuedOffline) {
-      return true;
+      return result.qrCode;
     }
 
-    await showQrCodeDetailsSheet(
-      context,
-      details: result.details,
-      qrCode: result.qrCode,
-    );
-    if (!context.mounted) return true;
+    if (!pinScan) {
+      await showQrCodeDetailsSheet(
+        context,
+        details: result.details,
+        qrCode: result.qrCode,
+      );
+      if (!context.mounted) return result.qrCode;
+    }
 
-    return true;
+    return result.qrCode;
   } catch (error) {
-    if (!context.mounted) return false;
+    if (!context.mounted) return null;
     context.showTopSnackBar(
       SnackBar(
         content: Text(
@@ -61,6 +68,6 @@ Future<bool> runEmployeeQrScanFlow(
         ),
       ),
     );
-    return false;
+    return null;
   }
 }

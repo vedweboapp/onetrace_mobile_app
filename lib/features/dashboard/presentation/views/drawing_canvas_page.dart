@@ -31,6 +31,9 @@ import 'package:red5/features/forms/data/form_models.dart';
 import 'package:red5/features/forms/data/form_picker_utils.dart';
 import 'package:red5/features/forms/data/forms_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
+import 'package:red5/employee_role/jobs/application/operative_canvas_bridge.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_checklist_pdf_page.dart';
 
 /// Route payload for [DrawingCanvasPage]. Use [toExtra] with GoRouter and
 /// [DrawingCanvasPage.push] so every entry point matches [AppRouter] parsing.
@@ -46,6 +49,9 @@ class DrawingCanvasArgs {
     this.levelId,
     this.embeddedLevelPlots = const [],
     this.viewOnly = false,
+    this.operativeWorkflow = false,
+    this.operativeJobId,
+    this.focusPinId,
   });
 
   final String title;
@@ -63,6 +69,13 @@ class DrawingCanvasArgs {
 
   /// Read-only preview — hides editing tools and submit controls.
   final bool viewOnly;
+
+  /// Operative pin-first job flow — tappable pins, no editing chrome.
+  final bool operativeWorkflow;
+  final int? operativeJobId;
+
+  /// When set (operative designs), canvas zooms to this server pin after load.
+  final int? focusPinId;
 
   Map<String, dynamic> toExtra() {
     final t = title.trim();
@@ -85,6 +98,9 @@ class DrawingCanvasArgs {
       if (lid.isNotEmpty) 'levelId': lid,
       if (plots.isNotEmpty) 'embeddedLevelPlots': plots,
       if (viewOnly) 'viewOnly': true,
+      if (operativeWorkflow) 'operativeWorkflow': true,
+      if (operativeJobId != null) 'operativeJobId': operativeJobId,
+      if (focusPinId != null) 'focusPinId': focusPinId,
     };
   }
 
@@ -134,6 +150,9 @@ class DrawingCanvasPage extends ConsumerStatefulWidget {
     this.levelId,
     this.embeddedLevelPlots = const [],
     this.viewOnly = false,
+    this.operativeWorkflow = false,
+    this.operativeJobId,
+    this.focusPinId,
   });
 
   static const path = '/drawing-canvas';
@@ -155,6 +174,11 @@ class DrawingCanvasPage extends ConsumerStatefulWidget {
   final String? levelId;
   final List<Map<String, dynamic>> embeddedLevelPlots;
   final bool viewOnly;
+  final bool operativeWorkflow;
+  final int? operativeJobId;
+
+  /// Server pin id to zoom into after markup loads (operative job designs).
+  final int? focusPinId;
 
   @override
   ConsumerState<DrawingCanvasPage> createState() => _DrawingCanvasPageState();
@@ -216,6 +240,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   final TransformationController _viewerTransform = TransformationController();
   _CanvasTool? _selectedTool = _CanvasTool.share;
   bool _isSelectAllEnabled = false;
+  bool _didApplyFocusPin = false;
   final List<_PlotRegion> _regions = <_PlotRegion>[];
   int? _activeRegionIndex;
   Offset? _draftStart;
@@ -293,9 +318,18 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   /// Draw-tool overlay captures all pointers (select / line / place pin).
   bool get _overlayDrawListenerActive =>
       !widget.viewOnly &&
+      !widget.operativeWorkflow &&
       (_selectedTool == _CanvasTool.selectArea ||
           _selectedTool == _CanvasTool.line ||
           _selectedTool == _CanvasTool.location);
+
+  bool get _hideEditingChrome => widget.viewOnly || widget.operativeWorkflow;
+
+  ValueNotifier<int>? _operativeCompletionNotifier;
+
+  void _onOperativeCompletionChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
@@ -327,8 +361,13 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     }
     _projectId = (widget.projectId ?? '').trim();
     _levelId = (widget.levelId ?? '').trim();
-    if (widget.viewOnly) {
+    if (widget.viewOnly || widget.operativeWorkflow) {
       _selectedTool = _CanvasTool.pin;
+    }
+    if (widget.operativeWorkflow && widget.operativeJobId != null) {
+      _operativeCompletionNotifier =
+          OperativeCanvasBridge.completionNotifier(widget.operativeJobId!);
+      _operativeCompletionNotifier?.addListener(_onOperativeCompletionChanged);
     }
     _loadPinStatuses();
     _loadGroupAndCompositeOptions();
@@ -366,6 +405,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
         setState(() => _isDrawingLoading = false);
       }
     }
+    if (!mounted) return;
+    await _maybeFocusOperativePin();
   }
 
   /// Re-applies plot/pin positions after the letterboxed content rect is known.
@@ -451,6 +492,265 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     return pin.offset;
   }
 
+  /// Document-space point for a PDF pin (independent of current zoom).
+  Offset? _pinDocumentPoint(_CanvasPin pin) {
+    final ctrl = _pdfController;
+    final point = pin.pdfPoint;
+    if (ctrl != null && point != null) {
+      final layout = safeGetPageRect(ctrl, point.page);
+      if (layout == null || layout.width <= 0 || layout.height <= 0) {
+        return null;
+      }
+      final boxW = point.pageWidth > 0
+          ? point.pageWidth
+          : (_pdfMetadataCache?.page(point.page)?.width ?? 1.0);
+      final boxH = point.pageHeight > 0
+          ? point.pageHeight
+          : (_pdfMetadataCache?.page(point.page)?.height ?? 1.0);
+      final nx = (point.pdfX / (boxW <= 0 ? 1.0 : boxW)).clamp(0.0, 1.0);
+      final ny = (point.pdfY / (boxH <= 0 ? 1.0 : boxH)).clamp(0.0, 1.0);
+      return Offset(
+        layout.left + nx * layout.width,
+        layout.top + ny * layout.height,
+      );
+    }
+    if (ctrl != null) {
+      try {
+        return MatrixUtils.transformPoint(
+          Matrix4.inverted(ctrl.value),
+          pin.offset,
+        );
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  ({int regionIndex, int pinIndex, _CanvasPin pin})? _findCanvasPinByServerId(
+    int serverPinId,
+  ) {
+    for (var r = 0; r < _regions.length; r++) {
+      final pins = _regions[r].pins;
+      for (var p = 0; p < pins.length; p++) {
+        if (pins[p].serverPinId == serverPinId) {
+          return (regionIndex: r, pinIndex: p, pin: pins[p]);
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Centers and zooms the viewport on [pin]. Returns false if layout is not ready yet.
+  bool _focusCameraOnPin(_CanvasPin pin, {double targetZoom = 2.6}) {
+    final viewport = _viewportCanvasSize();
+    if (viewport == null || viewport.width <= 0 || viewport.height <= 0) {
+      return false;
+    }
+    final center = Offset(viewport.width / 2, viewport.height / 2);
+    final zoom = targetZoom.clamp(1.4, 6.0);
+
+    if (_isPdfFile && _pdfController != null) {
+      final doc = _pinDocumentPoint(pin);
+      if (doc == null) return false;
+      final next = Matrix4.identity()
+        ..translate(center.dx, center.dy)
+        ..scale(zoom)
+        ..translate(-doc.dx, -doc.dy);
+      _pdfController!.goTo(
+        destination: next,
+        duration: const Duration(milliseconds: 280),
+      );
+      return true;
+    }
+
+    final scene = pin.offset;
+    _viewerTransform.value = Matrix4.identity()
+      ..translate(center.dx, center.dy)
+      ..scale(zoom)
+      ..translate(-scene.dx, -scene.dy);
+    return true;
+  }
+
+  _CanvasPin? get _selectedCanvasPin {
+    final regionIndex = _selectedPinRegionIndex;
+    final pinIndex = _selectedPinIndex;
+    if (regionIndex == null || pinIndex == null) return null;
+    if (regionIndex < 0 || regionIndex >= _regions.length) return null;
+    final pins = _regions[regionIndex].pins;
+    if (pinIndex < 0 || pinIndex >= pins.length) return null;
+    return pins[pinIndex];
+  }
+
+  List<_PinAttachment> get _selectedPinOpenableAttachments {
+    final pin = _selectedCanvasPin;
+    if (pin == null) return const <_PinAttachment>[];
+    return pin.attachments
+        .where((attachment) => (attachment.url ?? '').trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Widget _buildOperativeSeeAttachmentsBar() {
+    final attachments = _selectedPinOpenableAttachments;
+    if (attachments.isEmpty) return const SizedBox.shrink();
+
+    final pinId = _selectedCanvasPin?.serverPinId ?? 0;
+    final heroTag = 'operative-pin-attachments-$pinId';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Hero(
+        tag: heroTag,
+        child: Material(
+          color: const Color(0xFFFEECEC),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            onTap: _openOperativePinAttachments,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.attach_file_rounded,
+                    size: 20,
+                    color: Color(0xFFE53935),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'See attachments',
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Text(
+                    attachments.length == 1
+                        ? '1 file'
+                        : '${attachments.length} files',
+                    style: AppFonts.bodySmall(color: AppColors.muted),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(
+                    Icons.open_in_new_rounded,
+                    size: 18,
+                    color: AppColors.muted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openOperativePinAttachments() async {
+    final pin = _selectedCanvasPin;
+    final attachments = _selectedPinOpenableAttachments;
+    if (pin == null || attachments.isEmpty) {
+      _showTopToast('No attachments for this pin.');
+      return;
+    }
+
+    _PinAttachment? selected = attachments.first;
+    if (attachments.length > 1) {
+      selected = await showModalBottomSheet<_PinAttachment>(
+        context: context,
+        backgroundColor: AppColors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (ctx) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'See attachments',
+                    style: AppFonts.titleMedium(color: AppColors.inkStrong)
+                        .copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final attachment in attachments) ...[
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        (attachment.name.toLowerCase().endsWith('.pdf'))
+                            ? Icons.picture_as_pdf_outlined
+                            : Icons.image_outlined,
+                        color: AppColors.inkStrong,
+                      ),
+                      title: Text(
+                        attachment.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppFonts.bodyMedium(color: AppColors.inkStrong)
+                            .copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      onTap: () => Navigator.of(ctx).pop(attachment),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+    if (!mounted || selected == null) return;
+
+    final url = selected.url?.trim() ?? '';
+    if (url.isEmpty) return;
+    final pinId = pin.serverPinId ?? 0;
+    await openEmployeeChecklistPdf(
+      context,
+      title: 'Attachment',
+      fileUrl: url,
+      heroTag: 'operative-pin-attachments-$pinId',
+    );
+  }
+
+  Future<void> _maybeFocusOperativePin() async {
+    final focusId = widget.focusPinId;
+    if (focusId == null || focusId <= 0 || _didApplyFocusPin) return;
+
+    for (var attempt = 0; attempt < 16; attempt++) {
+      if (!mounted) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+
+      final hit = _findCanvasPinByServerId(focusId);
+      if (hit == null) {
+        _didApplyFocusPin = true;
+        return;
+      }
+
+      // Keep PDF pin anchors in sync with the live viewport before focusing.
+      if (_usePdfViewport) {
+        _realignMarkupFromApiSources();
+      }
+
+      final applied = _focusCameraOnPin(hit.pin);
+      if (applied) {
+        if (!mounted) return;
+        setState(() {
+          _selectedPinRegionIndex = hit.regionIndex;
+          _selectedPinIndex = hit.pinIndex;
+          _didApplyFocusPin = true;
+        });
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+    }
+  }
+
   Size? _viewportCanvasSize() {
     final box =
         _viewportCanvasKey.currentContext?.findRenderObject() as RenderBox?;
@@ -507,6 +807,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
 
   @override
   void dispose() {
+    _operativeCompletionNotifier?.removeListener(_onOperativeCompletionChanged);
     _cancelPinLongPressTimer();
     _persistActiveRegionsToCache();
     _blockController.dispose();
@@ -1782,6 +2083,24 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
     final pins = _regions[regionIndex].pins;
     if (pinIndex < 0 || pinIndex >= pins.length) return;
     final currentPin = pins[pinIndex];
+
+    if (widget.operativeWorkflow) {
+      final pinId = currentPin.serverPinId;
+      if (pinId != null) {
+        setState(() {
+          _selectedPinRegionIndex = regionIndex;
+          _selectedPinIndex = pinIndex;
+        });
+        await OperativeCanvasBridge.onPinTap(
+          context,
+          widget.operativeJobId,
+          pinId,
+        );
+        if (mounted) setState(() {});
+      }
+      return;
+    }
+
     setState(() {
       _selectedPinRegionIndex = regionIndex;
       _selectedPinIndex = pinIndex;
@@ -2799,7 +3118,10 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
           if (pin.zoneName.trim().isNotEmpty) 'plot_name': pin.zoneName.trim(),
           if (pin.formId != null) ...{
             'form_id': pin.formId,
+            // Project jobs use project_form_id; service-style links use
+            // dynamic_form_id. Send both so the backend can resolve either.
             'project_form_id': pin.formId,
+            'dynamic_form_id': pin.formId,
           },
           if (pin.formName.trim().isNotEmpty) 'form_name': pin.formName.trim(),
           if (pin.formId != null && pin.formName.trim().isNotEmpty)
@@ -2984,8 +3306,8 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
   }
 
   Widget _buildCanvasStack() {
-    final pinLayerInteractive =
-        !_overlayDrawListenerActive && _selectedTool == _CanvasTool.share;
+    final pinLayerInteractive = widget.operativeWorkflow ||
+        (!_overlayDrawListenerActive && _selectedTool == _CanvasTool.share);
     final pdfCtrl = _pdfController;
     final overlays = _usePdfViewport && pdfCtrl != null
         ? ListenableBuilder(
@@ -3036,6 +3358,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                   size: pinSize,
                   pointerHeight: pointerH,
                   selected: false,
+                  completed: widget.operativeWorkflow &&
+                      OperativeCanvasBridge.isPinComplete(
+                        widget.operativeJobId,
+                        pin.serverPinId ?? -1,
+                      ),
                 );
                 return Positioned(
                   left: anchor.dx - pinSize / 2,
@@ -3080,6 +3407,11 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
                 size: pinSize,
                 pointerHeight: pointerH,
                 selected: true,
+                completed: widget.operativeWorkflow &&
+                    OperativeCanvasBridge.isPinComplete(
+                      widget.operativeJobId,
+                      pin.serverPinId ?? -1,
+                    ),
               );
               return Positioned(
                 left: anchor.dx - pinSize / 2,
@@ -3608,7 +3940,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
       ),
       body: Column(
         children: [
-          if (!widget.viewOnly)
+          if (!_hideEditingChrome)
             Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 10),
@@ -3658,7 +3990,9 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               ],
             ),
           ),
-          if (_uploadedPdfPaths.isNotEmpty)
+          if (widget.operativeWorkflow)
+            _buildOperativeSeeAttachmentsBar()
+          else if (_uploadedPdfPaths.isNotEmpty)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -3770,7 +4104,7 @@ class _DrawingCanvasPageState extends ConsumerState<DrawingCanvasPage> {
               ),
             ),
           ),
-          if (!widget.viewOnly)
+          if (!_hideEditingChrome)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
@@ -3950,6 +4284,7 @@ class PinView extends StatelessWidget {
     this.size = 32,
     this.pointerHeight = 9,
     this.selected = false,
+    this.completed = false,
   });
 
   final int number;
@@ -3957,11 +4292,22 @@ class PinView extends StatelessWidget {
   final double size;
   final double pointerHeight;
   final bool selected;
+  final bool completed;
 
   @override
   Widget build(BuildContext context) {
     final abbr = abbreviation?.trim() ?? '';
     final topAbbr = abbr.isEmpty ? '' : abbr.toUpperCase();
+
+    final borderColor = completed
+        ? const Color(0xFF0EA56A)
+        : (selected ? const Color(0xFF7C3AED) : AppColors.inkStrong);
+    final fillColor =
+        completed ? const Color(0xFFEFFAF4) : AppColors.white;
+    final textColor =
+        completed ? const Color(0xFF0A8F5D) : AppColors.inkStrong;
+    final pointerColor =
+        completed ? const Color(0xFF0EA56A) : AppColors.inkStrong;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -3977,9 +4323,9 @@ class PinView extends StatelessWidget {
                 height: size,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFFEFFAF4),
+                  color: fillColor,
                   border: Border.all(
-                    color: selected ? const Color(0xFF7C3AED) : const Color(0xFF0EA56A),
+                    color: borderColor,
                     width: selected ? 3.4 : 3,
                   ),
                 ),
@@ -3994,7 +4340,7 @@ class PinView extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: AppFonts.labelSmall(
-                            color: const Color(0xFF0A8F5D),
+                            color: textColor,
                           ).copyWith(
                             fontWeight: FontWeight.w800,
                             fontSize: size * 0.18,
@@ -4006,7 +4352,7 @@ class PinView extends StatelessWidget {
                     Text(
                       '$number',
                       style: AppFonts.labelMedium(
-                        color: const Color(0xFF0A8F5D),
+                        color: textColor,
                       ).copyWith(
                         fontWeight: FontWeight.w800,
                         fontSize: size * 0.42,
@@ -4021,8 +4367,8 @@ class PinView extends StatelessWidget {
                 top: size - 1,
                 child: CustomPaint(
                   size: Size(pointerHeight * 1.5, pointerHeight),
-                  painter: const _PinTrianglePainter(
-                    fillColor: Color(0xFF0EA56A),
+                  painter: _PinTrianglePainter(
+                    fillColor: pointerColor,
                   ),
                 ),
               ),
@@ -4240,7 +4586,16 @@ String _readPinFormName(Map<String, dynamic> map) {
 }
 
 int? _readPinFormId(Map<String, dynamic> map) {
-  for (final key in const ['form_id', 'form', 'linked_form', 'job_form']) {
+  for (final key in const [
+    'dynamic_form_id',
+    'project_form_id',
+    'form_id',
+    'form',
+    'dynamic_form',
+    'project_form',
+    'linked_form',
+    'job_form',
+  ]) {
     final raw = map[key];
     if (raw is int) return raw;
     if (raw is num) return raw.toInt();
@@ -4250,6 +4605,7 @@ int? _readPinFormId(Map<String, dynamic> map) {
         'id',
         'form_id',
         'job_form_id',
+        'dynamic_form_id',
         'project_form_id',
       ]) {
         final idRaw = nested[idKey];
@@ -4259,51 +4615,33 @@ int? _readPinFormId(Map<String, dynamic> map) {
         if (parsed != null) return parsed;
       }
     }
+    final parsed = int.tryParse('${raw ?? ''}');
+    if (parsed != null) return parsed;
   }
-  final direct = map['form_id'];
-  if (direct is int) return direct;
-  if (direct is num) return direct.toInt();
-  return int.tryParse('${direct ?? ''}');
+  return null;
 }
 
 List<_PinAttachment> _readPinAttachments(Map<String, dynamic> map) {
-  final raw = map['attachments'] ?? map['files'] ?? map['attachment'];
-  if (raw is! List) return const <_PinAttachment>[];
-  final out = <_PinAttachment>[];
-  for (final entry in raw) {
-    if (entry is Map) {
-      final nested = Map<String, dynamic>.from(
-        entry.map((k, v) => MapEntry(k.toString(), v)),
-      );
-      final name = nested['name']?.toString().trim() ??
-          nested['file_name']?.toString().trim() ??
-          nested['filename']?.toString().trim() ??
-          '';
-      final url = nested['url']?.toString().trim() ??
-          nested['file_url']?.toString().trim();
-      final idRaw = nested['id'];
-      final id = idRaw is int
-          ? idRaw
-          : (idRaw is num ? idRaw.toInt() : int.tryParse('${idRaw ?? ''}'));
-      final resolvedName = name.isNotEmpty
-          ? name
-          : (url != null && url.isNotEmpty
-                ? url.split('/').last
-                : '');
-      if (resolvedName.isEmpty) continue;
-      out.add(
-        _PinAttachment(
-          name: resolvedName,
-          url: url?.isNotEmpty == true ? url : null,
-          serverId: id,
-        ),
-      );
-    } else {
-      final text = entry.toString().trim();
-      if (text.isNotEmpty) out.add(_PinAttachment(name: text));
-    }
+  final itemDetail = map['item_detail'];
+  dynamic itemDetailAttachments;
+  if (itemDetail is Map) {
+    itemDetailAttachments = itemDetail['attachments'];
   }
-  return out;
+
+  final parsed = parseEmployeeJobPinAttachments(
+    pinAttachments: map['attachments'] ?? map['files'] ?? map['attachment'],
+    itemDetailAttachments: itemDetailAttachments,
+  );
+  if (parsed.isEmpty) return const <_PinAttachment>[];
+
+  return [
+    for (final attachment in parsed)
+      _PinAttachment(
+        name: attachment.name,
+        url: attachment.url,
+        serverId: attachment.id,
+      ),
+  ];
 }
 
 Map<String, dynamic> _pinAttachmentPayload(_PinAttachment attachment) {

@@ -99,6 +99,9 @@ import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_jobs_page.dart';
+import 'package:red5/employee_role/jobs/presentation/operative_job_workflow_page.dart';
+import 'package:red5/employee_role/employee_earnings/presentation/employee_earning_view.dart';
+import 'package:red5/employee_role/employee_earnings/presentation/employee_earning_details_view.dart';
 import 'package:red5/employee_role/jobs/presentation/operative_job_site_listings_page.dart';
 import 'package:red5/employee_role/projects/presentation/operative_site_route_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_qr_scan_page.dart';
@@ -106,6 +109,9 @@ import 'package:red5/employee_role/reports/data/employee_reports_data.dart';
 import 'package:red5/employee_role/reports/presentation/employee_report_product_detail_page.dart';
 import 'package:red5/employee_role/sites/presentation/employee_site_detail_page.dart';
 import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
+import 'package:red5/employee_role/material_requests/presentation/employee_material_request_detail_page.dart';
+import 'package:red5/employee_role/material_requests/presentation/employee_dispatch_detail_page.dart';
+import 'package:red5/employee_role/material_requests/presentation/employee_return_request_detail_page.dart';
 import 'package:red5/employee_role/sites/presentation/employee_sites_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/projects/presentation/employee_project_details_page.dart';
@@ -400,6 +406,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: OperativeJobWorkflowPage.path,
+        name: OperativeJobWorkflowPage.name,
+        pageBuilder: (context, state) {
+          final page = OperativeJobWorkflowPage.fromExtra(state.extra);
+          return _animatedPage(
+            state: state,
+            child: page ?? const OperativeJobWorkflowPage(jobId: 0),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: OperativeJobSiteListingsPage.path,
         name: OperativeJobSiteListingsPage.name,
         pageBuilder: (context, state) {
@@ -418,10 +436,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final page = OperativeSiteRoutePage.fromExtra(state.extra);
           return _animatedPage(
             state: state,
-            child: page ??
-                const OperativeSiteRoutePage(
-                  title: 'Site location',
-                ),
+            child: page ?? const OperativeSiteRoutePage(title: 'Site location'),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -454,7 +469,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           int? formId;
           int? jobId;
           int? jobFormId;
+          int? jobPinId;
+          int? pinId;
           int? submissionId;
+          bool? requiresPinQr;
           final extra = state.extra;
           if (extra is Map) {
             final map = Map<String, dynamic>.from(extra);
@@ -476,11 +494,30 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             } else if (rawJobFormId != null) {
               jobFormId = int.tryParse(rawJobFormId.toString().trim());
             }
+            final rawJobPinId = map['jobPinId'];
+            if (rawJobPinId is int) {
+              jobPinId = rawJobPinId;
+            } else if (rawJobPinId != null) {
+              jobPinId = int.tryParse(rawJobPinId.toString().trim());
+            }
+            final rawPinId = map['pinId'];
+            if (rawPinId is int) {
+              pinId = rawPinId;
+            } else if (rawPinId != null) {
+              pinId = int.tryParse(rawPinId.toString().trim());
+            }
             final rawSubmissionId = map['submissionId'];
             if (rawSubmissionId is int) {
               submissionId = rawSubmissionId;
             } else if (rawSubmissionId != null) {
               submissionId = int.tryParse(rawSubmissionId.toString().trim());
+            }
+            final rawRequiresPinQr = map['requiresPinQr'];
+            if (rawRequiresPinQr is bool) {
+              requiresPinQr = rawRequiresPinQr;
+            } else if (rawRequiresPinQr != null) {
+              requiresPinQr =
+                  rawRequiresPinQr.toString().trim().toLowerCase() == 'true';
             }
           }
           return _animatedPage(
@@ -489,7 +526,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               formId: formId ?? 0,
               jobId: jobId,
               jobFormId: jobFormId,
+              jobPinId: jobPinId,
+              pinId: pinId,
               submissionId: submissionId,
+              requiresPinQr: requiresPinQr,
             ),
             beginOffset: const Offset(0.08, 0),
           );
@@ -501,6 +541,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) {
           var title = 'Checklist';
           var fileUrl = '';
+          String? heroTag;
           final extra = state.extra;
           if (extra is Map) {
             final map = Map<String, dynamic>.from(extra);
@@ -512,12 +553,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             if (rawFileUrl is String && rawFileUrl.trim().isNotEmpty) {
               fileUrl = rawFileUrl.trim();
             }
+            final rawHero = map['heroTag'];
+            if (rawHero is String && rawHero.trim().isNotEmpty) {
+              heroTag = rawHero.trim();
+            }
           }
           return _animatedPage(
             state: state,
             child: EmployeeChecklistPdfPage(
               title: title,
               fileUrl: fileUrl,
+              heroTag: heroTag,
             ),
             beginOffset: const Offset(0.08, 0),
           );
@@ -545,7 +591,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           }
           return _animatedPage(
             state: state,
-            child: EmployeeJobConfirmationPage(jobId: jobId, jobTitle: jobTitle),
+            child: EmployeeJobConfirmationPage(
+              jobId: jobId,
+              jobTitle: jobTitle,
+            ),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -579,6 +628,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return _animatedPage(
             state: state,
             child: EmployeeJobSheetDetailPage(job: job),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: EmployeeEarningsPage.path,
+        name: EmployeeEarningsPage.name,
+        pageBuilder: (context, state) => _animatedPage(
+          state: state,
+          child: const EmployeeEarningsPage(),
+          beginOffset: const Offset(0.08, 0),
+        ),
+      ),
+      GoRoute(
+        path: EarningDetailsScreen.path,
+        name: EarningDetailsScreen.name,
+        pageBuilder: (context, state) {
+          final extra = state.extra;
+          final jobId = extra is String ? extra : '1';
+          return _animatedPage(
+            state: state,
+            child: EarningDetailsScreen(jobId: jobId),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -624,6 +695,43 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           child: const EmployeeMaterialRequestsPage(),
           beginOffset: const Offset(0.08, 0),
         ),
+      ),
+      GoRoute(
+        path:
+            '${EmployeeMaterialRequestDetailPage.pathPrefix}/:materialRequestId',
+        name: EmployeeMaterialRequestDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = state.pathParameters['materialRequestId'] ?? '';
+          return _animatedPage(
+            state: state,
+            child: EmployeeMaterialRequestDetailPage(materialRequestId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${EmployeeDispatchDetailPage.pathPrefix}/:dispatchId',
+        name: EmployeeDispatchDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = state.pathParameters['dispatchId'] ?? '';
+          return _animatedPage(
+            state: state,
+            child: EmployeeDispatchDetailPage(dispatchId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: '${EmployeeReturnRequestDetailPage.pathPrefix}/:returnRequestId',
+        name: EmployeeReturnRequestDetailPage.name,
+        pageBuilder: (context, state) {
+          final id = state.pathParameters['returnRequestId'] ?? '';
+          return _animatedPage(
+            state: state,
+            child: EmployeeReturnRequestDetailPage(returnRequestId: id),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
       ),
       GoRoute(
         path: EmployeeSiteDetailPage.path,
@@ -994,8 +1102,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 state: state,
                 child: ReportCreateChartPage(
                   reportId: id,
-                  initialConfig:
-                      extra is ReportChartConfig ? extra : null,
+                  initialConfig: extra is ReportChartConfig ? extra : null,
                 ),
                 beginOffset: const Offset(0, 0.08),
               );
@@ -1181,6 +1288,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           String? projectId;
           String? levelId;
           var viewOnly = false;
+          var operativeWorkflow = false;
+          int? operativeJobId;
+          int? focusPinId;
           List<Map<String, dynamic>> embeddedLevelPlots = const [];
           final extra = state.extra;
           if (extra is Map) {
@@ -1217,6 +1327,25 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             if (rawViewOnly == true || rawViewOnly?.toString() == 'true') {
               viewOnly = true;
             }
+            final rawOperative = map['operativeWorkflow'];
+            if (rawOperative == true ||
+                rawOperative?.toString().toLowerCase() == 'true') {
+              operativeWorkflow = true;
+            }
+            final rawOperativeJobId = map['operativeJobId'];
+            if (rawOperativeJobId is int) {
+              operativeJobId = rawOperativeJobId;
+            } else if (rawOperativeJobId != null) {
+              operativeJobId = int.tryParse(
+                rawOperativeJobId.toString().trim(),
+              );
+            }
+            final rawFocusPinId = map['focusPinId'];
+            if (rawFocusPinId is int) {
+              focusPinId = rawFocusPinId;
+            } else if (rawFocusPinId != null) {
+              focusPinId = int.tryParse(rawFocusPinId.toString().trim());
+            }
             final rawPlots = map['embeddedLevelPlots'];
             if (rawPlots is List) {
               embeddedLevelPlots = rawPlots
@@ -1237,6 +1366,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               levelId: levelId,
               embeddedLevelPlots: embeddedLevelPlots,
               viewOnly: viewOnly,
+              operativeWorkflow: operativeWorkflow,
+              operativeJobId: operativeJobId,
+              focusPinId: focusPinId,
             ),
             beginOffset: const Offset(0.08, 0),
           );
@@ -1319,10 +1451,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               : const ProjectLevelJobsArgs(levelName: 'Level', plots: []);
           return _animatedPage(
             state: state,
-            child: ProjectLevelJobsPage(
-              projectId: projectId,
-              args: args,
-            ),
+            child: ProjectLevelJobsPage(projectId: projectId, args: args),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -1335,10 +1464,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final jobId = state.pathParameters['jobId'] ?? '';
           return _animatedPage(
             state: state,
-            child: AddJobPage(
-              projectId: projectId,
-              editJobId: jobId,
-            ),
+            child: AddJobPage(projectId: projectId, editJobId: jobId),
             beginOffset: const Offset(0.08, 0),
           );
         },
@@ -1662,7 +1788,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '${ZohoIntegrationFinishPage.pathPrefix}/:connectionId',
         name: ZohoIntegrationFinishPage.name,
         pageBuilder: (context, state) {
-          final id = int.tryParse(state.pathParameters['connectionId'] ?? '') ?? 0;
+          final id =
+              int.tryParse(state.pathParameters['connectionId'] ?? '') ?? 0;
           return _animatedPage(
             state: state,
             child: ZohoIntegrationFinishPage(connectionId: id),

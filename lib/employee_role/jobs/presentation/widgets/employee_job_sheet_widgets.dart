@@ -107,7 +107,10 @@ class JobSheetJobCard extends StatelessWidget {
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 18, height: 1.1),
           ),
           const SizedBox(height: 12),
-          _JobSheetMetaRow(icon: Icons.location_on_outlined, label: job.location),
+          _JobSheetMetaRow(
+            icon: Icons.location_on_outlined,
+            label: job.displayLocationLine,
+          ),
           const SizedBox(height: 6),
           _JobSheetMetaRow(icon: Icons.access_time_rounded, label: job.schedule),
           const SizedBox(height: 16),

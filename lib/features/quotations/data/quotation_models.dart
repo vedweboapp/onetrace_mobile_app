@@ -23,6 +23,7 @@ class QuotationListItem {
     required this.id,
     required this.quoteName,
     required this.quoteNumber,
+    this.quotationSerialNumber,
     this.clientName,
     this.projectName,
     this.siteName,
@@ -33,11 +34,23 @@ class QuotationListItem {
   final String id;
   final String quoteName;
   final String quoteNumber;
+
+  /// Preferred list heading when present (e.g. `QUOTE062`).
+  final String? quotationSerialNumber;
   final String? clientName;
   final String? projectName;
   final String? siteName;
   final String? contactPhone;
   final String? description;
+
+  /// Title shown in quotation lists — serial number first, then quote name.
+  String get listTitle {
+    final serial = quotationSerialNumber?.trim() ?? '';
+    if (serial.isNotEmpty) return serial;
+    final number = quoteNumber.trim();
+    if (number.isNotEmpty && number != '—') return number;
+    return quoteName;
+  }
 
   factory QuotationListItem.fromJson(Map<String, dynamic> json) {
     var id = _readString(json, const ['id', 'ID', 'quotation_id']);
@@ -69,20 +82,30 @@ class QuotationListItem {
     if (quoteName.isEmpty) {
       quoteName = 'Untitled';
     }
+    final serial = _emptyToNull(
+      _readString(json, const [
+        'quotation_serial_number',
+        'quote_serial_number',
+        'serial_number',
+      ]),
+    );
     final topSite = _emptyToNull(
       _readNestedLabel(json, const ['site'], const ['site_name', 'name']),
     );
+    final siteFromList = _firstSitesArrayName(json);
     final siteFromProject = _firstProjectSiteName(json);
     return QuotationListItem(
       id: id.isEmpty ? '—' : id,
       quoteName: quoteName,
       quoteNumber: _readString(json, const [
+        'quotation_serial_number',
         'order_number',
         'quote_number',
         'number',
         'reference',
         'Quote_Number',
       ], fallback: '—'),
+      quotationSerialNumber: serial,
       clientName: _emptyToNull(() {
         final n = _readNestedLabel(
           json,
@@ -93,7 +116,7 @@ class QuotationListItem {
         return _readString(json, const ['client_name', 'customer_name']);
       }()),
       projectName: projectNameStr,
-      siteName: topSite ?? siteFromProject,
+      siteName: topSite ?? siteFromList ?? siteFromProject,
       contactPhone: _readListContactPhone(json),
       description: _emptyToNull(
         _readString(json, const ['description', 'details']),
@@ -122,7 +145,17 @@ String? _readListContactPhone(Map<String, dynamic> json) {
     'primary_customer_contact',
     'additional_customer_contact',
   ]) {
-    final m = _asStringKeyMap(json[key]);
+    final raw = json[key];
+    if (raw is List && raw.isNotEmpty) {
+      for (final entry in raw) {
+        final m = _asStringKeyMap(entry);
+        if (m == null) continue;
+        final phone = _readString(m, const ['phone', 'mobile', 'tel']);
+        if (phone.isNotEmpty) return phone;
+      }
+      continue;
+    }
+    final m = _asStringKeyMap(raw);
     if (m == null) continue;
     final phone = _readString(m, const ['phone', 'mobile', 'tel']);
     if (phone.isNotEmpty) return phone;
@@ -135,6 +168,14 @@ String? _readListContactPhone(Map<String, dynamic> json) {
   return _emptyToNull(
     _readString(json, const ['contact_phone', 'phone', 'mobile']),
   );
+}
+
+String? _firstSitesArrayName(Map<String, dynamic> json) {
+  final sites = json['sites'];
+  if (sites is! List || sites.isEmpty) return null;
+  final first = _asStringKeyMap(sites.first);
+  if (first == null) return null;
+  return _emptyToNull(_readString(first, const ['site_name', 'name']));
 }
 
 String? _firstProjectSiteName(Map<String, dynamic> json) {
@@ -297,8 +338,31 @@ class QuotationDetailModel {
     return 'Untitled';
   }
 
+  /// Prefer CRM serial (e.g. QUOTE062) for headings / chips.
+  String get quotationSerialNumber {
+    for (final k in const [
+      'quotation_serial_number',
+      'quote_serial_number',
+      'serial_number',
+    ]) {
+      final v = raw[k];
+      if (v == null) continue;
+      if (v is Map || v is List) continue;
+      final t = v.toString().trim();
+      if (t.isNotEmpty && t != 'null') return t;
+    }
+    return '—';
+  }
+
+  String get listTitle {
+    final serial = quotationSerialNumber;
+    if (serial != '—') return serial;
+    return quoteName;
+  }
+
   String get quoteNumber {
     for (final k in const [
+      'quotation_serial_number',
       'quote_number',
       'number',
       'Quote_Number',
@@ -340,6 +404,8 @@ class QuotationDetailModel {
       const ['site_name', 'name'],
     );
     if (top.isNotEmpty) return top;
+    final fromSites = _firstSitesArrayName(raw);
+    if (fromSites != null && fromSites.isNotEmpty) return fromSites;
     final fromProject = _firstProjectSiteName(raw);
     if (fromProject != null && fromProject.isNotEmpty) return fromProject;
     return field('site', const ['site_name']);
@@ -412,6 +478,14 @@ class QuotationDetailModel {
   }
 
   String get secondaryContact {
+    final rawAdd = raw['additional_customer_contact'];
+    if (rawAdd is List && rawAdd.isNotEmpty) {
+      final labels = rawAdd
+          .map(_displayContactObject)
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
+      if (labels.isNotEmpty) return labels.join(', ');
+    }
     final add = _displayContactObject(raw['additional_customer_contact']);
     if (add.isNotEmpty) return add;
     final sec = _displayContactObject(raw['secondary_customer_contact']);

@@ -7,6 +7,7 @@ abstract final class QrCodeUtils {
   ///
   /// Used for:
   /// - `POST /api/v1/jobs/{job_id}/scan-qr/` → `{ "qr_code": "QR-VLBUJL" }`
+  ///   or `{ "job_pin_id": 14, "qr_code": "QR-VLBUJL" }` for level pins.
   /// - `GET /api/v1/qr-codes/{qr_code}/details/`
   static String normalizeScannedValue(String raw) {
     var value = raw.trim();

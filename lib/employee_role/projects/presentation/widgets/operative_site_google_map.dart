@@ -153,10 +153,10 @@ class _OperativeSiteGoogleMapState
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Text(
-          'Google Map failed to load. Enable Maps SDK for Android/iOS in '
-          'Google Cloud, add your app package + SHA-1 to the key, then run '
-          'flutter clean and rebuild. For geocoding also use '
-          '--dart-define-from-file=dart_defines.json.',
+          'Map tiles blocked. In Google Cloud enable Maps SDK for Android '
+          '(and iOS), confirm billing is on, and allow package '
+          'com.example.red5 + your debug SHA-1 on the API key. Then fully '
+          'restart the app (not hot reload).',
           style: AppFonts.bodySmall(color: AppColors.muted),
         ),
       ),

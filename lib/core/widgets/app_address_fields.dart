@@ -7,8 +7,11 @@ import 'package:red5/core/widgets/places_autocomplete_field.dart';
 
 /// Layout variants for address forms across the app.
 enum AppAddressLayout {
-  /// Line1, Line2, Country dropdown, City|State, Pincode (vendor/client/contact/site).
+  /// Line1, Line2, Country dropdown, City|State, Pincode (vendor/contact/site).
   entityWithCountryDropdown,
+
+  /// Line1, Line2, Country dropdown, Postal only (add client).
+  lineCountryPostal,
 
   /// Line1, Line2, City|Zip, Country|State text fields (PO/bill/invoice).
   billing,
@@ -265,6 +268,24 @@ class AppAddressFields extends StatelessWidget {
                 ],
               ),
             ),
+            _label(_zipLabel, required: postalCodeValidator != null),
+            _textField(
+              postalCode,
+              hint: postalCodeHint,
+              validator: postalCodeValidator,
+              keyboardType: TextInputType.text,
+            ),
+          ],
+        ),
+      AppAddressLayout.lineCountryPostal => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _label('Address line 1', required: true),
+            _line1Field(),
+            _label('Address line 2'),
+            _textField(line2, hint: line2Hint),
+            _label('Country', required: true),
+            _countryDropdown() ?? const SizedBox.shrink(),
             _label(_zipLabel, required: postalCodeValidator != null),
             _textField(
               postalCode,

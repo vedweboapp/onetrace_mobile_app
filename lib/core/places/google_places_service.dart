@@ -141,3 +141,4 @@ final class GooglePlacesService {
 final googlePlacesServiceProvider = Provider<GooglePlacesService>(
   (ref) => GooglePlacesService(),
 );
+

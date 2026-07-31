@@ -52,7 +52,8 @@ class _EmployeeJobPinFormsPanelState extends State<EmployeeJobPinFormsPanel> {
         (entry) =>
             entry.pin.hasForm &&
             (widget.completedPinFormKeys.contains(entry.pin.formKey) ||
-                entry.pin.isStatusComplete),
+                entry.pin.isStatusComplete ||
+                entry.pin.isFormSubmitted),
       )
       .length;
 
@@ -81,23 +82,22 @@ class _EmployeeJobPinFormsPanelState extends State<EmployeeJobPinFormsPanel> {
           children: [
             Expanded(
               child: Text(
-                'PINS & FORMS',
-                style: AppFonts.labelMedium(color: AppColors.muted).copyWith(
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.8,
-                ),
+                'Required Form',
+                style: AppFonts.titleLarge(
+                  color: AppColors.inkStrong,
+                ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
               ),
             ),
             if (_formPinCount > 0)
               Text(
-                '$_completedFormCount/$_formPinCount forms',
+                '$_completedFormCount/$_formPinCount Complete',
                 style: AppFonts.labelLarge(
                   color: const Color(0xFF5E4BFF),
                 ).copyWith(fontWeight: FontWeight.w900),
               ),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
         for (var i = 0; i < widget.pinEntries.length; i++) ...[
           if (i > 0) const SizedBox(height: 10),
           _PinFormsCollapsibleCard(
@@ -114,16 +114,19 @@ class _EmployeeJobPinFormsPanelState extends State<EmployeeJobPinFormsPanel> {
               });
             },
             isFormComplete: widget.completedPinFormKeys.contains(
-              widget.pinEntries[i].pin.formKey,
-            ) || widget.pinEntries[i].pin.isStatusComplete,
+                  widget.pinEntries[i].pin.formKey,
+                ) ||
+                widget.pinEntries[i].pin.isStatusComplete ||
+                widget.pinEntries[i].pin.isFormSubmitted,
             isQrComplete: _isPinQrComplete(widget.pinEntries[i].pin),
-            showQrAction: _pinShowsQr(widget.pinEntries[i].pin),
-            isJobCompleted: widget.isJobCompleted,
+            showQrAction: _pinShowsQr(widget.pinEntries[i].pin) &&
+                !widget.pinEntries[i].pin.hasForm,
             formsEnabled: widget.formsEnabled,
             onFillForm: widget.pinEntries[i].pin.hasForm
                 ? () => widget.onPinFormTap(widget.pinEntries[i].pin)
                 : null,
-            onScanQr: _pinShowsQr(widget.pinEntries[i].pin)
+            onScanQr: _pinShowsQr(widget.pinEntries[i].pin) &&
+                    !widget.pinEntries[i].pin.hasForm
                 ? () => widget.onPinQrTap(widget.pinEntries[i].pin)
                 : null,
           ),
@@ -132,14 +135,10 @@ class _EmployeeJobPinFormsPanelState extends State<EmployeeJobPinFormsPanel> {
     );
   }
 
-  bool _pinShowsQr(EmployeeJobDrawingPin pin) {
-    final formId = pin.projectFormId;
-    if (formId == null || formId <= 0) return false;
-    return widget.formHasQrFields[formId] == true;
-  }
+  bool _pinShowsQr(EmployeeJobDrawingPin pin) => pin.qrCodeFieldPresent;
 
   bool _isPinQrComplete(EmployeeJobDrawingPin pin) {
-    if (!_pinShowsQr(pin)) return false;
+    if (pin.hasQrCode) return true;
     return widget.scannedPinQrKeys.contains(pin.formKey);
   }
 }
@@ -152,7 +151,6 @@ class _PinFormsCollapsibleCard extends StatelessWidget {
     required this.isFormComplete,
     required this.isQrComplete,
     required this.showQrAction,
-    required this.isJobCompleted,
     required this.formsEnabled,
     this.onFillForm,
     this.onScanQr,
@@ -164,7 +162,6 @@ class _PinFormsCollapsibleCard extends StatelessWidget {
   final bool isFormComplete;
   final bool isQrComplete;
   final bool showQrAction;
-  final bool isJobCompleted;
   final bool formsEnabled;
   final VoidCallback? onFillForm;
   final VoidCallback? onScanQr;
@@ -172,23 +169,12 @@ class _PinFormsCollapsibleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pin = entry.pin;
-    final subtitle = '${entry.levelName} • ${entry.plotName}';
-    final trailing = pin.hasForm
-        ? (isFormComplete ? 'Form done' : 'Form pending')
-        : 'No form';
 
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppColors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.borderLight),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.inkStrong.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -198,49 +184,24 @@ class _PinFormsCollapsibleCard extends StatelessWidget {
             child: InkWell(
               onTap: () => onExpandedChanged(!expanded),
               borderRadius: BorderRadius.vertical(
-                top: const Radius.circular(12),
-                bottom: expanded ? Radius.zero : const Radius.circular(12),
+                top: const Radius.circular(14),
+                bottom: expanded ? Radius.zero : const Radius.circular(14),
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
                 child: Row(
                   children: [
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            pin.displayLabel,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppFonts.titleMedium(
-                              color: AppColors.inkStrong,
-                            ).copyWith(fontWeight: FontWeight.w800, fontSize: 16),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppFonts.bodySmall(color: AppColors.muted)
-                                .copyWith(fontWeight: FontWeight.w600),
-                          ),
-                        ],
+                      child: Text(
+                        pin.displayLabel,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppFonts.bodyMedium(
+                          color: AppColors.inkStrong,
+                        ).copyWith(fontWeight: FontWeight.w600, height: 1.3),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    _StatusChip(
-                      label: pin.statusName,
-                      background: pin.statusBackground,
-                      foreground: pin.statusForeground,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      trailing,
-                      style: AppFonts.bodySmall(color: AppColors.muted)
-                          .copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 4),
                     Icon(
                       expanded
                           ? Icons.keyboard_arrow_up_rounded
@@ -255,49 +216,47 @@ class _PinFormsCollapsibleCard extends StatelessWidget {
           ),
           if (expanded)
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (pin.itemName.isNotEmpty &&
-                      pin.itemName != pin.displayLabel) ...[
-                    Text(
-                      pin.itemName,
-                      style: AppFonts.bodySmall(color: AppColors.muted),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  if (pin.location.isNotEmpty) ...[
-                    Text(
-                      'Location: ${pin.location}',
-                      style: AppFonts.bodySmall(color: AppColors.muted),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  if (pin.hasForm) ...[
-                    _FormActionRow(
-                      formName: pin.projectFormName ?? 'Linked form',
+                  if (pin.hasForm)
+                    _PinFormActionCard(
+                      title: isFormComplete ? 'Update Form' : 'Fill Required Form',
+                      subtitle: pin.qrCodeFieldPresent
+                          ? '${pin.projectFormName ?? 'Linked form'} · QR at bottom of form'
+                          : (pin.projectFormName ?? 'Linked form'),
                       isComplete: isFormComplete,
-                      actionLabel: !formsEnabled
-                          ? 'Start job to fill form'
-                          : isJobCompleted
-                              ? (isFormComplete ? 'Review form' : 'Fill form')
-                              : (isFormComplete ? 'Update form' : 'Fill form'),
-                      onTap: formsEnabled ? onFillForm : null,
-                    ),
-                  ] else
-                    Text(
-                      'No form assigned to this pin.',
-                      style: AppFonts.bodySmall(color: AppColors.muted),
+                      enabled: formsEnabled,
+                      disabledHint: formsEnabled
+                          ? null
+                          : 'Start the job to fill forms',
+                      onTap: onFillForm,
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        'No form assigned to this pin.',
+                        style: AppFonts.bodySmall(color: AppColors.muted),
+                      ),
                     ),
                   if (showQrAction) ...[
-                    const SizedBox(height: 10),
-                    _QrActionRow(
+                    const SizedBox(height: 8),
+                    _PinFormActionCard(
+                      title: 'Scan QR',
+                      subtitle: pin.hasQrCode
+                          ? 'QR ${pin.qrCode}'
+                          : 'Scan a QR code to assign to this pin',
                       isComplete: isQrComplete,
-                      onTap: formsEnabled ? onScanQr : null,
+                      enabled: formsEnabled,
                       disabledHint: formsEnabled
                           ? null
                           : 'Start the job to scan QR codes',
+                      onTap: onScanQr,
                     ),
                   ],
                 ],
@@ -309,166 +268,94 @@ class _PinFormsCollapsibleCard extends StatelessWidget {
   }
 }
 
-class _FormActionRow extends StatelessWidget {
-  const _FormActionRow({
-    required this.formName,
+class _PinFormActionCard extends StatelessWidget {
+  const _PinFormActionCard({
+    required this.title,
+    required this.subtitle,
     required this.isComplete,
-    required this.actionLabel,
-    this.onTap,
-  });
-
-  final String formName;
-  final bool isComplete;
-  final String actionLabel;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Icon(
-              isComplete
-                  ? Icons.check_circle_rounded
-                  : Icons.description_outlined,
-              size: 18,
-              color: isComplete
-                  ? const Color(0xFF00A86B)
-                  : AppColors.muted,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                formName,
-                style: AppFonts.bodySmall(color: AppColors.inkStrong)
-                    .copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          height: 42,
-          child: FilledButton(
-            onPressed: onTap,
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.inkStrong,
-              foregroundColor: AppColors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: Text(
-              actionLabel,
-              style: AppFonts.labelLarge(color: AppColors.white).copyWith(
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _QrActionRow extends StatelessWidget {
-  const _QrActionRow({
-    required this.isComplete,
-    this.onTap,
+    required this.enabled,
     this.disabledHint,
+    this.onTap,
   });
 
+  final String title;
+  final String subtitle;
   final bool isComplete;
-  final VoidCallback? onTap;
+  final bool enabled;
   final String? disabledHint;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Icon(
-              isComplete
-                  ? Icons.qr_code_2_rounded
-                  : Icons.qr_code_scanner_rounded,
-              size: 18,
-              color: isComplete
-                  ? const Color(0xFF00A86B)
-                  : AppColors.muted,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                isComplete ? 'QR code scanned' : 'QR code required in form',
-                style: AppFonts.bodySmall(color: AppColors.inkStrong)
-                    .copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (disabledHint != null) ...[
-          Text(
-            disabledHint!,
-            style: AppFonts.bodySmall(color: AppColors.muted),
-          ),
-          const SizedBox(height: 8),
-        ],
-        SizedBox(
+    final canTap = enabled && onTap != null;
+
+    return Material(
+      color: AppColors.surfaceHigh,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: canTap ? onTap : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
           width: double.infinity,
-          height: 42,
-          child: OutlinedButton.icon(
-            onPressed: onTap,
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: Text(
-              isComplete ? 'Scan again' : 'Scan QR code',
-              style: AppFonts.labelLarge(color: AppColors.inkStrong).copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.inkStrong,
-              side: const BorderSide(color: AppColors.borderLight),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.borderLight),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.label,
-    required this.background,
-    required this.foreground,
-  });
-
-  final String label;
-  final Color background;
-  final Color foreground;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: Text(
-        label,
-        style: AppFonts.labelSmall(color: foreground).copyWith(
-          fontWeight: FontWeight.w900,
-          fontSize: 9,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppFonts.bodyMedium(
+                        color: AppColors.inkStrong,
+                      ).copyWith(fontWeight: FontWeight.w700, height: 1.25),
+                    ),
+                    if (subtitle.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppFonts.bodySmall(color: AppColors.muted),
+                      ),
+                    ],
+                    if (disabledHint != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        disabledHint!,
+                        style: AppFonts.bodySmall(color: AppColors.muted),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isComplete ? AppColors.inkStrong : AppColors.transparent,
+                  border: Border.all(
+                    color: isComplete ? AppColors.inkStrong : AppColors.border,
+                    width: 1.8,
+                  ),
+                ),
+                child: isComplete
+                    ? const Icon(
+                        Icons.check_rounded,
+                        size: 14,
+                        color: AppColors.white,
+                      )
+                    : null,
+              ),
+            ],
+          ),
         ),
       ),
     );

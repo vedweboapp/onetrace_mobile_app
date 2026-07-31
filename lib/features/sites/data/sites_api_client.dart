@@ -97,6 +97,8 @@ final class SitesApiClient {
     required String city,
     required String state,
     required String postalCode,
+    String what3Words = '',
+    List<SiteContactPerson> contactPersons = const [],
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       AppApiUrls.sites,
@@ -109,6 +111,8 @@ final class SitesApiClient {
         city: city,
         state: state,
         postalCode: postalCode,
+        what3Words: what3Words,
+        contactPersons: contactPersons,
       ),
     );
     final root = response.data ?? const <String, dynamic>{};
@@ -126,6 +130,8 @@ final class SitesApiClient {
     required String city,
     required String state,
     required String postalCode,
+    String what3Words = '',
+    List<SiteContactPerson> contactPersons = const [],
   }) async {
     final response = await _dio.patch<Map<String, dynamic>>(
       AppApiUrls.siteById(id),
@@ -138,6 +144,8 @@ final class SitesApiClient {
         city: city,
         state: state,
         postalCode: postalCode,
+        what3Words: what3Words,
+        contactPersons: contactPersons,
       ),
     );
     final root = response.data ?? const <String, dynamic>{};
@@ -153,6 +161,8 @@ final class SitesApiClient {
     required String city,
     required String state,
     required String postalCode,
+    String what3Words = '',
+    List<SiteContactPerson> contactPersons = const [],
   }) {
     return <String, dynamic>{
       'site_name': siteName,
@@ -165,6 +175,11 @@ final class SitesApiClient {
       'state': state,
       'pincode': postalCode,
       'postal_code': postalCode,
+      'what3words': what3Words.trim(),
+      'contact_persons': contactPersons
+          .where((c) => c.contactId.trim().isNotEmpty)
+          .map((c) => c.toJson())
+          .toList(growable: false),
     };
   }
 

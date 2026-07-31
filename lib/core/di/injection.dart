@@ -23,6 +23,7 @@ import 'package:red5/features/dashboard/data/crm_quotes_api_client.dart';
 import 'package:red5/features/dashboard/data/organization_settings_api_client.dart';
 import 'package:red5/features/dashboard/data/qr_codes_api_client.dart';
 import 'package:red5/features/forms/data/forms_api_client.dart';
+import 'package:red5/employee_role/employee_earnings/data/employee_earnings_api_client.dart';
 import 'package:red5/employee_role/forms/data/operative_project_forms_api_client.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_forms_api_client.dart';
 import 'package:red5/features/quote/data/quote_project_api_client.dart';
@@ -32,6 +33,7 @@ import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/features/dashboard/data/zoho_integration_api_client.dart';
 import 'package:red5/features/vendors/data/vendors_api_client.dart';
 import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
+import 'package:red5/features/material_requests/data/material_requests_api_client.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -54,7 +56,7 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
   );
   await sl.isReady<TechnicianFormDatabase>();
 
-  sl.registerLazySingleton<AuthApiClient>(() {
+  sl.registerLazySingleton<Dio>(() {
     final storage = sl<LocalStorage>();
     final dio = Dio(
       BaseOptions(
@@ -71,6 +73,11 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
       ),
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return dio;
+  });
+
+  sl.registerLazySingleton<AuthApiClient>(() {
+    final dio = sl<Dio>();
     return AuthApiClient(dio: dio);
   });
 
@@ -423,6 +430,42 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return UserProfileApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<EmployeeEarningsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return EmployeeEarningsApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<MaterialRequestsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return MaterialRequestsApiClient(dio: dio);
   });
 
   sl.registerLazySingleton<DioMultipartTransfer>(DioMultipartTransfer.new);

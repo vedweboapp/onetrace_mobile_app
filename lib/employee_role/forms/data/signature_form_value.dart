@@ -5,6 +5,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:red5/core/network/api_urls.dart';
 
 const double kSignatureExportWidth = 400;
@@ -96,8 +98,9 @@ Future<SignaturePngFileExport?> exportSignaturePngFile({
   if (bytes == null || bytes.isEmpty) return null;
 
   final filename = signatureFilenameForField(fieldId);
+  final base = await getApplicationSupportDirectory();
   final dir = Directory(
-    p.join(Directory.systemTemp.path, 'red5_job_form_attachments'),
+    p.join(base.path, 'job_form_attachments', 'signatures'),
   );
   if (!await dir.exists()) {
     await dir.create(recursive: true);

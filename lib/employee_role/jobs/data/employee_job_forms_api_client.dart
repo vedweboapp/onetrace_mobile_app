@@ -46,6 +46,7 @@ final class EmployeeJobFormsApiClient {
     final url = AppApiUrls.jobSubmitForm(jobId);
     final parts = buildJobFormSubmitRequestParts(
       jobFormId: payload.jobFormId,
+      jobPinId: payload.jobPinId,
       status: payload.status,
       values: payload.values,
       remarks: payload.remarks,
@@ -77,10 +78,16 @@ final class EmployeeJobFormsApiClient {
     final submissionId = _readInt(body['submission_id']) ??
         _readInt(body['submitted_form_id']) ??
         _readInt(body['id']);
+    final jobFormId = payload.jobFormId ??
+        payload.jobPinId ??
+        _readInt(body['job_form_id']) ??
+        _readInt(body['job_pin_id']) ??
+        submissionId ??
+        0;
     return SubmittedJobForm(
       id: submissionId ?? 0,
       submissionId: submissionId,
-      jobFormId: payload.jobFormId,
+      jobFormId: jobFormId,
       formId: _readInt(body['form_id']),
       status: body['status']?.toString() ?? payload.status,
       remarks: body['remarks']?.toString() ?? payload.remarks,
@@ -108,15 +115,20 @@ final class EmployeeJobFormsApiClient {
     return _parseSubmittedFormsList(response.data);
   }
 
-  /// `POST /jobs/{id}/scan-qr/` — body `{ "qr_code": "QR-10001" }`.
+  /// `POST /jobs/{id}/scan-qr/` — body `{ "qr_code": "QR-10001" }` or with
+  /// `{ "job_pin_id": 14, "qr_code": "QR-10001" }` for level pins.
   Future<void> scanJobQr({
     required int jobId,
     required String qrCode,
+    int? jobPinId,
   }) async {
     final normalized = QrCodeUtils.normalizeScannedValue(qrCode);
     await _dio.post<dynamic>(
       AppApiUrls.jobScanQr(jobId),
-      data: <String, dynamic>{'qr_code': normalized},
+      data: <String, dynamic>{
+        'qr_code': normalized,
+        if (jobPinId != null && jobPinId > 0) 'job_pin_id': jobPinId,
+      },
       options: Options(
         headers: <String, String>{
           _jobIdHeader: jobId.toString(),

@@ -1,6 +1,7 @@
 import 'package:intl/intl.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_sheet.dart';
 import 'package:red5/features/dashboard/data/job_models.dart';
 
@@ -24,6 +25,12 @@ abstract final class EmployeeJobSheetDetailBuilder {
     final accepted = started || session.isJobStarted(summary.id);
     final formsDone = allFormsComplete ||
         (detail != null &&
+            detail.pinFormTasks.isNotEmpty &&
+            detail.pinFormTasks.every((task) {
+              final pin = findEmployeeJobPinById(detail.levels, task.pinId);
+              return pin?.isFormSubmitted == true || pin?.isStatusComplete == true;
+            })) ||
+        (detail != null &&
             detail.linkedFormIds.isNotEmpty &&
             detail.linkedFormIds.every(completedFormIds.contains));
 
@@ -46,7 +53,8 @@ abstract final class EmployeeJobSheetDetailBuilder {
       totalEarning: summary.earning,
       complianceTitle: 'Compliance Form',
       complianceSubtitle: _complianceSubtitle(
-        hasForms: (detail?.linkedFormIds ?? const []).isNotEmpty,
+        hasForms: (detail?.linkedFormIds ?? const []).isNotEmpty ||
+            (detail?.pinFormTasks ?? const []).isNotEmpty,
         formsDone: formsDone,
         started: started,
       ),

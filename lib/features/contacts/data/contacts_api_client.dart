@@ -107,6 +107,44 @@ final class ContactsApiClient {
     return list;
   }
 
+  /// `GET /contact/?contact_type=client&client={id}` — contacts for a client.
+  Future<List<ContactModel>> fetchClientContacts({
+    required String clientId,
+    String? search,
+    int pageSize = defaultPageSize,
+  }) async {
+    final id = clientId.trim();
+    if (id.isEmpty) return const [];
+
+    final merged = <String, ContactModel>{};
+    var page = 1;
+    var totalPages = 1;
+    const maxPages = 40;
+
+    do {
+      final result = await fetchContactsPage(
+        page: page,
+        pageSize: pageSize,
+        search: search,
+        contactType: ContactTypeValues.client,
+        clientId: id,
+      );
+      for (final contact in result.items) {
+        final key = contact.id.trim();
+        if (key.isNotEmpty) merged[key] = contact;
+      }
+      totalPages = result.totalPages;
+      page++;
+    } while (page <= totalPages && page <= maxPages);
+
+    final list = merged.values.toList()
+      ..sort(
+        (a, b) =>
+            a.contactName.toLowerCase().compareTo(b.contactName.toLowerCase()),
+      );
+    return list;
+  }
+
   Future<ContactModel> fetchContactDetail(String id) async {
     final response = await _dio.get<Map<String, dynamic>>(
       AppApiUrls.contactById(id),

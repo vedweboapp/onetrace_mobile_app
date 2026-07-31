@@ -1,12 +1,18 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/projects/data/operative_map_geocoder.dart';
+import 'package:red5/employee_role/projects/data/operative_map_pin.dart';
+import 'package:red5/employee_role/projects/presentation/operative_site_route_page.dart';
+import 'package:red5/employee_role/projects/presentation/widgets/operative_painted_site_map.dart';
+import 'package:red5/employee_role/projects/presentation/widgets/operative_site_google_map.dart';
 
 class EmployeeJobStatusCard extends StatelessWidget {
   const EmployeeJobStatusCard({super.key, required this.status});
@@ -219,12 +225,10 @@ class EmployeeJobTabs extends StatelessWidget {
     super.key,
     required this.selectedTab,
     required this.onChanged,
-    this.showDesignsTab = false,
   });
 
   final EmployeeJobDetailTab selectedTab;
   final ValueChanged<EmployeeJobDetailTab> onChanged;
-  final bool showDesignsTab;
 
   @override
   Widget build(BuildContext context) {
@@ -239,12 +243,6 @@ class EmployeeJobTabs extends StatelessWidget {
             selected: selectedTab == EmployeeJobDetailTab.forms,
             onTap: () => onChanged(EmployeeJobDetailTab.forms),
           ),
-          if (showDesignsTab)
-            _TabButton(
-              label: 'Designs',
-              selected: selectedTab == EmployeeJobDetailTab.designs,
-              onTap: () => onChanged(EmployeeJobDetailTab.designs),
-            ),
           _TabButton(
             label: 'Location',
             selected: selectedTab == EmployeeJobDetailTab.location,
@@ -603,52 +601,40 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
   required bool dynamicFormComplete,
   bool isJobCompleted = false,
   Map<int, bool> formHasQrFields = const {},
+  bool showJobQrScan = false,
+  Map<int, String> formTitles = const {},
 }) {
   final pinTasks = job.pinFormTasks;
   final linkedFormIds = formIds.isNotEmpty ? formIds : job.linkedFormIds;
   final hasDynamicForms = pinTasks.isNotEmpty || linkedFormIds.isNotEmpty;
-  final hasPinQrForms = pinTasks.any(
-    (task) => formHasQrFields[task.formId] == true,
-  );
+  final hasPinQrForms = pinTasks.isNotEmpty ||
+      pinTasks.any((task) => formHasQrFields[task.formId] == true);
 
-  final completedForms = pinTasks.isNotEmpty
-      ? pinTasks
-          .where((task) => completedPinFormKeys.contains(task.key))
-          .length
-      : linkedFormIds
-          .where((formId) => completedFormIds.contains(formId))
-          .length;
-  final totalForms =
-      pinTasks.isNotEmpty ? pinTasks.length : linkedFormIds.length;
   final formItems = hasDynamicForms && pinTasks.isEmpty
-      ? [
-          EmployeeRequiredFormItem(
-            id: 'linked_forms',
-            title: isJobCompleted
-                ? (totalForms > 1
-                    ? 'Submitted forms — tap to edit ($completedForms/$totalForms)'
-                    : 'Submitted form — tap to edit')
-                : (totalForms > 1
-                    ? 'Fill required forms ($completedForms/$totalForms)'
-                    : 'Fill required form'),
-            isComplete: dynamicFormComplete,
-          ),
-        ]
+      ? linkedFormIds
+          .map((formId) {
+            final titled = formTitles[formId]?.trim() ?? '';
+            String? fromJob;
+            for (final form in job.jobForms) {
+              if (form.formId == formId && form.name.trim().isNotEmpty) {
+                fromJob = form.name.trim();
+                break;
+              }
+            }
+            final name = titled.isNotEmpty
+                ? titled
+                : (fromJob ?? 'Form $formId');
+            return EmployeeRequiredFormItem(
+              id: 'form_$formId',
+              title: name,
+              isComplete: isJobCompleted ||
+                  completedFormIds.contains(formId) ||
+                  (dynamicFormComplete && linkedFormIds.length == 1),
+            );
+          })
+          .toList(growable: false)
       : pinTasks.isNotEmpty
-      ? [
-          EmployeeRequiredFormItem(
-            id: 'pin_forms_summary',
-            title: isJobCompleted
-                ? (totalForms > 1
-                    ? 'Pin forms complete ($completedForms/$totalForms)'
-                    : 'Pin form complete')
-                : (totalForms > 1
-                    ? 'Complete pin forms ($completedForms/$totalForms)'
-                    : 'Complete pin form'),
-            isComplete: dynamicFormComplete,
-            isActionable: false,
-          ),
-        ]
+      ? const <EmployeeRequiredFormItem>[]
       : job.safetyChecklist.isNotEmpty
       ? [
           EmployeeRequiredFormItem(
@@ -665,7 +651,7 @@ List<EmployeeRequiredFormItem> buildEmployeeRequiredFormItems({
 
   return [
     ...formItems,
-    if (!hasPinQrForms)
+    if (showJobQrScan && !hasPinQrForms)
       EmployeeRequiredFormItem(
         id: 'qr_scan',
         title: 'Scan QR code',
@@ -950,11 +936,25 @@ class EmployeeMaterialUsedField extends StatelessWidget {
   }
 }
 
-class EmployeeJobLocationPanel extends StatelessWidget {
-  const EmployeeJobLocationPanel({super.key});
+class EmployeeJobLocationPanel extends ConsumerWidget {
+  const EmployeeJobLocationPanel({super.key, required this.job});
+
+  final EmployeeJobDetail job;
+
+  Future<void> _openSiteRoute(BuildContext context) {
+    return OperativeSiteRoutePage.open(
+      context,
+      title: job.siteLocationTitle,
+      subtitle: job.siteLocationAddress,
+      stableId: job.id,
+    );
+  }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final title = job.siteLocationTitle;
+    final address = job.siteLocationAddress;
+
     return SizedBox(
       height: 335,
       child: Stack(
@@ -966,12 +966,9 @@ class EmployeeJobLocationPanel extends StatelessWidget {
             top: 0,
             child: SizedBox(
               height: 230,
-              child: Stack(
-                fit: StackFit.expand,
-                children: const [
-                  CustomPaint(painter: _EmployeeLocationMapPainter()),
-                  Center(child: _EmployeeLocationMapPin()),
-                ],
+              child: _EmployeeJobLocationMapPreview(
+                job: job,
+                onTap: () => _openSiteRoute(context),
               ),
             ),
           ),
@@ -980,11 +977,21 @@ class EmployeeJobLocationPanel extends StatelessWidget {
             right: 8,
             top: 205,
             child: _EmployeeLocationCard(
-              onDirections: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Opening directions')),
-                );
-              },
+              title: title,
+              address: address,
+              onDirections: () => _openSiteRoute(context),
+              onCopyAddress: address.isEmpty
+                  ? null
+                  : () async {
+                      await Clipboard.setData(ClipboardData(text: address));
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Address copied'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
             ),
           ),
         ],
@@ -993,38 +1000,92 @@ class EmployeeJobLocationPanel extends StatelessWidget {
   }
 }
 
-class _EmployeeLocationMapPin extends StatelessWidget {
-  const _EmployeeLocationMapPin();
+class _EmployeeJobLocationMapPreview extends ConsumerStatefulWidget {
+  const _EmployeeJobLocationMapPreview({
+    required this.job,
+    required this.onTap,
+  });
+
+  final EmployeeJobDetail job;
+  final VoidCallback onTap;
+
+  @override
+  ConsumerState<_EmployeeJobLocationMapPreview> createState() =>
+      _EmployeeJobLocationMapPreviewState();
+}
+
+class _EmployeeJobLocationMapPreviewState
+    extends ConsumerState<_EmployeeJobLocationMapPreview> {
+  List<OperativeMapPin> _pins = const [];
+  var _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_resolvePin);
+  }
+
+  Future<void> _resolvePin() async {
+    final address = widget.job.siteLocationAddress;
+    final title = widget.job.siteLocationTitle;
+    final geocoder = ref.read(operativeMapGeocoderProvider);
+
+    try {
+      final position = await geocoder.resolve(
+        address: address.isNotEmpty ? address : title,
+        stableId: widget.job.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _pins = [
+          OperativeMapPin(
+            id: 'job-${widget.job.id}',
+            title: title,
+            subtitle: address.isNotEmpty ? address : null,
+            position: position,
+          ),
+        ];
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: const BoxDecoration(
-        color: AppColors.inkStrong,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 12,
-            offset: Offset(0, 5),
-          ),
-        ],
-      ),
-      child: const Icon(
-        Icons.location_on_rounded,
-        color: AppColors.white,
-        size: 25,
+    return GestureDetector(
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: IgnorePointer(
+        child: OperativeSiteGoogleMap(
+          pins: _pins,
+          selectedPinId: _pins.isEmpty ? null : _pins.first.id,
+          borderRadius: 0,
+          embedded: true,
+          showFloatingControls: false,
+          isLoading: _loading,
+          isDark: false,
+          pinStyle: OperativeMapPinStyle.teardrop,
+        ),
       ),
     );
   }
 }
 
 class _EmployeeLocationCard extends StatelessWidget {
-  const _EmployeeLocationCard({required this.onDirections});
+  const _EmployeeLocationCard({
+    required this.title,
+    required this.address,
+    required this.onDirections,
+    this.onCopyAddress,
+  });
 
+  final String title;
+  final String address;
   final VoidCallback onDirections;
+  final VoidCallback? onCopyAddress;
 
   @override
   Widget build(BuildContext context) {
@@ -1065,18 +1126,22 @@ class _EmployeeLocationCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Skyline Apartment Complex',
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: AppFonts.titleSmall(
                         color: AppColors.inkStrong,
                       ).copyWith(fontWeight: FontWeight.w900),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '742 Everglade Avenue, North\nDistrict, Unit 702, Block B',
-                      style: AppFonts.bodySmall(
-                        color: AppColors.muted,
-                      ).copyWith(fontWeight: FontWeight.w600, height: 1.28),
-                    ),
+                    if (address.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        address,
+                        style: AppFonts.bodySmall(
+                          color: AppColors.muted,
+                        ).copyWith(fontWeight: FontWeight.w600, height: 1.28),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1099,7 +1164,7 @@ class _EmployeeLocationCard extends StatelessWidget {
                     ),
                     icon: const Icon(Icons.near_me_rounded, size: 17),
                     label: Text(
-                      'Get Directions',
+                      'Visit Site Location',
                       style: AppFonts.titleSmall(
                         color: AppColors.white,
                       ).copyWith(fontWeight: FontWeight.w900),
@@ -1108,18 +1173,27 @@ class _EmployeeLocationCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: AppColors.white,
+              Material(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(9),
+                child: InkWell(
+                  onTap: onCopyAddress,
                   borderRadius: BorderRadius.circular(9),
-                  border: Border.all(color: AppColors.borderLight),
-                ),
-                child: const Icon(
-                  Icons.copy_rounded,
-                  color: AppColors.muted,
-                  size: 20,
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(color: AppColors.borderLight),
+                    ),
+                    child: Icon(
+                      Icons.copy_rounded,
+                      color: onCopyAddress == null
+                          ? AppColors.border
+                          : AppColors.muted,
+                      size: 20,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1128,78 +1202,4 @@ class _EmployeeLocationCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _EmployeeLocationMapPainter extends CustomPainter {
-  const _EmployeeLocationMapPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final background = Paint()..color = const Color(0xFFDADADA);
-    canvas.drawRect(Offset.zero & size, background);
-
-    final center = Offset(size.width * 0.5, size.height * 0.48);
-    final maxRadius = math.min(size.width, size.height) * 0.72;
-
-    final district = Paint()
-      ..color = const Color(0xFFE7E7E7)
-      ..style = PaintingStyle.fill;
-    canvas.drawOval(
-      Rect.fromCenter(
-        center: center,
-        width: size.width * 1.02,
-        height: size.height * 0.86,
-      ),
-      district,
-    );
-
-    final roadPaint = Paint()
-      ..color = AppColors.white
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    for (var ring = 1; ring <= 8; ring++) {
-      roadPaint.strokeWidth = ring == 3 || ring == 6 ? 2.4 : 1.2;
-      final radius = maxRadius * (ring / 8);
-      canvas.drawCircle(center, radius, roadPaint);
-    }
-
-    for (var i = 0; i < 38; i++) {
-      final angle = (math.pi * 2 / 38) * i;
-      final start = i.isEven ? maxRadius * 0.08 : maxRadius * 0.18;
-      final end = maxRadius * (0.72 + (i % 5) * 0.045);
-      roadPaint.strokeWidth = i % 7 == 0 ? 2.4 : 1.2;
-      canvas.drawLine(
-        center + Offset(math.cos(angle), math.sin(angle)) * start,
-        center + Offset(math.cos(angle), math.sin(angle)) * end,
-        roadPaint,
-      );
-    }
-
-    final blockPaint = Paint()..color = const Color(0xFFC2C2C2);
-    for (var i = 0; i < 140; i++) {
-      final ring = 2 + (i % 6);
-      final angle = (math.pi * 2 / 24) * (i % 24) + ring * 0.09;
-      final radius = maxRadius * (ring / 8) + (i % 3) * 5;
-      final origin = center + Offset(math.cos(angle), math.sin(angle)) * radius;
-      canvas.save();
-      canvas.translate(origin.dx, origin.dy);
-      canvas.rotate(angle + math.pi / 2);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset.zero,
-            width: 15 + (i % 4) * 5,
-            height: 7 + (i % 3) * 4,
-          ),
-          const Radius.circular(1.5),
-        ),
-        blockPaint,
-      );
-      canvas.restore();
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

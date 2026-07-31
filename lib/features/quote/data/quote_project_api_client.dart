@@ -646,6 +646,9 @@ final class QuoteProjectApiClient {
       options: Options(
         responseType: ResponseType.bytes,
         receiveTimeout: const Duration(seconds: 120),
+        // Media files are often public; still send auth when present.
+        followRedirects: true,
+        validateStatus: (status) => status != null && status < 500,
       ),
     );
     final code = response.statusCode ?? 0;
@@ -657,8 +660,8 @@ final class QuoteProjectApiClient {
         message: 'Drawing download failed with status $code.',
       );
     }
-    final bytes = response.data;
-    if (bytes == null || bytes.isEmpty) {
+    final raw = response.data;
+    if (raw == null || raw.isEmpty) {
       throw DioException(
         requestOptions: response.requestOptions,
         response: response,
@@ -666,10 +669,38 @@ final class QuoteProjectApiClient {
         message: 'Drawing download returned an empty body.',
       );
     }
+    final bytes = raw is Uint8List ? raw : Uint8List.fromList(raw);
+
+    // Reject HTML/error pages that were saved with a .pdf name.
+    if (bytes.length >= 15) {
+      final head = String.fromCharCodes(bytes.take(64)).toLowerCase();
+      if (head.contains('<!doctype') ||
+          head.contains('<html') ||
+          head.contains('"detail"') && head.contains('not found')) {
+        throw DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          type: DioExceptionType.badResponse,
+          message: 'Attachment download did not return a file.',
+        );
+      }
+    }
+
     final rawName = uri.pathSegments.isNotEmpty
         ? uri.pathSegments.last
         : 'drawing.pdf';
-    final safe = rawName.replaceAll(RegExp(r'[/\\]+'), '_');
+    var safe = rawName.replaceAll(RegExp(r'[/\\]+'), '_');
+    if (safe.isEmpty) safe = 'drawing.pdf';
+    // Ensure PDF magic bytes get a .pdf suffix so native viewers can open them.
+    final isPdf = bytes.length >= 4 &&
+        bytes[0] == 0x25 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x44 &&
+        bytes[3] == 0x46;
+    if (isPdf && !safe.toLowerCase().endsWith('.pdf')) {
+      safe = '$safe.pdf';
+    }
+
     final tempPath =
         '${Directory.systemTemp.path}${Platform.pathSeparator}'
         '${DateTime.now().millisecondsSinceEpoch}_$safe';
@@ -852,6 +883,25 @@ final class QuoteProjectApiClient {
       nextPage += 1;
     }
     return out;
+  }
+
+  /// `PATCH /jobs/{jobId}/` — update one or more job pin statuses.
+  ///
+  /// [pinStatuses] uses each pin's API `id` (not `job_pin_id`).
+  Future<JobRead> updateJobPinStatuses({
+    required int jobId,
+    required List<({int pinId, int statusId})> pinStatuses,
+  }) async {
+    final payload = <String, dynamic>{
+      'pins': [
+        for (final row in pinStatuses)
+          <String, dynamic>{
+            'id': row.pinId,
+            'status': row.statusId,
+          },
+      ],
+    };
+    return patchJob(jobId: jobId.toString(), payload: payload);
   }
 
   /// `GET /pin-status/{id}/` — pin-status_read
@@ -1974,6 +2024,34 @@ final class QuoteProjectApiClient {
       );
     }
     return job;
+  }
+
+  /// `PATCH /jobs/{id}/` — jobs_partial_update (operative partial saves).
+  Future<JobRead> patchJob({
+    required String jobId,
+    required Map<String, dynamic> payload,
+  }) async {
+    _logOutgoingPayload(
+      methodName: 'patchJob',
+      endpoint: AppApiUrls.jobById(jobId),
+      payload: payload,
+    );
+    final response = await _dio.patch<dynamic>(
+      AppApiUrls.jobById(jobId),
+      data: payload,
+    );
+    if (kDebugMode) {
+      JobCompletionDebugLog.api(
+        label: 'patchJob (HTTP)',
+        method: 'PATCH',
+        url: '/api/v1${AppApiUrls.jobById(jobId)}',
+        statusCode: response.statusCode,
+        response: response.data,
+      );
+    }
+    final root = _coerceMap(_normalizeResponseData(response.data));
+    final body = _entityBody(root);
+    return JobRead.tryFromMap(body) ?? fetchJobById(jobId);
   }
 
   /// `PUT /jobs/{id}/` — jobs_update

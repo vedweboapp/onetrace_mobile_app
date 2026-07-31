@@ -36,6 +36,7 @@ class DynamicFormView extends StatefulWidget {
     this.onChanged,
     this.onQrCodeScanned,
     this.onSignatureDrawingChanged,
+    this.hideQrFields = false,
   });
 
   final TechnicianFormBundle bundle;
@@ -46,6 +47,10 @@ class DynamicFormView extends StatefulWidget {
 
   /// Notifies when the user starts or stops drawing on a signature pad.
   final ValueChanged<bool>? onSignatureDrawingChanged;
+
+  /// When true, QR fields are omitted from the form UI (e.g. pin QR handled
+  /// separately at the bottom of the job form page).
+  final bool hideQrFields;
 
   @override
   State<DynamicFormView> createState() => DynamicFormViewState();
@@ -72,20 +77,23 @@ class DynamicFormViewState extends State<DynamicFormView> {
   @override
   void initState() {
     super.initState();
-    _sections = filterOperativeFormSections(
-      parseFormMetadataSections(widget.bundle.metadata),
-    );
+    _sections = _parseSections();
     _initFieldState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onChanged?.call();
+    });
   }
 
   @override
   void didUpdateWidget(covariant DynamicFormView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.bundle.contentHash != widget.bundle.contentHash) {
+    final bundleChanged =
+        oldWidget.bundle.contentHash != widget.bundle.contentHash;
+    final hideQrChanged = oldWidget.hideQrFields != widget.hideQrFields;
+    if (bundleChanged || hideQrChanged) {
       _disposeControllers();
-      _sections = filterOperativeFormSections(
-        parseFormMetadataSections(widget.bundle.metadata),
-      );
+      _sections = _parseSections();
       _dateValues.clear();
       _choiceValues.clear();
       _boolValues.clear();
@@ -97,7 +105,31 @@ class DynamicFormViewState extends State<DynamicFormView> {
       _signatureDrawing.clear();
       _phoneCountries.clear();
       _initFieldState();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.onChanged?.call();
+      });
     }
+  }
+
+  List<FormMetadataSection> _parseSections() {
+    final filtered = filterOperativeFormSections(
+      parseFormMetadataSections(widget.bundle.metadata),
+    );
+    if (!widget.hideQrFields) return filtered;
+    return [
+      for (final section in filtered)
+        FormMetadataSection(
+          id: section.id,
+          name: section.name,
+          sequence: section.sequence,
+          columnCount: section.columnCount,
+          isActive: section.isActive,
+          fields: section.fields
+              .where((field) => !isQrFormField(field))
+              .toList(growable: false),
+        ),
+    ];
   }
 
   void _initFieldState() {
@@ -167,6 +199,48 @@ class DynamicFormViewState extends State<DynamicFormView> {
   bool validate() {
     if (!hasInputFields) return true;
     return _formKey.currentState?.validate() ?? true;
+  }
+
+  /// Whether every required visible field has a value (without Form validators).
+  /// Used to reveal pin QR scan after the operative finishes required inputs.
+  bool areRequiredFieldsComplete({bool ignoreQrFields = false}) {
+    for (final section in _sections) {
+      for (final field in section.fields) {
+        if (!field.isRequired || field.isReadonly) continue;
+        if (ignoreQrFields && isQrFormField(field)) continue;
+        if (!_isFieldFilled(field)) return false;
+      }
+    }
+    return true;
+  }
+
+  bool _isFieldFilled(FormMetadataField field) {
+    final key = field.apiName;
+    switch (_fieldKind(field)) {
+      case _FieldKind.text:
+      case _FieldKind.email:
+      case _FieldKind.number:
+      case _FieldKind.qr:
+      case _FieldKind.multiLine:
+      case _FieldKind.unsupported:
+        return (_textControllers[key]?.text.trim().isNotEmpty ?? false);
+      case _FieldKind.phone:
+        return (_textControllers[key]?.text.trim().isNotEmpty ?? false);
+      case _FieldKind.date:
+      case _FieldKind.dateTime:
+        return _dateValues[key] != null;
+      case _FieldKind.radio:
+      case _FieldKind.dropdown:
+        return (_choiceValues[key]?.trim().isNotEmpty ?? false);
+      case _FieldKind.checkbox:
+        return _boolValues[key] == true;
+      case _FieldKind.image:
+        return _fileValues[key] != null;
+      case _FieldKind.video:
+        return _videoValues[key] != null;
+      case _FieldKind.signature:
+        return _hasSignature(key);
+    }
   }
 
   /// Whether the form has any fields the operative can fill in.
@@ -276,13 +350,21 @@ class DynamicFormViewState extends State<DynamicFormView> {
       for (final field in section.fields) {
         if (field.id <= 0) continue;
         final raw = byApiName[field.apiName];
-        final value = _serializeFieldForApi(field, raw);
-        if (value.trim().isEmpty) continue;
+        final localFilePath = _localFilePathForField(field);
+        var value = _serializeFieldForApi(field, raw);
+        if (value.trim().isEmpty &&
+            (localFilePath == null || localFilePath.trim().isEmpty)) {
+          continue;
+        }
+        if (value.trim().isEmpty && localFilePath != null) {
+          final parts = localFilePath.split(Platform.pathSeparator);
+          value = parts.isNotEmpty ? parts.last : value;
+        }
         rows.add(
           JobFormFieldValue(
             fieldId: field.id,
             value: value,
-            localFilePath: _localFilePathForField(field),
+            localFilePath: localFilePath,
             fieldType: field.fieldType,
           ),
         );
@@ -342,7 +424,23 @@ class DynamicFormViewState extends State<DynamicFormView> {
         final normalized = raw.trim().toLowerCase();
         _boolValues[key] = normalized == 'true' || normalized == '1';
       case _FieldKind.image:
-        break;
+        final localPath = row.localFilePath?.trim();
+        if (localPath != null &&
+            localPath.isNotEmpty &&
+            File(localPath).existsSync()) {
+          _fileValues[key] = _PickedFileValue(
+            name: raw.trim().isNotEmpty
+                ? raw.trim()
+                : localPath.split(Platform.pathSeparator).last,
+            path: localPath,
+            sizeBytes: File(localPath).lengthSync(),
+          );
+        } else if (raw.trim().isNotEmpty) {
+          _fileValues[key] = _PickedFileValue(
+            name: raw.trim(),
+            path: null,
+          );
+        }
       case _FieldKind.video:
         final localPath = row.localFilePath?.trim();
         if (localPath != null &&
@@ -365,6 +463,21 @@ class DynamicFormViewState extends State<DynamicFormView> {
           );
         }
       case _FieldKind.signature:
+        final localPath = row.localFilePath?.trim();
+        if (localPath != null &&
+            localPath.isNotEmpty &&
+            File(localPath).existsSync()) {
+          final filename = raw.trim().isNotEmpty
+              ? raw.trim()
+              : localPath.split(Platform.pathSeparator).last;
+          _signatureFiles[key] = _PickedFileValue(
+            name: filename,
+            path: localPath,
+            sizeBytes: File(localPath).lengthSync(),
+          );
+          _signatureStrokes[key] = const [];
+          break;
+        }
         final display = parseSignatureDisplayValue(raw);
         if (display.hasImage) {
           if (display.bytes != null) {
@@ -1413,10 +1526,20 @@ class DynamicFormViewState extends State<DynamicFormView> {
         );
         final file = result?.files.single;
         if (file != null) {
+          var path = file.path;
+          if ((path == null || path.trim().isEmpty) &&
+              file.bytes != null &&
+              file.bytes!.isNotEmpty) {
+            path = await _writePickedBytesToCache(
+              fieldId: field.id,
+              filename: file.name,
+              bytes: file.bytes!,
+            );
+          }
           value = _PickedFileValue(
             name: file.name,
-            path: file.path,
-            sizeBytes: file.size,
+            path: path,
+            sizeBytes: file.size > 0 ? file.size : (file.bytes?.length ?? 0),
           );
         }
     }
@@ -1438,6 +1561,24 @@ class DynamicFormViewState extends State<DynamicFormView> {
       state.didChange(value);
     });
     _notifyChanged();
+  }
+
+  Future<String> _writePickedBytesToCache({
+    required int fieldId,
+    required String filename,
+    required List<int> bytes,
+  }) async {
+    final dir = Directory(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}red5_job_form_attachments',
+    );
+    if (!dir.existsSync()) {
+      await dir.create(recursive: true);
+    }
+    final safeName = filename.trim().isNotEmpty ? filename.trim() : 'f$fieldId';
+    final path =
+        '${dir.path}${Platform.pathSeparator}pick_f${fieldId}_$safeName';
+    await File(path).writeAsBytes(bytes, flush: true);
+    return path;
   }
 
   Widget _videoField(FormMetadataField field) {

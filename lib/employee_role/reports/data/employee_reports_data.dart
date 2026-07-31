@@ -144,6 +144,22 @@ abstract final class EmployeeReportsData {
         ),
       ],
     ),
+    EmployeeReportProduct(
+      id: 'aggregates',
+      name: 'Aggregates',
+      lastUpdated: 'Today, 7:40 AM',
+      totalQuantity: '85 Cu.m',
+      allocations: [
+        EmployeeReportSiteAllocation(
+          siteName: 'Downtown Hub',
+          quantityAllocated: '40 Cu.m',
+        ),
+        EmployeeReportSiteAllocation(
+          siteName: 'Greenfield Site',
+          quantityAllocated: '45 Cu.m',
+        ),
+      ],
+    ),
   ];
 
   static const sites = [

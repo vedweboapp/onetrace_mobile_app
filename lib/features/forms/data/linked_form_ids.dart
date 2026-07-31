@@ -19,7 +19,8 @@ List<int> readLinkedTemplateFormIds(Map<String, dynamic> map) {
       final entry = Map<String, dynamic>.from(
         row.map((k, v) => MapEntry(k.toString(), v)),
       );
-      final formId = readApiInt(entry['project_form_id']) ??
+      final formId = readApiInt(entry['dynamic_form_id']) ??
+          readApiInt(entry['project_form_id']) ??
           readApiInt(entry['form_id']) ??
           readApiInt(entry['form']) ??
           readApiInt(entry['template_id']) ??

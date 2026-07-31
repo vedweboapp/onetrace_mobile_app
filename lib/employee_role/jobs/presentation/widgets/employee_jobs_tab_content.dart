@@ -9,22 +9,19 @@ import 'package:red5/core/widgets/app_skeleton.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_detail_page.dart';
 import 'package:red5/employee_role/jobs/presentation/operative_job_site_listings_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_sheet_widgets.dart';
 import 'package:red5/employee_role/projects/data/operative_map_geocoder.dart';
 import 'package:red5/employee_role/projects/data/operative_map_pins_cache.dart';
 import 'package:red5/employee_role/projects/presentation/operative_site_route_page.dart';
-import 'package:red5/employee_role/projects/presentation/widgets/operative_site_action_sheet.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/operative_site_google_map.dart';
 
 enum EmployeeJobsHomeViewMode { map, list }
 
 /// Operative home job tab — map or site list, with icon toggle above the map.
 class EmployeeJobsTabContent extends ConsumerStatefulWidget {
-  const EmployeeJobsTabContent({
-    super.key,
-    this.embedded = false,
-  });
+  const EmployeeJobsTabContent({super.key, this.embedded = false});
 
   final bool embedded;
 
@@ -33,7 +30,8 @@ class EmployeeJobsTabContent extends ConsumerStatefulWidget {
       _EmployeeJobsTabContentState();
 }
 
-class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent> {
+class _EmployeeJobsTabContentState
+    extends ConsumerState<EmployeeJobsTabContent> {
   EmployeeJobsHomeViewMode _viewMode = EmployeeJobsHomeViewMode.map;
   int? _selectedJobId;
   var _isDarkMap = false;
@@ -113,6 +111,10 @@ class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent>
     unawaited(_openRouteFor(job, jobs));
   }
 
+  void _openJobDetail(EmployeeJobSummary job) {
+    context.push(EmployeeJobSheetDetailPage.path, extra: job);
+  }
+
   void _openSiteListings(EmployeeJobSummary job) {
     context.push(
       OperativeJobSiteListingsPage.path,
@@ -127,25 +129,6 @@ class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent>
     final job = _selectedJob(jobs);
     if (job == null) return;
     _openSiteListings(job);
-  }
-
-  Future<void> _onSiteListTap(
-    EmployeeJobSummary job,
-    List<EmployeeJobSummary> jobs,
-  ) async {
-    final action = await showOperativeSiteActionSheet(
-      context,
-      title: job.title,
-      subtitle: job.location,
-    );
-    if (!mounted || action == null) return;
-
-    switch (action) {
-      case OperativeSiteAction.drawings:
-        _openSiteListings(job);
-      case OperativeSiteAction.showRoutes:
-        unawaited(_openRouteFor(job, jobs));
-    }
   }
 
   EmployeeJobSummary? _selectedJob(List<EmployeeJobSummary> jobs) {
@@ -170,7 +153,11 @@ class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent>
               children: [
                 Align(
                   alignment: Alignment.centerRight,
-                  child: AppSkeletonBox(width: 88, height: 40, borderRadius: 20),
+                  child: AppSkeletonBox(
+                    width: 88,
+                    height: 40,
+                    borderRadius: 20,
+                  ),
                 ),
                 SizedBox(height: 12),
                 AppSkeletonBox(height: 400, borderRadius: 16),
@@ -203,7 +190,7 @@ class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent>
           for (var i = 0; i < jobs.length; i++) ...[
             _EmployeeSiteCard(
               job: jobs[i],
-              onTap: () => _onSiteListTap(jobs[i], jobs),
+              onTap: () => _openJobDetail(jobs[i]),
             ),
             if (i < jobs.length - 1) const SizedBox(height: 14),
           ],
@@ -215,8 +202,8 @@ class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent>
         final mapHeight = widget.embedded
             ? 400.0
             : (constraints.maxHeight.isFinite
-                ? (constraints.maxHeight - 52).clamp(320.0, 900.0)
-                : 500.0);
+                  ? (constraints.maxHeight - 52).clamp(320.0, 900.0)
+                  : 500.0);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: widget.embedded ? MainAxisSize.min : MainAxisSize.max,
@@ -257,10 +244,7 @@ class _EmployeeJobsTabContentState extends ConsumerState<EmployeeJobsTabContent>
 
 /// Compact list / map icon toggle shown above the operative job map.
 class _JobMapListIconToggle extends StatelessWidget {
-  const _JobMapListIconToggle({
-    required this.value,
-    required this.onChanged,
-  });
+  const _JobMapListIconToggle({required this.value, required this.onChanged});
 
   final EmployeeJobsHomeViewMode value;
   final ValueChanged<EmployeeJobsHomeViewMode> onChanged;
@@ -339,10 +323,7 @@ class _IconToggleSegment extends StatelessWidget {
 }
 
 class _EmployeeSiteCard extends StatelessWidget {
-  const _EmployeeSiteCard({
-    required this.job,
-    required this.onTap,
-  });
+  const _EmployeeSiteCard({required this.job, required this.onTap});
 
   final EmployeeJobSummary job;
   final VoidCallback onTap;
@@ -403,9 +384,12 @@ class _EmployeeSiteCard extends StatelessWidget {
               const SizedBox(height: 10),
               Text(
                 job.title,
-                style: AppFonts.titleMedium(
-                  color: AppColors.inkStrong,
-                ).copyWith(fontWeight: FontWeight.w900, fontSize: 18, height: 1.1),
+                style: AppFonts.titleMedium(color: AppColors.inkStrong)
+                    .copyWith(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                      height: 1.1,
+                    ),
               ),
               const SizedBox(height: 12),
               Row(
@@ -418,7 +402,7 @@ class _EmployeeSiteCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      job.location,
+                      job.displayLocationLine,
                       style: AppFonts.bodySmall(
                         color: AppColors.muted,
                       ).copyWith(fontWeight: FontWeight.w600),

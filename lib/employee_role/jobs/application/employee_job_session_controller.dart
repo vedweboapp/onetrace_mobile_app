@@ -1,16 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_urls.dart';
 import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 
 final employeeJobSessionProvider =
-    StateNotifierProvider<EmployeeJobSessionController, EmployeeJobSessionState>(
-  (ref) => EmployeeJobSessionController(ref.read(localStorageProvider)),
-);
+    StateNotifierProvider<
+      EmployeeJobSessionController,
+      EmployeeJobSessionState
+    >((ref) => EmployeeJobSessionController(ref.read(localStorageProvider)));
 
 final class EmployeeJobSessionState {
   const EmployeeJobSessionState({
@@ -41,7 +45,7 @@ final class EmployeeJobSessionState {
 final class EmployeeJobSessionController
     extends StateNotifier<EmployeeJobSessionState> {
   EmployeeJobSessionController(this._storage)
-      : super(const EmployeeJobSessionState()) {
+    : super(const EmployeeJobSessionState()) {
     _restoreFromStorage();
   }
 
@@ -198,7 +202,7 @@ final class EmployeeJobSessionController
     return !isJobStarted(jobId);
   }
 
-  void startJob(int jobId) {
+  Future<void> startJob(int jobId) async {
     if (isJobCompleted(jobId)) return;
 
     if (!state.activeJobStarts.containsKey(jobId)) {
@@ -209,9 +213,10 @@ final class EmployeeJobSessionController
       _ensureTicker();
     }
     unawaited(_persistVerified(jobId));
+    await _syncTimerWithApi(jobId, action: 'start');
   }
 
-  void completeJob(int jobId) {
+  Future<void> completeJob(int jobId) async {
     if (!state.activeJobStarts.containsKey(jobId) && !isJobStarted(jobId)) {
       return;
     }
@@ -223,6 +228,7 @@ final class EmployeeJobSessionController
     final completed = _readCompletedJobIds()..add(jobId);
     unawaited(_persistCompleted(completed));
     unawaited(_persistStartTimes());
+    unawaited(_syncTimerWithApi(jobId, action: 'stop'));
 
     if (updated.isEmpty) {
       _ticker?.cancel();
@@ -279,7 +285,10 @@ final class EmployeeJobSessionController
       earning: job.earning,
       location: job.location,
       schedule: job.schedule,
-      primaryActionLabel: resolveActionLabel(jobId: job.id, apiStatus: job.status),
+      primaryActionLabel: resolveActionLabel(
+        jobId: job.id,
+        apiStatus: job.status,
+      ),
       startDate: job.startDate,
       siteName: job.siteName,
       projectName: job.projectName,
@@ -296,6 +305,18 @@ final class EmployeeJobSessionController
       return EmployeeJobStatus.upcoming;
     }
     return EmployeeJobStatus.pending;
+  }
+
+  Future<void> _syncTimerWithApi(int jobId, {required String action}) async {
+    try {
+      final dio = sl<Dio>();
+      await dio.post<dynamic>(
+        AppApiUrls.jobTimer(jobId),
+        data: {'action': action},
+      );
+    } catch (_) {
+      // Keep the local session state intact even if the timer API is unavailable.
+    }
   }
 
   void _ensureTicker() {

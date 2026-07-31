@@ -38,12 +38,12 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
   final _formKey = GlobalKey<FormState>();
 
   final _clientName = TextEditingController();
-  final _contactPerson = TextEditingController();
   final _email = TextEditingController();
   final _phone = TextEditingController();
   CountryCode _phoneCountry = PhoneNumberUtils.defaultCountry;
   final _address1 = TextEditingController();
   final _address2 = TextEditingController();
+  /// Kept for Places autofill / API payload; not shown on the form.
   final _city = TextEditingController();
   final _state = TextEditingController();
   final _postalCode = TextEditingController();
@@ -53,6 +53,9 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
   bool _loadingEdit = false;
   String? _loadEditError;
   ClientModel? _resolvedEdit;
+
+  /// Preserved on edit when the form no longer collects contact person.
+  String _contactPerson = '';
 
   static final _countries = <String>[
     'United States',
@@ -124,7 +127,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
 
   void _applyFromModel(ClientModel c) {
     _clientName.text = c.name;
-    _contactPerson.text = c.contactPerson;
+    _contactPerson = c.contactPerson;
     _email.text = c.email;
     _phone.text = c.phone;
     _address1.text = c.addressLine1;
@@ -141,7 +144,6 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
   @override
   void dispose() {
     _clientName.dispose();
-    _contactPerson.dispose();
     _email.dispose();
     _phone.dispose();
     _address1.dispose();
@@ -190,7 +192,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
         result = await api.updateClient(
           id: id,
           name: _clientName.text.trim(),
-          contactPerson: _contactPerson.text.trim(),
+          contactPerson: _contactPerson.trim(),
           email: _email.text.trim(),
           phone: PhoneNumberUtils.formatFull(_phoneCountry, _phone.text),
           addressLine1: _address1.text.trim(),
@@ -204,7 +206,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
       } else {
         result = await api.createClient(
           name: _clientName.text.trim(),
-          contactPerson: _contactPerson.text.trim(),
+          contactPerson: '',
           email: _email.text.trim(),
           phone: PhoneNumberUtils.formatFull(_phoneCountry, _phone.text),
           addressLine1: _address1.text.trim(),
@@ -326,9 +328,8 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                 child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
             children: [
-              _sectionLabel('Basic Info'),
               Text(
-                'Client Name *',
+                'Client name *',
                 style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
@@ -338,22 +339,9 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
               AppTextField(
                 controller: _clientName,
                 hintText: 'e.g. Apex Structural Group',
-                validator: _requiredField('Client Name'),
+                validator: _requiredField('Client name'),
               ),
-              _sectionLabel('Primary Contact'),
-              Text(
-                'Contact Person',
-                style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 8),
-              AppTextField(
-                controller: _contactPerson,
-                hintText: 'Full name',
-              ),
-              const SizedBox(height: 12),
+              _sectionLabel('Contact'),
               Text(
                 'Email *',
                 style: AppFonts.bodySmall(color: AppColors.inkStrong).copyWith(
@@ -390,13 +378,13 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                 city: _city,
                 state: _state,
                 postalCode: _postalCode,
-                layout: AppAddressLayout.entityWithCountryDropdown,
+                layout: AppAddressLayout.lineCountryPostal,
                 borderRadius: 10,
+                line1Hint: 'Search address...',
                 line2Hint: 'Suite, unit, etc. (optional)',
-                cityHint: 'e.g. New York',
-                stateHint: 'e.g. NY',
                 postalCodeHint: 'ZIP or Postal Code',
-                postalCodeLabel: 'Postal Code',
+                postalCodeLabel: 'Postal / ZIP code',
+                line1Validator: _requiredField('Address line 1'),
                 postalCodeValidator: _postalCodeValidator,
                 countryDropdownValue: _countries.contains(_country)
                     ? _country
@@ -407,6 +395,7 @@ class _AddClientPageState extends ConsumerState<AddClientPage> {
                 dropdownDecoration: const InputDecoration(
                   filled: true,
                   fillColor: AppColors.white,
+                  hintText: 'Select country',
                   contentPadding:
                       EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   border: OutlineInputBorder(

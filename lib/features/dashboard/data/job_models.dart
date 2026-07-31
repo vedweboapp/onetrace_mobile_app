@@ -123,7 +123,19 @@ final class JobRead {
     final title = _readString(map, const ['title']) ?? 'Untitled Job';
     final jobMeta = _readMap(map['job_meta']);
     var total = _readDouble(map['total']);
-    if (total == null) total = _readDouble(jobMeta['total']);
+    total ??= _readDouble(map['total_earning']);
+    total ??= _readDouble(map['total_earnings']);
+    total ??= _readDouble(map['job_amount']);
+    total ??= _readDouble(map['total_amount']);
+    total ??= _readDouble(map['job_total']);
+    total ??= _readDouble(map['amount']);
+    total ??= _readDouble(jobMeta['total']);
+    total ??= _readDouble(jobMeta['total_earning']);
+    total ??= _readDouble(jobMeta['total_earnings']);
+    total ??= _readDouble(jobMeta['job_amount']);
+    total ??= _readDouble(jobMeta['total_amount']);
+    total ??= _readDouble(jobMeta['job_total']);
+    total ??= _readDouble(jobMeta['amount']);
     final siteName = _readNestedSiteName(map['site']);
     return JobRead(
       id: id,
@@ -215,6 +227,7 @@ final class JobRead {
         row.map((k, v) => MapEntry(k.toString(), v)),
       );
       final formId =
+          _readInt(map['dynamic_form_id']) ??
           _readInt(map['project_form_id']) ??
           _readInt(map['form_id']) ??
           _readInt(map['job_form_id']);
@@ -311,28 +324,29 @@ final class JobChecklistItemRead {
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'title': title,
-        'sequence': sequence,
-        'is_required': isRequired,
-        'is_checked': isChecked,
-        if (file != null) 'file': file,
-        'is_marked': isMarked,
-        'concentric_point': concentricPoint,
-        if (checkedAt != null) 'checked_at': checkedAt!.toUtc().toIso8601String(),
-      };
+    'id': id,
+    'title': title,
+    'sequence': sequence,
+    'is_required': isRequired,
+    'is_checked': isChecked,
+    if (file != null) 'file': file,
+    'is_marked': isMarked,
+    'concentric_point': concentricPoint,
+    if (checkedAt != null) 'checked_at': checkedAt!.toUtc().toIso8601String(),
+  };
 
-  /// `PUT /jobs/{id}/` checklist rows use `checklist_id` (GET returns it as `id`).
-  Map<String, dynamic> toWriteJson({DateTime? checkedAtOverride}) =>
-      <String, dynamic>{
-        'checklist_id': id,
-        'is_checked': isChecked,
-        'concentric_point': concentricPoint,
-        if (isChecked)
-          'checked_at': (checkedAtOverride ?? checkedAt ?? DateTime.now().toUtc())
-              .toUtc()
-              .toIso8601String(),
-      };
+  /// `PATCH /jobs/{id}/` checklist rows use `checklist_id` (GET returns it as `id`).
+  Map<String, dynamic> toWriteJson({
+    DateTime? checkedAtOverride,
+  }) => <String, dynamic>{
+    'checklist_id': id,
+    'is_checked': isChecked,
+    'concentric_point': isChecked,
+    if (isChecked)
+      'checked_at': (checkedAtOverride ?? checkedAt ?? DateTime.now().toUtc())
+          .toUtc()
+          .toIso8601String(),
+  };
 
   static JobChecklistItemRead? tryFromMap(Map<String, dynamic> map) {
     final id =

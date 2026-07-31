@@ -5,6 +5,16 @@
 /// - `android/secrets.properties` — native Android map in AndroidManifest
 /// - `ios/Runner/Secrets.xcconfig` — native iOS map in Info.plist
 ///
+/// In Google Cloud Console, enable billing and these APIs for the same project
+/// as the key (a blank map with only the Google logo means Maps SDK is off):
+/// - Maps SDK for Android
+/// - Maps SDK for iOS
+/// - Places API
+/// - Geocoding API
+///
+/// If the key uses Android app restrictions, allow package `com.example.red5`
+/// plus your debug/release SHA-1 fingerprints.
+///
 /// Run with:
 /// `flutter run --dart-define-from-file=dart_defines.json`
 ///

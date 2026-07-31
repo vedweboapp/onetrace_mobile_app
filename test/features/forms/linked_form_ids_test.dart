@@ -24,4 +24,16 @@ void main() {
       [18, 20],
     );
   });
+
+  test('readLinkedTemplateFormIds reads dynamic_form_id rows', () {
+    expect(
+      readLinkedTemplateFormIds({
+        'forms': [
+          {'dynamic_form_id': 34, 'job_form_id': 50},
+          {'dynamic_form_id': 72, 'job_form_id': 51},
+        ],
+      }),
+      [34, 72],
+    );
+  });
 }
