@@ -3,9 +3,14 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 
 class EmployeeJobTimerBanner extends StatelessWidget {
-  const EmployeeJobTimerBanner({super.key, required this.elapsed});
+  const EmployeeJobTimerBanner({
+    super.key,
+    required this.elapsed,
+    this.onTap,
+  });
 
   final Duration elapsed;
+  final VoidCallback? onTap;
 
   String get _formatted => formatDuration(elapsed);
 
@@ -24,7 +29,7 @@ class EmployeeJobTimerBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final child = Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -60,7 +65,9 @@ class EmployeeJobTimerBanner extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Time is being logged for this job.',
+                  onTap == null
+                      ? 'Time is being logged for this job.'
+                      : 'Tap to stop this job timer.',
                   style: AppFonts.bodySmall(color: AppColors.muted),
                 ),
               ],
@@ -73,6 +80,16 @@ class EmployeeJobTimerBanner extends StatelessWidget {
             ).copyWith(fontWeight: FontWeight.w900, fontFeatures: const []),
           ),
         ],
+      ),
+    );
+
+    if (onTap == null) return child;
+    return Material(
+      color: AppColors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: child,
       ),
     );
   }

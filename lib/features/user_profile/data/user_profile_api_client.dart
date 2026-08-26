@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
@@ -6,19 +8,18 @@ import 'package:red5/features/user_profile/data/user_profile_models.dart';
 
 /// HTTP client for the `/user-profile/` endpoints.
 ///
-/// Reads follow `GET` list/detail. Full update uses a flat **UserProfileWrite**
-/// body: `email`, `first_name`, `last_name`, `phone_number`, `gender`, `role`,
-/// `address1`, `address2`. Optional `user_image` is sent as multipart when
-/// [profileImageBytes] is non-empty.
+/// Profile updates use `PATCH /user-profile/{id}/` with nested JSON:
+/// `user_detail`, `emails`, `phones`, `addresses`.
+/// Optional `user_image` is sent as a second multipart PATCH.
 final class UserProfileApiClient {
   UserProfileApiClient({required Dio dio}) : _dio = dio;
 
   final Dio _dio;
 
-  static Options get _jsonWriteOptions => Options(
+  static Options get _jsonOptions => Options(
+        contentType: Headers.jsonContentType,
         headers: const <String, dynamic>{
           Headers.acceptHeader: Headers.jsonContentType,
-          Headers.contentTypeHeader: Headers.jsonContentType,
         },
       );
 
@@ -32,10 +33,7 @@ final class UserProfileApiClient {
     while (true) {
       final response = await _dio.get<Map<String, dynamic>>(
         AppApiUrls.userProfiles,
-        queryParameters: <String, dynamic>{
-          'page': page,
-          'page_size': pageSize,
-        },
+        queryParameters: <String, dynamic>{'page': page, 'page_size': pageSize},
       );
       final root = response.data ?? const <String, dynamic>{};
       final rows = _readRows(root);
@@ -82,135 +80,112 @@ final class UserProfileApiClient {
     return UserProfileModel.fromJson(payload);
   }
 
-  /// `PATCH /user-profile/{id}/` — only keys with non-null args are sent.
-  Future<UserProfileModel> updateProfile({
-    required String id,
-    String? firstName,
-    String? lastName,
-    String? phoneNumber,
-    String? gender,
-    List<Map<String, dynamic>>? communications,
-    List<Map<String, dynamic>>? addresses,
-  }) async {
-    final body = _userWritePatchBody(
-      firstName: firstName,
-      lastName: lastName,
-      phoneNumber: phoneNumber,
-      gender: gender,
-      communications: communications,
-      addresses: addresses,
-    );
-    final response = await _dio.patch<Map<String, dynamic>>(
-      AppApiUrls.userProfileById(id),
-      data: body,
-      options: _jsonWriteOptions,
-    );
-    return _parseProfileResponse(response.data);
-  }
-
-  /// `PUT /user-profile/{id}/` — flat body + optional profile image (multipart).
+  /// `PATCH /user-profile/{id}/` — nested JSON write body (single request).
+  ///
+  /// ```json
+  /// {
+  ///   "user_detail": { "first_name", "last_name", "date_of_birth", "gender" },
+  ///   "emails": [{ "id?", "email", "is_primary" }],
+  ///   "phones": [{ "id?", "phone", "is_primary" }],
+  ///   "addresses": [{ "id?", "address_1", "address_2", "country", "state",
+  ///                   "city", "pincode", "is_primary" }]
+  /// }
+  /// ```
   Future<UserProfileModel> replaceProfile({
     required String id,
-    required String email,
     required String firstName,
     required String lastName,
-    required String phoneNumber,
+    required String dateOfBirth,
     required String gender,
-    required int role,
-    required String address1,
-    required String address2,
+    required List<Map<String, dynamic>> emails,
+    required List<Map<String, dynamic>> phones,
+    required List<Map<String, dynamic>> addresses,
     List<int>? profileImageBytes,
     String? profileImageFilename,
   }) async {
-    final flat = <String, dynamic>{
-      'email': email,
-      'first_name': firstName,
-      'last_name': lastName,
-      'phone_number': phoneNumber,
-      'gender': gender,
-      'role': role,
-      'address1': address1,
-      'address2': address2,
+    final payload = <String, dynamic>{
+      'user_detail': <String, dynamic>{
+        'first_name': firstName,
+        'last_name': lastName,
+        'gender': gender,
+        if (dateOfBirth.trim().isNotEmpty) 'date_of_birth': dateOfBirth.trim(),
+      },
+      'emails': emails,
+      'phones': phones,
+      'addresses': addresses,
     };
 
+    final hasImage =
+        profileImageBytes != null && profileImageBytes.isNotEmpty;
+
     final Response<Map<String, dynamic>> response;
-    if (profileImageBytes != null && profileImageBytes.isNotEmpty) {
+    if (hasImage) {
       final name = (profileImageFilename ?? 'profile.jpg').trim().isEmpty
           ? 'profile.jpg'
           : profileImageFilename!.trim();
-      final form = FormData.fromMap({
-        ...flat,
-        'user_image': MultipartFile.fromBytes(
-          profileImageBytes,
-          filename: name,
+      final form = FormData();
+      form.fields.add(MapEntry('user_detail', jsonEncode(payload['user_detail'])));
+      form.fields.add(MapEntry('emails', jsonEncode(emails)));
+      form.fields.add(MapEntry('phones', jsonEncode(phones)));
+      form.fields.add(MapEntry('addresses', jsonEncode(addresses)));
+      form.files.add(
+        MapEntry(
+          'user_image',
+          MultipartFile.fromBytes(profileImageBytes, filename: name),
         ),
-      });
-      response = await _dio.put<Map<String, dynamic>>(
+      );
+      response = await _dio.patch<Map<String, dynamic>>(
         AppApiUrls.userProfileById(id),
         data: form,
         options: Options(
+          contentType:
+              '${Headers.multipartFormDataContentType}; boundary=${form.boundary}',
           headers: const <String, dynamic>{
             Headers.acceptHeader: Headers.jsonContentType,
           },
         ),
       );
     } else {
-      response = await _dio.put<Map<String, dynamic>>(
+      // One PATCH — real nested JSON (not form-encoded strings).
+      response = await _dio.patch<Map<String, dynamic>>(
         AppApiUrls.userProfileById(id),
-        data: flat,
-        options: _jsonWriteOptions,
+        data: jsonEncode(payload),
+        options: _jsonOptions,
       );
     }
     return _parseProfileResponse(response.data);
   }
 
-  static UserProfileModel _parseProfileResponse(Map<String, dynamic>? root) {
-    final r = root ?? const <String, dynamic>{};
-    final data = _readMap(r['data']);
-    final payload = data.isNotEmpty ? data : r;
-    return UserProfileModel.fromJson(payload);
-  }
-
-  static Map<String, dynamic> _userWritePatchBody({
-    String? firstName,
-    String? lastName,
-    String? phoneNumber,
-    String? gender,
-    List<Map<String, dynamic>>? communications,
-    List<Map<String, dynamic>>? addresses,
-  }) {
-    final m = <String, dynamic>{};
-    if (firstName != null) m['first_name'] = firstName;
-    if (lastName != null) m['last_name'] = lastName;
-    if (phoneNumber != null) m['phone_number'] = phoneNumber;
-    if (gender != null) m['gender'] = gender;
-    if (communications != null) m['communications'] = communications;
-    if (addresses != null) m['addresses'] = addresses;
-    return m;
-  }
-
-  /// One `communications` element for PATCH (optional server `id`).
-  static Map<String, dynamic> communicationWrite({
+  /// Builds one `emails[]` row for PATCH.
+  static Map<String, dynamic> emailWrite({
     String? id,
-    required String phone,
     required String email,
     required bool isPrimary,
   }) {
-    final m = <String, dynamic>{
-      'phone': phone,
-      'email': email,
-      'is_primary': isPrimary,
-    };
+    final m = <String, dynamic>{'email': email, 'is_primary': isPrimary};
     final idVal = _jsonId(id);
     if (idVal != null) m['id'] = idVal;
     return m;
   }
 
-  /// One `addresses` element for PATCH (optional server `id`).
+  /// Builds one `phones[]` row for PATCH.
+  static Map<String, dynamic> phoneWrite({
+    String? id,
+    required String phone,
+    required bool isPrimary,
+  }) {
+    final m = <String, dynamic>{'phone': phone, 'is_primary': isPrimary};
+    final idVal = _jsonId(id);
+    if (idVal != null) m['id'] = idVal;
+    return m;
+  }
+
+  /// Builds one `addresses[]` row for PATCH.
   static Map<String, dynamic> addressWrite({
     String? id,
     required String address1,
     required String address2,
+    String country = '',
     required String city,
     required String state,
     required String pincode,
@@ -219,14 +194,22 @@ final class UserProfileApiClient {
     final m = <String, dynamic>{
       'address_1': address1,
       'address_2': address2,
-      'city': city,
+      'country': country,
       'state': state,
+      'city': city,
       'pincode': pincode,
       'is_primary': isPrimary,
     };
     final idVal = _jsonId(id);
     if (idVal != null) m['id'] = idVal;
     return m;
+  }
+
+  static UserProfileModel _parseProfileResponse(Map<String, dynamic>? root) {
+    final r = root ?? const <String, dynamic>{};
+    final data = _readMap(r['data']);
+    final payload = data.isNotEmpty ? data : r;
+    return UserProfileModel.fromJson(payload);
   }
 
   static Object? _jsonId(String? id) {

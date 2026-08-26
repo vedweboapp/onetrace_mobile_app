@@ -197,6 +197,9 @@ class _EmployeeJobDrawingsListBodyState
       updatedLabel: item.updatedLabel,
       drawingFileUrl: resolveEmployeeDrawingFileUrl(level.drawingFileUrl),
       cacheKey: 'job-${item.jobId}-level-${level.id}',
+      pins: [
+        for (final plot in level.plots) ...plot.pins,
+      ],
       onTap: () => _openDrawing(item),
     );
   }

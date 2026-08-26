@@ -127,3 +127,56 @@ String? _readString(Map<String, dynamic> map, List<String> keys) {
   }
   return null;
 }
+
+@immutable
+final class JobQrScanAssignment {
+  const JobQrScanAssignment({
+    required this.publicUuid,
+    required this.success,
+    this.message,
+    this.jobId,
+    this.jobPinId,
+    this.pinId,
+    this.projectFormId,
+    this.projectFormName,
+  });
+
+  final String publicUuid;
+  final bool success;
+  final String? message;
+  final int? jobId;
+  final int? jobPinId;
+  final int? pinId;
+  final int? projectFormId;
+  final String? projectFormName;
+
+  factory JobQrScanAssignment.fromResponse(
+    dynamic data, {
+    required String publicUuid,
+  }) {
+    Map<String, dynamic> root = const {};
+    if (data is Map<String, dynamic>) {
+      root = data;
+    } else if (data is Map) {
+      root = Map<String, dynamic>.from(
+        data.map((k, v) => MapEntry(k.toString(), v)),
+      );
+    }
+    final body = _readMap(root['data']) ?? root;
+    return JobQrScanAssignment(
+      publicUuid: publicUuid,
+      success: root['success'] == true ||
+          (root['success'] == null &&
+              (body['job_id'] != null || body['job_pin_id'] != null)),
+      message: _readString(root, const ['message']) ??
+          _readString(body, const ['message']),
+      jobId: _readInt(body['job_id']) ?? _readInt(root['job_id']),
+      jobPinId: _readInt(body['job_pin_id']) ?? _readInt(root['job_pin_id']),
+      pinId: _readInt(body['pin_id']) ?? _readInt(root['pin_id']),
+      projectFormId:
+          _readInt(body['project_form_id']) ?? _readInt(root['project_form_id']),
+      projectFormName: _readString(body, const ['project_form_name']) ??
+          _readString(root, const ['project_form_name']),
+    );
+  }
+}

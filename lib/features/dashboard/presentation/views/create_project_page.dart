@@ -9,7 +9,6 @@ import 'package:red5/core/widgets/app_text_field.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/features/dashboard/presentation/views/drawing_canvas_page.dart';
 import 'package:red5/features/dashboard/presentation/views/upload_drawing_page.dart';
-import 'package:red5/core/models/named_id_option.dart';
 import 'package:red5/features/dashboard/presentation/widgets/create_project_type_dialog.dart';
 import 'package:red5/features/dashboard/presentation/widgets/forms_multi_picker_sheet.dart';
 import 'package:red5/features/dashboard/presentation/widgets/project_type_picker_sheet.dart';

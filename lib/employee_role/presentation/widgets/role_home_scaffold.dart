@@ -16,15 +16,14 @@ import 'package:red5/core/widgets/app_user_avatar.dart';
 import 'package:red5/core/notifications/app_notifications_controller.dart';
 import 'package:red5/core/notifications/widgets/notification_bell_button.dart';
 import 'package:red5/employee_role/data/app_role.dart';
-import 'package:red5/employee_role/data/role_session.dart';
+import 'package:red5/employee_role/data/signed_in_session_cleanup.dart';
 import 'package:red5/employee_role/employee_earnings/presentation/employee_earning_view.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
-import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_card_timer.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
@@ -102,12 +101,7 @@ class _RoleHomeScaffoldState extends ConsumerState<RoleHomeScaffold>
   }
 
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
-    await ref.read(appNotificationsControllerProvider.notifier).clearForLogout();
-    final storage = ref.read(localStorageProvider);
-    await storage.remove(LocalStorageKeys.authAccessToken);
-    await storage.remove(LocalStorageKeys.authRefreshToken);
-    await storage.remove(LocalStorageKeys.authUserId);
-    await RoleSession.clearRole(storage);
+    await SignedInSessionCleanup.clear(ref);
     sl<AuthRedirectNotifier>().notifyAuthChanged();
     if (context.mounted) context.go(LoginPage.path);
   }
@@ -536,13 +530,6 @@ class _EmployeeHomeWelcomeHeaderState
   Widget build(BuildContext context) {
     final displayName = _displayName ?? _fallbackNameForRole(widget.role);
     final initials = _initialsFromName(displayName);
-    final session = ref.watch(employeeJobSessionProvider);
-    final sessionController = ref.read(employeeJobSessionProvider.notifier);
-    final activeJobId = sessionController.primaryActiveJobId;
-    final showTimer = activeJobId != null;
-    final elapsed = activeJobId == null
-        ? Duration.zero
-        : session.elapsedFor(activeJobId);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -584,17 +571,6 @@ class _EmployeeHomeWelcomeHeaderState
                 ),
               ],
             ),
-            const Spacer(),
-            if (showTimer) ...[
-              const Icon(Icons.timer_outlined, size: 17, color: Color(0xFF5E4BFF)),
-              const SizedBox(width: 4),
-              Text(
-                EmployeeJobTimerBanner.formatDuration(elapsed),
-                style: AppFonts.bodyMedium(
-                  color: AppColors.inkStrong,
-                ).copyWith(fontWeight: FontWeight.w800),
-              ),
-            ],
           ],
         ),
       ],
@@ -1023,6 +999,7 @@ class _CalendarDayChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final day = date.day;
+    final hasJobs = showDot;
     final textColor = isToday
         ? AppColors.white
         : (emphasized ? AppColors.inkStrong : const Color(0xFFB8BFC7));
@@ -1036,6 +1013,11 @@ class _CalendarDayChip extends StatelessWidget {
             color: const Color(0xFFF1EFFF),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: const Color(0xFF5E4BFF), width: 1.4),
+          )
+        : hasJobs && emphasized
+        ? BoxDecoration(
+            color: const Color(0xFFF1EFFF),
+            borderRadius: BorderRadius.circular(10),
           )
         : (!emphasized
               ? null
@@ -1075,14 +1057,15 @@ class _CalendarDayChip extends StatelessWidget {
                   Text(
                     '$day',
                     style: AppFonts.bodyMedium(color: textColor).copyWith(
-                      fontWeight: (isToday || _isPastNonToday(date)) && emphasized
+                      fontWeight: (isToday || hasJobs || _isPastNonToday(date)) &&
+                              emphasized
                           ? FontWeight.w800
                           : FontWeight.w500,
                       height: 1,
                       fontSize: compact ? 13 : 14,
                     ),
                   ),
-                  if (showDot && !isToday)
+                  if (hasJobs && !isToday)
                     Positioned(
                       bottom: compact ? 4 : 5,
                       child: Container(
@@ -1255,6 +1238,7 @@ class _HomeJobCard extends StatelessWidget {
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 19),
           ),
+          EmployeeJobCardTimer(jobId: job.id, jobTitle: job.title),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -1370,6 +1354,11 @@ class _WeekTaskTile extends StatelessWidget {
                       style: AppFonts.titleMedium(
                         color: AppColors.inkStrong,
                       ).copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    EmployeeJobCardTimer(
+                      jobId: job.id,
+                      jobTitle: job.title,
+                      compact: true,
                     ),
                     const SizedBox(height: 3),
                     Text(

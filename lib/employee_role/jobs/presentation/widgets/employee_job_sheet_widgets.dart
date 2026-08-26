@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_card_timer.dart';
 
 class JobSheetStatusChip extends StatelessWidget {
   const JobSheetStatusChip({super.key, required this.status});
@@ -106,6 +107,7 @@ class JobSheetJobCard extends StatelessWidget {
               color: AppColors.inkStrong,
             ).copyWith(fontWeight: FontWeight.w900, fontSize: 18, height: 1.1),
           ),
+          EmployeeJobCardTimer(jobId: job.id, jobTitle: job.title),
           const SizedBox(height: 12),
           _JobSheetMetaRow(
             icon: Icons.location_on_outlined,

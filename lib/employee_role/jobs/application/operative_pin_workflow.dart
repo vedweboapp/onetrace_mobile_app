@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -13,13 +15,15 @@ import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
+import 'package:red5/employee_role/jobs/data/job_pin_completion.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_confirmation_page.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_form_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/operative_pin_checklist_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/operative_pin_complete_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/operative_job_form_sync_result_sheet.dart';
 
-bool operativePinShowsQr(EmployeeJobDrawingPin pin) => pin.qrCodeFieldPresent;
+bool operativePinShowsQr(EmployeeJobDrawingPin pin) =>
+    pinRequiresQrForCompletion(pin);
 
 /// Bumped whenever a pin popup session starts so a stale pin-1 loop cannot
 /// reopen its sheet after the user moves on to pin 2.
@@ -109,14 +113,16 @@ Future<void> handleOperativePinTap({
   if (!context.mounted) return;
   if (generation != _operativePinWorkflowGeneration) return;
 
-  // Open the pin form directly — no intermediate "Fill Required Form" popup.
-  // QR scanning is done inside the form page after required fields are filled.
-  if (pin.hasForm) {
+  final detailState = container.read(employeeJobDetailControllerProvider);
+  final liveJob = detailState.job ?? job;
+  final livePin =
+      findEmployeeJobPinById(liveJob.levels, pin.id) ?? pin;
+  if (livePin.hasForm) {
     final submitted = await _openPinForm(
       context: context,
       container: container,
       jobId: jobId,
-      pin: pin,
+      pin: livePin,
     );
     if (generation != _operativePinWorkflowGeneration) return;
     if (!context.mounted) return;
@@ -125,7 +131,8 @@ Future<void> handleOperativePinTap({
     final afterState = container.read(employeeJobDetailControllerProvider);
     final afterJob = afterState.job;
     final afterPin =
-        findEmployeeJobPinById(afterJob?.levels ?? const [], pin.id) ?? pin;
+        findEmployeeJobPinById(afterJob?.levels ?? const [], livePin.id) ??
+            livePin;
     if (submitted && isOperativePinComplete(afterPin, afterState)) {
       await _showContinueOrDoneDialog(
         context: context,
@@ -137,15 +144,35 @@ Future<void> handleOperativePinTap({
     return;
   }
 
-  // Pins without a linked form: QR is no longer opened from the pin tap.
-  // Operatives should work through forms; show guidance instead.
-  if (context.mounted) {
-    context.showTopSnackBar(
-      const SnackBar(
-        content: Text('No form is assigned to this pin yet.'),
-        behavior: SnackBarBehavior.floating,
-      ),
+  if (operativePinShowsQr(livePin)) {
+    final scannedQr = await runEmployeeQrScanFlow(
+      context,
+      container,
+      jobId: jobId,
+      jobPinId: livePin.jobPinId ?? livePin.resolvedJobFormId,
     );
+    if (!context.mounted || scannedQr == null) return;
+    if (generation != _operativePinWorkflowGeneration) return;
+    detailController.markQrCodeScanned(
+      pinId: livePin.id,
+      formId: livePin.projectFormId,
+      qrCode: scannedQr,
+    );
+    await detailController.load(jobId: jobId);
+    OperativeCanvasBridge.notifyCompletionChanged(jobId);
+    final afterState = container.read(employeeJobDetailControllerProvider);
+    final afterJob = afterState.job;
+    final afterPin =
+        findEmployeeJobPinById(afterJob?.levels ?? const [], livePin.id) ??
+            livePin;
+    if (isOperativePinComplete(afterPin, afterState)) {
+      await _showContinueOrDoneDialog(
+        context: context,
+        container: container,
+        jobId: jobId,
+        pin: afterPin,
+      );
+    }
   }
 }
 
@@ -161,19 +188,11 @@ Future<bool> _openPinForm({
   final jobPinId = pin.jobPinId ?? pin.resolvedJobFormId;
   if (jobPinId == null || jobPinId <= 0) return false;
 
-  final controller = container.read(employeeJobDetailControllerProvider.notifier);
-  await controller.refreshAttachedForms();
-  await controller.load(jobId: jobId);
-  if (!context.mounted) return false;
-
-  final job = container.read(employeeJobDetailControllerProvider).job;
-  final freshPin = findEmployeeJobPinById(job?.levels ?? const [], pin.id) ?? pin;
-  final submissionId = freshPin.projectFormSubmissionId ??
-      await container.read(jobFormSubmissionRepositoryProvider).resolveSubmissionId(
-            jobId: jobId,
-            formTemplateId: formId,
-            jobPinId: jobPinId,
-          );
+  // Open immediately with the pin we already have — don't block on a full
+  // job refresh. The form page loads its own template/values.
+  final controller =
+      container.read(employeeJobDetailControllerProvider.notifier);
+  final submissionId = pin.projectFormSubmissionId;
 
   final submitted = await context.push<bool>(
     EmployeeJobFormPage.path,
@@ -182,31 +201,33 @@ Future<bool> _openPinForm({
       'jobId': jobId,
       'jobPinId': jobPinId,
       if (submissionId != null && submissionId > 0) 'submissionId': submissionId,
-      'pinId': freshPin.id,
-      'requiresPinQr': freshPin.qrCodeFieldPresent,
+      'pinId': pin.id,
+      'requiresPinQr': pin.qrCodeFieldPresent,
     },
   );
   if (!context.mounted || submitted != true) return false;
-  controller.markFormComplete(formId, pinId: freshPin.id);
-  await controller.load(jobId: jobId);
-  await controller.refreshCompletedForms();
+  controller.markFormComplete(formId, pinId: pin.id);
+  // Refresh in the background after submit — don't serialize both awaits.
+  unawaited(controller.load(jobId: jobId));
+  unawaited(controller.refreshCompletedForms());
 
   final afterState = container.read(employeeJobDetailControllerProvider);
   final afterJob = afterState.job;
   final afterPin =
-      findEmployeeJobPinById(afterJob?.levels ?? const [], freshPin.id) ??
-          freshPin;
+      findEmployeeJobPinById(afterJob?.levels ?? const [], pin.id) ?? pin;
   if (afterJob != null &&
       isOperativePinComplete(afterPin, afterState) &&
       !afterPin.isStatusComplete) {
     try {
-      await container.read(employeeJobRepositoryProvider).markReadyPinsCompleteStatus(
+      await container
+          .read(employeeJobRepositoryProvider)
+          .markReadyPinsCompleteStatus(
             jobId: jobId,
             levels: afterJob.levels,
             completedPinFormKeys: afterState.completedPinFormKeys,
             scannedPinQrKeys: afterState.scannedPinQrKeys,
           );
-      await controller.load(jobId: jobId);
+      unawaited(controller.load(jobId: jobId));
     } catch (_) {
       // Job completion will retry marking pin status.
     }
@@ -434,22 +455,11 @@ Future<void> openOperativeJobForm({
   required int jobId,
   required int formId,
 }) async {
-  final controller = container.read(employeeJobDetailControllerProvider.notifier);
-  await controller.refreshAttachedForms();
-  if (!context.mounted) return;
-
-  final state = container.read(employeeJobDetailControllerProvider);
-  var jobFormId = controller.jobFormIdFor(formId);
-  if ((jobFormId == null || jobFormId <= 0)) {
-    jobFormId = await container
-        .read(jobFormSubmissionRepositoryProvider)
-        .resolveJobFormId(
-          jobId: jobId,
-          formTemplateId: formId,
-          assignments: state.job?.formAssignments ?? const [],
-        );
-  }
+  final controller =
+      container.read(employeeJobDetailControllerProvider.notifier);
+  final jobFormId = controller.jobFormIdFor(formId);
   final submissionId = controller.submissionIdFor(formId);
+
   final submitted = await context.push<bool>(
     EmployeeJobFormPage.path,
     extra: <String, Object?>{
@@ -460,11 +470,15 @@ Future<void> openOperativeJobForm({
     },
   );
   if (!context.mounted || submitted != true) return;
-  await controller.refreshCompletedForms();
+  unawaited(controller.refreshCompletedForms());
 
   final refreshed = container.read(employeeJobDetailControllerProvider);
   if (refreshed.allRequiredFormsComplete) {
-    await _showFormsCompleteDialog(context: context, container: container, jobId: jobId);
+    await _showFormsCompleteDialog(
+      context: context,
+      container: container,
+      jobId: jobId,
+    );
   }
 }
 

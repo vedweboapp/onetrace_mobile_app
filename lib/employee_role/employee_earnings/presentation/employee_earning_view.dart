@@ -17,7 +17,7 @@ extension EmployeeEarningsJobStatusX on JobStatus {
       case JobStatus.paid:
         return 'PAID';
       case JobStatus.inApproval:
-        return 'IN APPROVAL';
+        return 'PENDING';
       case JobStatus.approved:
         return 'APPROVED';
     }
@@ -131,7 +131,7 @@ final jobSummaryProvider = Provider<AsyncValue<JobSummary>>((ref) {
   final earningsAsync = ref.watch(employeeEarningsProvider);
   return earningsAsync.whenData((response) {
     return JobSummary(
-      qualityApproved: response.summary.paidAmount,
+      qualityApproved: response.summary.totalEarning,
       pending: response.summary.unpaidAmount,
       paid: response.summary.paidAmount,
     );
@@ -166,7 +166,10 @@ class JobListScreen extends ConsumerWidget {
       appBar: AppBar(elevation: 1, title: Text("Earnings")),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () async => ref.refresh(jobsProvider.future),
+          onRefresh: () async {
+            ref.invalidate(employeeEarningsProvider);
+            await ref.read(employeeEarningsProvider.future);
+          },
           child: CustomScrollView(
             slivers: [
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
@@ -221,7 +224,7 @@ class _SummaryCard extends ConsumerWidget {
     final summaryAsync = ref.watch(jobSummaryProvider);
     final currency = NumberFormat.currency(
       locale: 'en_IN',
-      symbol: '₹',
+      symbol: '€',
       decimalDigits: 0,
     );
 
@@ -244,7 +247,7 @@ class _SummaryCard extends ConsumerWidget {
           children: [
             _SummaryRow(
               dotColor: const Color(0xFFFF8A00),
-              label: 'Quality Approved',
+              label: 'Total Earning',
               value: currency.format(summary.qualityApproved),
             ),
             const SizedBox(height: 14),
@@ -494,7 +497,7 @@ class _StatusBadge extends StatelessWidget {
       case JobStatus.approved:
         bgColor = const Color(0xFFFFE39B);
         textColor = const Color(0xFF8A6D00);
-        label = status == JobStatus.inApproval ? 'IN APPROVAL' : 'APPROVED';
+        label = status == JobStatus.inApproval ? 'PENDING' : 'APPROVED';
         break;
     }
 
@@ -515,4 +518,4 @@ class _StatusBadge extends StatelessWidget {
       ),
     );
   }
-} 
+}

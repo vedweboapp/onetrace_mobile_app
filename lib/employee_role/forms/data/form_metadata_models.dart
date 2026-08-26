@@ -9,6 +9,7 @@ import 'package:red5/employee_role/forms/data/form_video_recorder_constraints.da
 final class FormMetadataSection {
   const FormMetadataSection({
     required this.id,
+    this.sid,
     required this.name,
     required this.sequence,
     required this.columnCount,
@@ -17,6 +18,7 @@ final class FormMetadataSection {
   });
 
   final int id;
+  final String? sid;
   final String name;
   final int sequence;
   final int columnCount;
@@ -28,6 +30,7 @@ final class FormMetadataSection {
 final class FormMetadataField {
   const FormMetadataField({
     required this.id,
+    this.fid,
     required this.label,
     required this.apiName,
     required this.fieldType,
@@ -46,6 +49,7 @@ final class FormMetadataField {
   });
 
   final int id;
+  final String? fid;
   final String label;
   final String apiName;
   final String fieldType;
@@ -71,6 +75,7 @@ final class FormMetadataField {
 
     return FormMetadataField(
       id: _readInt(map['id']) ?? 0,
+      fid: _readString(map, const ['f_id']),
       label: _readString(map, const ['field_label', 'label', 'name']) ??
           'Field',
       apiName: _readString(map, const ['api_name']) ?? 'field_${map['id']}',
@@ -127,6 +132,7 @@ List<FormMetadataSection> parseFormMetadataSections(
     sections.add(
       FormMetadataSection(
         id: _readInt(map['id']) ?? sections.length + 1,
+        sid: _readString(map, const ['s_id']),
         name: _readString(map, const ['name']) ?? 'Section',
         sequence: _readInt(map['sequence']) ?? sections.length + 1,
         columnCount: _readInt(map['column_count']) ?? 1,
@@ -239,6 +245,7 @@ List<FormMetadataSection> filterOperativeFormSections(
     filtered.add(
       FormMetadataSection(
         id: section.id,
+        sid: section.sid,
         name: section.name,
         sequence: section.sequence,
         columnCount: section.columnCount,

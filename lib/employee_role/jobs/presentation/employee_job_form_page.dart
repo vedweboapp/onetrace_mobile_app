@@ -14,13 +14,17 @@ import 'package:red5/employee_role/forms/presentation/widgets/form_qr_scanner_pa
 import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/application/job_form_submission_sync_listener.dart';
+import 'package:red5/employee_role/jobs/application/operative_canvas_bridge.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_qr_scan_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_checklist_pdf_page.dart';
 import 'package:red5/core/utils/qr_code_utils.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
 
 class EmployeeJobFormPage extends ConsumerStatefulWidget {
   const EmployeeJobFormPage({
@@ -55,13 +59,17 @@ class EmployeeJobFormPage extends ConsumerStatefulWidget {
 
 class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
   final _dynamicFormKey = GlobalKey<DynamicFormViewState>();
-  final _remarksController = TextEditingController();
   bool _isSubmitting = false;
   bool _restoredValues = false;
   bool _signatureDrawing = false;
   int? _existingSubmissionId;
   int? _cachedJobFormId;
   Timer? _draftSaveTimer;
+  List<JobFormFieldValue>? _pendingRestoreValues;
+  List<PinStatusItem> _pinStatuses = const [];
+  bool _pinStatusesLoading = false;
+  bool _pinStatusSaving = false;
+  String? _pinStatusError;
 
   @override
   void initState() {
@@ -72,7 +80,6 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
   @override
   void dispose() {
     _draftSaveTimer?.cancel();
-    _remarksController.dispose();
     super.dispose();
   }
 
@@ -153,13 +160,15 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
     EmployeeJobDrawingPin? pin,
     EmployeeJobDetailState detailState,
   ) {
+    // Prefer API `qr_code_id` — never show raw numeric / qr_code ids here.
+    final qrCodeId = pin?.displayQrCodeId;
+    if (qrCodeId != null && qrCodeId.isNotEmpty) return qrCodeId;
+
     final key = _pinFormKeyFor(pin, _pinIdFromJob(detailState.job));
     if (key == null) return null;
-    final fromState = detailState.scannedPinQrCodes[key];
-    if (fromState != null && fromState.trim().isNotEmpty) {
-      return fromState.trim();
-    }
-    return pin?.qrCode?.trim();
+    final fromState = detailState.scannedPinQrCodes[key]?.trim();
+    if (fromState != null && fromState.isNotEmpty) return fromState;
+    return null;
   }
 
   Future<int?> _resolveJobFormId(int jobId) async {
@@ -205,6 +214,90 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
       await _resolveJobFormId(jobId);
     }
     await _restoreSavedValues();
+    if (_isPinForm) {
+      await _loadPinStatuses();
+    }
+  }
+
+  Future<void> _loadPinStatuses() async {
+    if (!_isPinForm) return;
+    setState(() {
+      _pinStatusesLoading = true;
+      _pinStatusError = null;
+    });
+    try {
+      final statuses = await ref
+          .read(employeeJobRepositoryProvider)
+          .fetchActivePinStatuses();
+      if (!mounted) return;
+      setState(() {
+        _pinStatuses = statuses;
+        _pinStatusesLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _pinStatusesLoading = false;
+        _pinStatusError = ApiResponseMessage.fromAnyError(error);
+      });
+    }
+  }
+
+  PinStatusItem? _pinStatusForName(String name) {
+    final normalized = name.trim().toLowerCase();
+    for (final status in _pinStatuses) {
+      if (status.statusName.trim().toLowerCase() == normalized) {
+        return status;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _updatePinStatus(PinStatusItem status) async {
+    if (_pinStatusSaving) return;
+    final pin = _resolvedPin;
+    final job = ref.read(employeeJobDetailControllerProvider).job;
+    final jobId = _resolvedJobId;
+    final statusId = int.tryParse(status.id.trim());
+    if (pin == null ||
+        job == null ||
+        jobId == null ||
+        statusId == null ||
+        statusId <= 0) {
+      return;
+    }
+
+    final currentStatus = pin.statusName.trim().toLowerCase();
+    if (currentStatus == status.statusName.trim().toLowerCase()) return;
+
+    setState(() {
+      _pinStatusSaving = true;
+      _pinStatusError = null;
+    });
+
+    try {
+      await ref.read(employeeJobRepositoryProvider).updateDrawingPinStatus(
+            jobId: jobId,
+            pin: pin,
+            levels: job.levels,
+            statusId: statusId,
+          );
+      await ref.read(employeeJobDetailControllerProvider.notifier).load(jobId: jobId);
+      OperativeCanvasBridge.notifyCompletionChanged(jobId);
+      if (!mounted) return;
+      setState(() {
+        _pinStatusSaving = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _pinStatusSaving = false;
+        _pinStatusError = ApiResponseMessage.fromAnyError(error);
+      });
+      context.showTopSnackBar(
+        SnackBar(content: Text(_pinStatusError!)),
+      );
+    }
   }
 
   Future<void> _resolveExistingSubmissionId() async {
@@ -214,18 +307,9 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
     }
 
     if (_isPinForm) {
-      final jobId = _resolvedJobId;
-      if (jobId == null) return;
-
-      final resolved = await ref
-          .read(jobFormSubmissionRepositoryProvider)
-          .resolveSubmissionId(
-            jobId: jobId,
-            formTemplateId: widget.formId,
-            jobPinId: widget.jobPinId,
-          );
-      if (resolved != null && resolved > 0) {
-        _existingSubmissionId = resolved;
+      final pinSubmissionId = _resolvedPin?.projectFormSubmissionId;
+      if (pinSubmissionId != null && pinSubmissionId > 0) {
+        _existingSubmissionId = pinSubmissionId;
       }
       return;
     }
@@ -249,9 +333,6 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
     }
   }
 
-  bool get _isUpdatingExistingSubmission =>
-      _existingSubmissionId != null && _existingSubmissionId! > 0;
-
   bool get _pinFormComplete {
     final pinId = _resolvedPinId;
     if (pinId == null) return false;
@@ -267,10 +348,13 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
     if (normalized.isEmpty) return;
 
     try {
+      final pin = _resolvedPin;
       final result = await ref.read(jobQrScanRepositoryProvider).processScan(
             qrCode: normalized,
-            jobId: widget.jobId ?? _resolvedJobId,
-            jobPinId: widget.jobPinId,
+            jobId: _resolvedJobId ?? widget.jobId,
+            jobPinId: widget.jobPinId ??
+                pin?.jobPinId ??
+                pin?.resolvedJobFormId,
           );
       if (!mounted) return;
 
@@ -280,19 +364,28 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
               pinFormKey: pinKey,
               qrCode: result.qrCode,
             );
+        final jobId = _resolvedJobId ?? widget.jobId;
+        if (jobId != null) {
+          await ref
+              .read(employeeJobDetailControllerProvider.notifier)
+              .load(jobId: jobId);
+        }
       }
 
       if (!mounted) return;
+      setState(() {});
       context.showTopSnackBar(
         SnackBar(
           content: Text(
             result.queuedOffline
                 ? 'QR scan saved offline. It will sync when you are back online.'
-                : _isPinForm
-                    ? 'QR ${result.qrCode} linked to this pin.'
-                    : result.registeredWithJob
-                        ? 'QR linked to ${result.details.title}'
-                        : 'QR details loaded',
+                : result.message?.trim().isNotEmpty == true
+                    ? result.message!
+                    : _isPinForm
+                        ? 'QR assigned to this pin.'
+                        : result.registeredWithJob
+                            ? 'QR scanned successfully'
+                            : 'QR details loaded',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -309,7 +402,6 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
           ),
         ),
       );
-      rethrow;
     }
   }
 
@@ -339,7 +431,7 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
   }
 
   Future<void> _restoreSavedValues() async {
-    if (_restoredValues) return;
+    if (_restoredValues && _pendingRestoreValues == null) return;
     final jobId = _resolvedJobId;
     if (jobId == null) return;
 
@@ -370,22 +462,37 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
           formId: widget.formId,
           jobPinId: widget.jobPinId,
         );
-    final remarks = submission?.remarks ??
-        await repository.loadSavedRemarks(
-          jobId: jobId,
-          formId: widget.formId,
-          jobPinId: widget.jobPinId,
-        );
     if (!mounted) return;
 
-    if (remarks != null && remarks.trim().isNotEmpty) {
-      _remarksController.text = remarks.trim();
+    if (saved == null || saved.isEmpty) {
+      _restoredValues = true;
+      _pendingRestoreValues = null;
+      if (mounted) setState(() {});
+      return;
     }
-    if (saved != null && saved.isNotEmpty) {
-      _dynamicFormKey.currentState?.applyFieldValues(saved);
+
+    // DynamicFormView may not be mounted yet when _loadForm finishes — keep
+    // values pending and apply once the form key has a state.
+    final applied = _applyRestoredValues(saved);
+    if (!applied) {
+      _pendingRestoreValues = saved;
     }
-    _restoredValues = true;
     if (mounted) setState(() {});
+  }
+
+  bool _applyRestoredValues(List<JobFormFieldValue> values) {
+    final formState = _dynamicFormKey.currentState;
+    if (formState == null) return false;
+    formState.applyFieldValues(values);
+    _pendingRestoreValues = null;
+    _restoredValues = true;
+    return true;
+  }
+
+  void _flushPendingRestore() {
+    final pending = _pendingRestoreValues;
+    if (pending == null || pending.isEmpty) return;
+    _applyRestoredValues(pending);
   }
 
   void _scheduleDraftSave() {
@@ -399,14 +506,12 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
 
       final job = ref.read(employeeJobDetailControllerProvider).job;
       final jobFormId = _isPinForm ? null : await _resolveJobFormId(jobId);
-      final remarksText = _remarksController.text.trim();
       await ref.read(jobFormSubmissionRepositoryProvider).saveDraft(
             jobId: jobId,
             formTemplateId: widget.formId,
             jobFormId: jobFormId,
             jobPinId: widget.jobPinId,
             values: await formState.collectApiValuesAsync(),
-            remarks: remarksText.isEmpty ? null : remarksText,
             assignments: job?.formAssignments ?? const [],
           );
     });
@@ -444,7 +549,6 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
     try {
       final values =
           await dynamicForm?.collectApiValuesAsync() ?? const <JobFormFieldValue>[];
-      final remarks = _remarksController.text.trim();
       final job = ref.read(employeeJobDetailControllerProvider).job;
       final jobFormId = _isPinForm ? null : await _resolveJobFormId(jobId);
       if (!_isPinForm && (jobFormId == null || jobFormId <= 0)) {
@@ -466,7 +570,6 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
         jobPinId: widget.jobPinId,
         values: values,
         status: 'submitted',
-        remarks: remarks.isEmpty ? null : remarks,
         submissionId: _existingSubmissionId,
         assignments: job?.formAssignments ?? const [],
       );
@@ -526,6 +629,9 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
     final pinRequiresQr = _pinRequiresQrFor(resolvedPin);
     final pinQrComplete = _isPinQrCompleteFor(resolvedPin, jobState);
     final scannedPinQrCode = _scannedPinQrCodeFor(resolvedPin, jobState);
+    final selectedPinStatus = resolvedPin == null
+        ? null
+        : _pinStatusForName(resolvedPin.statusName);
     final requiredFieldsComplete = _dynamicFormKey.currentState
             ?.areRequiredFieldsComplete(ignoreQrFields: pinRequiresQr) ??
         false;
@@ -536,10 +642,15 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
             .toList(growable: false) ??
         const <EmployeeJobPinAttachment>[];
 
-    if (formState.bundle != null && !_restoredValues) {
+    if (formState.bundle != null &&
+        (!_restoredValues || _pendingRestoreValues != null)) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        _flushPendingRestore();
+        if (_restoredValues && _pendingRestoreValues == null) return;
         await _resolveExistingSubmissionId();
         await _restoreSavedValues();
+        if (mounted) _flushPendingRestore();
       });
     }
 
@@ -605,6 +716,18 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
                                     isSyncing: formState.syncStatus ==
                                         TechnicianFormSyncStatus.syncing,
                                   ),
+                                  if (_isPinForm && resolvedPin != null) ...[
+                                    _PinFormHeaderCard(
+                                      pin: resolvedPin,
+                                      statuses: _pinStatuses,
+                                      selectedStatus: selectedPinStatus,
+                                      statusesLoading: _pinStatusesLoading,
+                                      statusSaving: _pinStatusSaving,
+                                      statusError: _pinStatusError,
+                                      onStatusSelected: _updatePinStatus,
+                                    ),
+                                    const SizedBox(height: 16),
+                                  ],
                                   if (pinAttachments.isNotEmpty) ...[
                                     for (var i = 0;
                                         i < pinAttachments.length;
@@ -622,45 +745,12 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
                                     ],
                                     const SizedBox(height: 16),
                                   ],
-                                  if (_isUpdatingExistingSubmission ||
-                                      _pinFormComplete ||
-                                      _jobIsCompleted)
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 12),
-                                      child: Text(
-                                        _jobIsCompleted
-                                            ? 'This job is completed. You can update this form and save changes.'
-                                            : _isUpdatingExistingSubmission ||
-                                                    _pinFormComplete
-                                                ? 'You can edit this form and tap Submit Form to save changes.'
-                                                : 'You can update this form and save changes.',
-                                        style: AppFonts.bodySmall(
-                                          color: AppColors.muted,
-                                        ),
-                                      ),
-                                    ),
-                                  TextField(
-                                    controller: _remarksController,
-                                    onChanged: (_) => _scheduleDraftSave(),
-                                    maxLines: 2,
-                                    decoration: InputDecoration(
-                                      labelText: 'Remarks (optional)',
-                                      hintText: 'Add notes about this form',
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 12,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
                                   DynamicFormView(
                                     key: _dynamicFormKey,
                                     bundle: formState.bundle!,
                                     hideQrFields: pinRequiresQr,
                                     onChanged: () {
+                                      _flushPendingRestore();
                                       _scheduleDraftSave();
                                       setState(() {});
                                     },
@@ -674,7 +764,7 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
                                     const SizedBox(height: 16),
                                     _PinQrScanCard(
                                       isComplete: pinQrComplete,
-                                      scannedCode: scannedPinQrCode,
+                                      qrCodeId: scannedPinQrCode,
                                       enabled: !_isSubmitting,
                                       onScan: _scanPinQrFromForm,
                                     ),
@@ -742,6 +832,345 @@ class _EmployeeJobFormPageState extends ConsumerState<EmployeeJobFormPage> {
   }
 }
 
+class _PinFormHeaderCard extends StatelessWidget {
+  const _PinFormHeaderCard({
+    required this.pin,
+    required this.statuses,
+    required this.selectedStatus,
+    required this.statusesLoading,
+    required this.statusSaving,
+    required this.statusError,
+    required this.onStatusSelected,
+  });
+
+  final EmployeeJobDrawingPin pin;
+  final List<PinStatusItem> statuses;
+  final PinStatusItem? selectedStatus;
+  final bool statusesLoading;
+  final bool statusSaving;
+  final String? statusError;
+  final ValueChanged<PinStatusItem> onStatusSelected;
+
+  PinStatusItem? get _resolvedSelected {
+    if (selectedStatus != null) return selectedStatus;
+    if (statuses.isEmpty) return null;
+    final needle = pin.statusName.trim().toLowerCase();
+    for (final s in statuses) {
+      if (s.statusName.trim().toLowerCase() == needle) return s;
+    }
+    return statuses.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Status',
+          style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (statusesLoading)
+          const LinearProgressIndicator(minHeight: 3)
+        else if (statuses.isEmpty)
+          Text(
+            'No pin statuses available.',
+            style: AppFonts.bodySmall(color: AppColors.muted),
+          )
+        else
+          Opacity(
+            opacity: statusSaving ? 0.65 : 1,
+            child: IgnorePointer(
+              ignoring: statusSaving,
+              child: _PinStatusDropdown(
+                statuses: statuses,
+                selected: _resolvedSelected,
+                onSelected: onStatusSelected,
+              ),
+            ),
+          ),
+        if (statusSaving) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Updating status…',
+            style: AppFonts.bodySmall(color: AppColors.muted).copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+        if (statusError != null && statusError!.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            statusError!,
+            style: AppFonts.bodySmall(color: AppColors.error).copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PinStatusDropdown extends StatefulWidget {
+  const _PinStatusDropdown({
+    required this.statuses,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<PinStatusItem> statuses;
+  final PinStatusItem? selected;
+  final ValueChanged<PinStatusItem> onSelected;
+
+  @override
+  State<_PinStatusDropdown> createState() => _PinStatusDropdownState();
+}
+
+class _PinStatusDropdownState extends State<_PinStatusDropdown> {
+  bool _open = false;
+
+  void _toggle() => setState(() => _open = !_open);
+
+  void _select(PinStatusItem status) {
+    setState(() => _open = false);
+    final selected = widget.selected;
+    final same = selected != null &&
+        (status.id == selected.id ||
+            status.statusName.trim().toLowerCase() ==
+                selected.statusName.trim().toLowerCase());
+    if (!same) widget.onSelected(status);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selected;
+    final borderColor =
+        _open ? const Color(0xFF93C5FD) : AppColors.borderLight;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            onTap: _toggle,
+            borderRadius: BorderRadius.circular(12),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: borderColor, width: 1.2),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: selected == null
+                        ? Text(
+                            'Select status',
+                            style: AppFonts.bodyMedium(color: AppColors.muted),
+                          )
+                        : Align(
+                            alignment: Alignment.centerLeft,
+                            child: _PinStatusBadge(status: selected),
+                          ),
+                  ),
+                  Icon(
+                    _open
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: AppColors.muted,
+                    size: 22,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_open) ...[
+          const SizedBox(height: 8),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.borderLight),
+              boxShadow: const [
+                BoxShadow(
+                  color: AppColors.shadowElevated,
+                  blurRadius: 18,
+                  offset: Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < widget.statuses.length; i++) ...[
+                    if (i > 0)
+                      const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                    Builder(
+                      builder: (context) {
+                        final status = widget.statuses[i];
+                        final isSelected = selected != null &&
+                            (status.id == selected.id ||
+                                status.statusName.trim().toLowerCase() ==
+                                    selected.statusName.trim().toLowerCase());
+                        return _PinStatusDropdownRow(
+                          status: status,
+                          selected: isSelected,
+                          onTap: () => _select(status),
+                        );
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PinStatusDropdownRow extends StatelessWidget {
+  const _PinStatusDropdownRow({
+    required this.status,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final PinStatusItem status;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? const Color(0xFFF3F4F6) : AppColors.white,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _PinStatusBadge(status: status),
+                ),
+              ),
+              if (selected)
+                const Icon(
+                  Icons.check_circle_rounded,
+                  size: 20,
+                  color: Color(0xFF2563EB),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PinStatusBadge extends StatelessWidget {
+  const _PinStatusBadge({required this.status});
+
+  final PinStatusItem status;
+
+  /// API pin colours are often white-on-solid for map markers. On a light
+  /// dropdown chip, pick a dark-enough accent so the status name stays visible.
+  static Color _accentColor(Color? text, Color? bg) {
+    if (text != null && text.computeLuminance() < 0.55) return text;
+    if (bg != null && bg.computeLuminance() < 0.55) return bg;
+    return AppColors.inkStrong;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final apiText = parseHexColor(status.textColour);
+    final apiBg = parseHexColor(status.bgColour);
+    final accent = _accentColor(apiText, apiBg);
+    final chipBg = apiBg != null && apiBg.computeLuminance() > 0.72
+        ? apiBg
+        : accent.withValues(alpha: 0.14);
+    final icon = _glyphForStatusName(status.statusName);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(6, 5, 12, 5),
+      decoration: BoxDecoration(
+        color: chipBg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: accent,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 14, color: AppColors.white),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            status.statusName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppFonts.bodySmall(color: accent).copyWith(
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _glyphForStatusName(String raw) {
+  final name = raw.trim().toLowerCase();
+  if (name.contains('cancel') || name.contains('reject')) {
+    return Icons.close_rounded;
+  }
+  if (name.contains('action') ||
+      name.contains('required') ||
+      name.contains('issue') ||
+      name.contains('alert') ||
+      name.contains('ongoing')) {
+    return Icons.priority_high_rounded;
+  }
+  if (name.contains('inspect') ||
+      name.contains('complete') ||
+      name.contains('done') ||
+      name.contains('install') ||
+      name.contains('finish')) {
+    return Icons.check_rounded;
+  }
+  if (name.contains('progress')) {
+    return Icons.check_rounded;
+  }
+  if (name.contains('todo') ||
+      name.contains('to do') ||
+      name.contains('pending')) {
+    return Icons.nightlight_round;
+  }
+  if (name.contains('draft')) {
+    return Icons.circle_outlined;
+  }
+  return Icons.circle_rounded;
+}
+
 class _PinOpenAttachmentButton extends StatelessWidget {
   const _PinOpenAttachmentButton({
     required this.pinId,
@@ -783,7 +1212,7 @@ class _PinOpenAttachmentButton extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Open Attachment',
+                    'Installation Manual',
                     style: AppFonts.bodyMedium(color: AppColors.inkStrong)
                         .copyWith(fontWeight: FontWeight.w800),
                   ),
@@ -805,22 +1234,22 @@ class _PinOpenAttachmentButton extends StatelessWidget {
 class _PinQrScanCard extends StatelessWidget {
   const _PinQrScanCard({
     required this.isComplete,
-    required this.scannedCode,
+    required this.qrCodeId,
     required this.enabled,
     required this.onScan,
   });
 
   final bool isComplete;
-  final String? scannedCode;
+  final String? qrCodeId;
   final bool enabled;
   final VoidCallback onScan;
 
   @override
   Widget build(BuildContext context) {
-    final code = scannedCode?.trim();
+    final code = qrCodeId?.trim();
     final hasCode = code != null && code.isNotEmpty;
 
-    // Already scanned: only show the QR code value at the bottom.
+    // Linked: show only the qr_code_id value at the bottom of the form.
     if (isComplete && hasCode) {
       return Align(
         alignment: Alignment.centerLeft,
@@ -829,6 +1258,7 @@ class _PinQrScanCard extends StatelessWidget {
           style: AppFonts.bodyMedium(color: AppColors.inkStrong).copyWith(
             fontWeight: FontWeight.w700,
             fontSize: 15,
+            letterSpacing: 0.2,
           ),
         ),
       );
@@ -855,7 +1285,7 @@ class _PinQrScanCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Pin QR code',
+                  'QR code ID',
                   style: AppFonts.titleSmall(color: AppColors.inkStrong)
                       .copyWith(fontWeight: FontWeight.w800),
                 ),

@@ -165,25 +165,30 @@ class _EmployeeReturnRequestDetailPageState
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFF7ED),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  (detail.statusName ?? 'Return request')
-                                      .trim(),
-                                  style: AppFonts.labelMedium(
-                                    color: const Color(0xFFC2410C),
-                                  ).copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 10,
-                                  ),
-                                ),
+                              Builder(
+                                builder: (context) {
+                                  final colors =
+                                      _returnStatusColors(detail.statusName);
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: colors.bg,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      detail.displayStatusLabel,
+                                      style: AppFonts.labelMedium(
+                                        color: colors.fg,
+                                      ).copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                               const SizedBox(height: 14),
                               Row(
@@ -278,13 +283,37 @@ class _EmployeeReturnRequestDetailPageState
                                             fontWeight: FontWeight.w700,
                                           ),
                                         ),
+                                        if (item.sku != null &&
+                                            item.sku!.isNotEmpty) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            item.sku!,
+                                            style: AppFonts.bodySmall(
+                                              color: _muted,
+                                            ),
+                                          ),
+                                        ],
                                         const SizedBox(height: 4),
                                         Text(
-                                          item.displayQuantity,
+                                          [
+                                            item.displayQuantity,
+                                            if (item.displayReturnType != null)
+                                              item.displayReturnType!,
+                                          ].join(' · '),
                                           style: AppFonts.bodySmall(
                                             color: _muted,
                                           ),
                                         ),
+                                        if (item.reason != null &&
+                                            item.reason!.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            item.reason!,
+                                            style: AppFonts.bodySmall(
+                                              color: AppColors.inkStrong,
+                                            ),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ),
@@ -294,5 +323,19 @@ class _EmployeeReturnRequestDetailPageState
                       ],
                     ),
     );
+  }
+
+  ({Color bg, Color fg}) _returnStatusColors(String? statusName) {
+    final normalized = statusName?.trim().toLowerCase() ?? '';
+    if (normalized.contains('complete')) {
+      return (bg: const Color(0xFFECFDF5), fg: const Color(0xFF047857));
+    }
+    if (normalized.contains('reject')) {
+      return (bg: const Color(0xFFFEF2F2), fg: const Color(0xFFB91C1C));
+    }
+    if (normalized.contains('pending') || normalized.contains('request')) {
+      return (bg: const Color(0xFFFFF7ED), fg: const Color(0xFFC2410C));
+    }
+    return (bg: const Color(0xFFF3F4F6), fg: const Color(0xFF374151));
   }
 }

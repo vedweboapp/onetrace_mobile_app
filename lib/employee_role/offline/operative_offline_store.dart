@@ -68,6 +68,8 @@ final class OperativeOfflineStore {
     }
   }
 
+  Future<void> clearUserSession() => _database.clearUserSessionCache();
+
   Future<int> pendingSyncCount() => _database.countPendingSyncItems();
 }
 

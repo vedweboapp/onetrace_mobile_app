@@ -174,8 +174,12 @@ abstract final class AppApiUrls {
   static String jobSubmittedForms(int jobId) =>
       '$_v1/jobs/$jobId/submitted-forms/';
 
-  /// `GET` operative worker earnings summary and list.
+  /// `GET` worker earnings summary and list (`?worker=`).
   static const String jobEarnings = '$_v1/job-earnings/';
+
+  /// `POST` mark earning paid/unpaid (admin / manager).
+  static String jobEarningsUpdateStatus(int jobId) =>
+      '$_v1/job-earnings/$jobId/update-status/';
 
   /// `GET` one submission record for a job ([submissionId], not job or form id).
   static String jobSubmittedFormById(int jobId, int submissionId) =>
@@ -281,12 +285,25 @@ abstract final class AppApiUrls {
   /// `GET` [user-profile_list]
   static const String userProfiles = '$_v1/user-profile/';
 
-  /// `GET` [user-profile_read] · `PUT` [user-profile_update] · `PATCH` [user-profile_partial_update]
+  /// `GET` [user-profile_read] · `PATCH` [user-profile_partial_update]
   static String userProfileById(String id) => '$_v1/user-profile/$id/';
+
+  // ─── Notifications ────────────────────────────────────────────────────────
+
+  /// `GET` [notifications_list] (`?type=unread` · `?cursor=`)
+  static const String notifications = '$_v1/notifications/';
+
+  /// `GET` unread badge count
+  static const String notificationsUnreadCount =
+      '$_v1/notifications/unread-count/';
+
+  /// `PATCH` mark a single notification as read
+  static String notificationMarkRead(String id) =>
+      '$_v1/notifications/$id/mark-read/';
 
   // ─── Material requests / dispatch / returns ───────────────────────────────
 
-  /// `GET` · `POST` material requests (`?worker=` · `?job=` · `?status=`)
+  /// `GET` · `POST` material requests (`?job=` · `?worker=` · `?status=`)
   static const String materialRequests = '$_v1/material-requests/';
 
   /// `GET` · `PUT` · `PATCH` · `DELETE` material request by id

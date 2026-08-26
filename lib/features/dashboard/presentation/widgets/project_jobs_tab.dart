@@ -89,8 +89,15 @@ class ProjectJobListItem {
   String get workerLocationLine => '$workerLabel • $locationLabel';
 
   String get dateRangeLine {
-    final fmt = DateFormat('MMM d');
-    return '${fmt.format(startDate)} - ${fmt.format(endDate)}';
+    final start = startDate.toLocal();
+    final end = endDate.toLocal();
+    final dayFmt = DateFormat('MMM d');
+    final startDay = DateTime(start.year, start.month, start.day);
+    final endDay = DateTime(end.year, end.month, end.day);
+    if (startDay == endDay) {
+      return '${dayFmt.format(start)} · ${DateFormat('h:mm a').format(start)} – ${DateFormat('h:mm a').format(end)}';
+    }
+    return '${dayFmt.format(start)} - ${dayFmt.format(end)}';
   }
 
   bool matchesQuery(String q) {
@@ -107,7 +114,11 @@ class ProjectJobListItem {
 ProjectJobStatus _statusFromLabel(String label) {
   final statusText = label.toLowerCase();
   if (statusText.contains('complete')) return ProjectJobStatus.completed;
-  if (statusText.contains('pending')) return ProjectJobStatus.pending;
+  if (statusText.contains('pending') ||
+      statusText.contains('to do') ||
+      statusText.contains('todo')) {
+    return ProjectJobStatus.pending;
+  }
   return ProjectJobStatus.inProgress;
 }
 

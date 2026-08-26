@@ -53,7 +53,7 @@ class _FormVideoRecorderFieldState extends State<FormVideoRecorderField> {
   Future<void> _loadPreview(FormPickedVideoValue? value) async {
     await _previewController?.dispose();
     _previewController = null;
-    final path = value?.path?.trim();
+    final path = value?.path.trim();
     if (path == null || path.isEmpty || !File(path).existsSync()) {
       if (mounted) setState(() {});
       return;

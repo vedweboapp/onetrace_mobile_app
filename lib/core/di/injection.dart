@@ -7,6 +7,7 @@ import 'package:red5/core/network/auth_bearer_interceptor.dart';
 import 'package:red5/core/network/organization_id_interceptor.dart';
 import 'package:red5/core/network/dio_multipart_transfer.dart';
 import 'package:red5/core/network/success_toast_interceptor.dart';
+import 'package:red5/core/network/slow_network_toast_interceptor.dart';
 import 'package:red5/core/database/technician_form_database.dart';
 import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/auth/auth_redirect_notifier.dart';
@@ -30,6 +31,7 @@ import 'package:red5/features/quote/data/quote_project_api_client.dart';
 import 'package:red5/features/sites/data/sites_api_client.dart';
 import 'package:red5/features/user_profile/data/roles_api_client.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
+import 'package:red5/core/notifications/data/notifications_api_client.dart';
 import 'package:red5/features/dashboard/data/zoho_integration_api_client.dart';
 import 'package:red5/features/vendors/data/vendors_api_client.dart';
 import 'package:red5/features/dashboard/data/purchase_orders_api_client.dart';
@@ -41,6 +43,7 @@ List<Interceptor> _authorizedDioInterceptors(LocalStorage storage) => [
   AuthBearerInterceptor(storage),
   OrganizationIdInterceptor(storage),
   ApiDioLogInterceptor(),
+  SlowNetworkToastInterceptor(),
   SuccessToastInterceptor(),
 ];
 
@@ -292,8 +295,8 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
       BaseOptions(
         baseUrl: AppApiUrls.baseUrl,
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 60),
-        sendTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(minutes: 5),
+        sendTimeout: const Duration(minutes: 5),
         headers: const {
           Headers.acceptHeader: Headers.jsonContentType,
           Headers.contentTypeHeader: Headers.jsonContentType,
@@ -430,6 +433,24 @@ Future<void> configureDependencies({required LocalStorage localStorage}) async {
     );
     dio.interceptors.addAll(_authorizedDioInterceptors(storage));
     return UserProfileApiClient(dio: dio);
+  });
+
+  sl.registerLazySingleton<NotificationsApiClient>(() {
+    final storage = sl<LocalStorage>();
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: AppApiUrls.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
+        headers: const {
+          Headers.acceptHeader: Headers.jsonContentType,
+          Headers.contentTypeHeader: Headers.jsonContentType,
+        },
+      ),
+    );
+    dio.interceptors.addAll(_authorizedDioInterceptors(storage));
+    return NotificationsApiClient(dio: dio);
   });
 
   sl.registerLazySingleton<EmployeeEarningsApiClient>(() {

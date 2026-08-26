@@ -936,6 +936,34 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '/jobs/:jobId/edit',
+        name: AddJobPage.editStandaloneName,
+        pageBuilder: (context, state) {
+          final jobId = state.pathParameters['jobId'] ?? '';
+          return _animatedPage(
+            state: state,
+            child: AddJobPage(standalone: true, editJobId: jobId),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
+        path: JobDetailsPage.standalonePath,
+        name: JobDetailsPage.standaloneName,
+        pageBuilder: (context, state) {
+          final routeJobId = state.pathParameters['jobId'] ?? '';
+          return _animatedPage(
+            state: state,
+            child: JobDetailsPage.fromRoute(
+              projectId: '',
+              routeJobId: routeJobId,
+              extra: state.extra,
+            ),
+            beginOffset: const Offset(0.08, 0),
+          );
+        },
+      ),
+      GoRoute(
         path: AddPurchaseOrderPage.path,
         name: AddPurchaseOrderPage.name,
         pageBuilder: (context, state) => _animatedPage(
@@ -1475,79 +1503,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
           final routeJobId = state.pathParameters['jobId'] ?? '';
-          var jobId = Uri.decodeComponent(routeJobId);
-          var jobTitle = 'Job';
-          var projectName = 'Project';
-          var clientName = '--';
-          var workerName = 'Assigned Worker';
-          DateTime? startDate;
-          DateTime? scheduleDate;
-          var status = 'Active';
-          double? latitude;
-          double? longitude;
-          final extra = state.extra;
-          if (extra is Map) {
-            final m = Map<String, dynamic>.from(extra);
-            final rawJobId = m['jobId'];
-            final rawJobTitle = m['jobTitle'];
-            final rawProjectName = m['projectName'];
-            final rawClientName = m['clientName'];
-            final rawWorkerName = m['workerName'];
-            final rawStartDate = m['startDate'];
-            final rawScheduleDate = m['scheduleDate'];
-            final rawStatus = m['status'];
-            final rawLatitude = m['latitude'];
-            final rawLongitude = m['longitude'];
-            if (rawJobId is String && rawJobId.trim().isNotEmpty) {
-              jobId = rawJobId.trim();
-            }
-            if (rawJobTitle is String && rawJobTitle.trim().isNotEmpty) {
-              jobTitle = rawJobTitle.trim();
-            }
-            if (rawProjectName is String && rawProjectName.trim().isNotEmpty) {
-              projectName = rawProjectName.trim();
-            }
-            if (rawClientName is String && rawClientName.trim().isNotEmpty) {
-              clientName = rawClientName.trim();
-            }
-            if (rawWorkerName is String && rawWorkerName.trim().isNotEmpty) {
-              workerName = rawWorkerName.trim();
-            }
-            if (rawStartDate is String && rawStartDate.trim().isNotEmpty) {
-              startDate = DateTime.tryParse(rawStartDate.trim());
-            }
-            if (rawScheduleDate is String &&
-                rawScheduleDate.trim().isNotEmpty) {
-              scheduleDate = DateTime.tryParse(rawScheduleDate.trim());
-            }
-            if (rawStatus is String && rawStatus.trim().isNotEmpty) {
-              status = rawStatus.trim();
-            }
-            if (rawLatitude is num) {
-              latitude = rawLatitude.toDouble();
-            } else if (rawLatitude is String) {
-              latitude = double.tryParse(rawLatitude.trim());
-            }
-            if (rawLongitude is num) {
-              longitude = rawLongitude.toDouble();
-            } else if (rawLongitude is String) {
-              longitude = double.tryParse(rawLongitude.trim());
-            }
-          }
           return _animatedPage(
             state: state,
-            child: JobDetailsPage(
+            child: JobDetailsPage.fromRoute(
               projectId: projectId,
-              jobId: jobId,
-              jobTitle: jobTitle,
-              projectName: projectName,
-              clientName: clientName,
-              workerName: workerName,
-              startDate: startDate,
-              scheduleDate: scheduleDate,
-              status: status,
-              latitude: latitude,
-              longitude: longitude,
+              routeJobId: routeJobId,
+              extra: state.extra,
             ),
             beginOffset: const Offset(0.08, 0),
           );

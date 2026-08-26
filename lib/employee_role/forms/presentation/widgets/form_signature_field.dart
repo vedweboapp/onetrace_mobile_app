@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
-import 'package:red5/employee_role/forms/data/signature_form_value.dart';
 
 export 'package:red5/employee_role/forms/data/signature_form_value.dart';
 
@@ -223,16 +222,6 @@ class _SignaturePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final baselineY = size.height - 28;
-    final baselinePaint = Paint()
-      ..color = const Color(0xFFE5E7EB)
-      ..strokeWidth = 1;
-    canvas.drawLine(
-      Offset(16, baselineY),
-      Offset(size.width - 16, baselineY),
-      baselinePaint,
-    );
-
     if (showPlaceholder) {
       final placeholder = TextPainter(
         text: TextSpan(
@@ -245,7 +234,7 @@ class _SignaturePainter extends CustomPainter {
       )..layout(maxWidth: size.width - 32);
       placeholder.paint(
         canvas,
-        Offset(16, baselineY - placeholder.height - 8),
+        Offset(16, size.height - placeholder.height - 36),
       );
     }
 

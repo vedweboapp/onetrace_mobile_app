@@ -115,4 +115,63 @@ void main() {
       isTrue,
     );
   });
+
+  test('formless pin is ready to mark Complete without QR session keys', () {
+    final pin = _pin(id: 9, jobPinId: 109, projectFormId: null);
+    final levels = _levelsWithPin(pin);
+    final ready = pinsReadyToMarkCompleteStatus(
+      levels: levels,
+      completedPinFormKeys: const {},
+      scannedPinQrKeys: const {},
+    );
+
+    expect(pin.hasForm, isFalse);
+    expect(pinRequiresQrForCompletion(pin), isFalse);
+    expect(ready, hasLength(1));
+    expect(ready.single.id, 9);
+  });
+
+  test('pinStatusUpdateId uses pin id for level jobs and job_pin_id otherwise', () {
+    final pin = _pin(id: 5, jobPinId: 116, projectFormId: 18);
+    expect(pinStatusUpdateId(pin, jobHasLevels: true), 5);
+    expect(pinStatusUpdateId(pin, jobHasLevels: false), 116);
+    expect(jobHasDrawingLevels(_levelsWithPin(pin)), isTrue);
+    expect(jobHasDrawingLevels(const []), isFalse);
+  });
+
+  test('form pin still requires QR when qr_code field is present', () {
+    final pin = EmployeeJobDrawingPin(
+      id: 5,
+      name: 'Pin 5',
+      description: '',
+      location: '',
+      xCoordinate: 0,
+      yCoordinate: 0,
+      statusName: 'In Progress',
+      statusBackground: const Color(0xFFFFFFFF),
+      statusForeground: const Color(0xFF000000),
+      itemName: '',
+      attachmentCount: 0,
+      jobPinId: 101,
+      projectFormId: 18,
+      qrCodeFieldPresent: true,
+    );
+    final levels = _levelsWithPin(pin);
+    expect(pinRequiresQrForCompletion(pin), isTrue);
+    expect(
+      pinsReadyToMarkCompleteStatus(
+        levels: levels,
+        completedPinFormKeys: {'5_18'},
+      ),
+      isEmpty,
+    );
+    expect(
+      pinsReadyToMarkCompleteStatus(
+        levels: levels,
+        completedPinFormKeys: {'5_18'},
+        scannedPinQrKeys: {'5_18'},
+      ),
+      hasLength(1),
+    );
+  });
 }

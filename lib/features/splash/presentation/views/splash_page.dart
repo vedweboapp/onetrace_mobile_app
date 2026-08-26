@@ -13,10 +13,10 @@ import 'package:red5/core/providers/local_storage_provider.dart';
 import 'package:red5/core/storage/local_storage_keys.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
-import 'package:red5/features/dashboard/presentation/views/dashboard_page.dart';
 import 'package:red5/features/login/presentation/views/login_page.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
 import 'package:red5/employee_role/data/role_session.dart';
+import 'package:red5/employee_role/data/signed_in_session_cleanup.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -33,32 +33,35 @@ class SplashPage extends StatefulWidget {
 class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   late final AnimationController _loaderController;
   late final AnimationController _pulseController;
-  Timer? _navigationTimer;
 
   @override
   void initState() {
     super.initState();
     _loaderController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2800),
+      duration: const Duration(milliseconds: 900),
     )..forward();
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
 
-    _navigationTimer = Timer(const Duration(seconds: 3), () {
+    // Start routing as soon as the first frame is up — no fixed 3s stall.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_routeAfterSessionCheck());
     });
   }
 
   Future<void> _routeAfterSessionCheck() async {
     if (!mounted) return;
+    // Keep the splash visible briefly so the logo doesn't flash away.
+    final minSplash = Future<void>.delayed(const Duration(milliseconds: 700));
     final container = ProviderScope.containerOf(context, listen: false);
     final storage = container.read(localStorageProvider);
     final authApi = container.read(authApiClientProvider);
 
     Future<void> goHomeForSession() async {
+      await minSplash;
       if (!mounted) return;
       sl<AuthRedirectNotifier>().notifyAuthChanged();
       try {
@@ -109,10 +112,8 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
       }
     }
 
-    await storage.remove(LocalStorageKeys.authAccessToken);
-    await storage.remove(LocalStorageKeys.authRefreshToken);
-    await storage.remove(LocalStorageKeys.authUserId);
-    await RoleSession.clearRole(storage);
+    await SignedInSessionCleanup.clearPersisted(storage);
+    await minSplash;
     if (!mounted) return;
     sl<AuthRedirectNotifier>().notifyAuthChanged();
     context.go(LoginPage.path);
@@ -120,7 +121,6 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _navigationTimer?.cancel();
     _loaderController.dispose();
     _pulseController.dispose();
     super.dispose();

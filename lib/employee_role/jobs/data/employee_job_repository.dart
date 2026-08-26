@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import 'package:red5/core/database/technician_form_database.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/network/connectivity_service.dart';
 import 'package:red5/core/network/network_error_utils.dart';
 
@@ -257,7 +258,7 @@ final class EmployeeJobRepository {
       location: _formatLocation(job),
       schedule: _formatSchedule(job),
       primaryActionLabel: _primaryActionLabel(status),
-      startDate: job.startDate?.toLocal(),
+      startDate: _calendarDateFromJob(job),
       siteName: _readSiteName(job),
       projectName: _readProjectName(job),
       projectId: job.project,
@@ -288,6 +289,17 @@ final class EmployeeJobRepository {
               ),
             )
             .toList(growable: false);
+      }
+      if (formAssignments.isEmpty) {
+        formAssignments = [
+          for (final task in pinFormTasks)
+            if (task.jobPinId != null && task.jobPinId! > 0)
+              JobFormAssignment(
+                jobFormId: task.jobPinId!,
+                formId: task.formId,
+                submissionId: task.submissionId,
+              ),
+        ];
       }
     }
 
@@ -632,18 +644,35 @@ final class EmployeeJobRepository {
     return site;
   }
 
+  /// Local calendar day from `job_schedule_detail.start_at` for this technician.
+  static DateTime? _calendarDateFromJob(JobRead job) {
+    final fromSchedule = job.scheduleDetail?.startAt ?? job.startDate;
+    if (fromSchedule != null) return fromSchedule.toLocal();
+    final raw = job.raw['job_schedule_detail'];
+    if (raw is Map) {
+      final map = Map<String, dynamic>.from(
+        raw.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final startAt = map['start_at']?.toString().trim();
+      if (startAt != null && startAt.isNotEmpty) {
+        return DateTime.tryParse(startAt)?.toLocal();
+      }
+    }
+    return null;
+  }
+
   String _formatSchedule(JobRead job) {
-    final start = job.startDate?.toLocal();
+    final start = _calendarDateFromJob(job);
 
     if (start == null) return 'Schedule TBD';
 
+    final end = job.endDate?.toLocal();
     final now = DateTime.now();
-
     final today = DateTime(now.year, now.month, now.day);
-
     final day = DateTime(start.year, start.month, start.day);
-
-    final time = _timeFormat.format(start);
+    final time = (end != null && DateTime(end.year, end.month, end.day) == day)
+        ? '${_timeFormat.format(start)} – ${_timeFormat.format(end)}'
+        : _timeFormat.format(start);
 
     if (day == today) return 'Today · $time';
 
@@ -950,6 +979,7 @@ final class EmployeeJobRepository {
     int jobId, {
     bool fromSync = false,
     Set<String> completedPinFormKeys = const {},
+    Set<String> scannedPinQrKeys = const {},
   }) async {
     if (!_connectivity.isOnline && !fromSync) {
       await _syncQueue.enqueue(
@@ -986,17 +1016,32 @@ final class EmployeeJobRepository {
       jobId: jobId,
       levels: levels,
       completedPinFormKeys: completedPinFormKeys,
+      scannedPinQrKeys: scannedPinQrKeys,
     );
     final refreshed = await _jobsApi.fetchJobById(jobId.toString());
     final refreshedLevels = parseEmployeeJobDrawingLevels(
       refreshed.raw['levels'],
     );
-    final incompletePins = countIncompleteAssignedPins(refreshedLevels);
+    var incompletePins = countIncompleteAssignedPins(refreshedLevels);
+    if (incompletePins > 0) {
+      // Retry once with whatever local/session evidence we have — formless
+      // pins and submitted forms should still be force-marked Complete.
+      await markReadyPinsCompleteStatus(
+        jobId: jobId,
+        levels: refreshedLevels,
+        completedPinFormKeys: completedPinFormKeys,
+        scannedPinQrKeys: scannedPinQrKeys,
+      );
+      final again = await _jobsApi.fetchJobById(jobId.toString());
+      incompletePins = countIncompleteAssignedPins(
+        parseEmployeeJobDrawingLevels(again.raw['levels']),
+      );
+    }
     if (incompletePins > 0) {
       throw StateError(
         incompletePins == 1
-            ? 'Complete the remaining pin status before finishing this job.'
-            : 'Complete all $incompletePins pin statuses before finishing this job.',
+            ? 'Finish the remaining pin before completing this job. Open the pin, submit its form if required, then try again.'
+            : 'Finish all $incompletePins remaining pins before completing this job. Open each pin, submit its form if required, then try again.',
       );
     }
 
@@ -1012,11 +1057,10 @@ final class EmployeeJobRepository {
       );
     }
 
-    final payload = JobWritePayload.buildFromJobRead(
-      refreshed,
+    final payload = JobWritePayload.buildOperativeJobComplete(
+      title: refreshed.title,
       completedAt: DateTime.now(),
-      jobStatusOverride: completedStatusId,
-      includeExistingChecklists: false,
+      completedJobStatusId: completedStatusId,
     );
 
     JobCompletionDebugLog.api(
@@ -1058,6 +1102,54 @@ final class EmployeeJobRepository {
     return countIncompleteAssignedPins(levels);
   }
 
+  /// Updates one drawing pin's status on the job (`PATCH /jobs/{id}/`).
+  Future<void> updateDrawingPinStatus({
+    required int jobId,
+    required EmployeeJobDrawingPin pin,
+    required List<EmployeeJobDrawingLevel> levels,
+    required int statusId,
+  }) async {
+    final hasLevels = jobHasDrawingLevels(levels);
+    final primary = pinStatusUpdateId(pin, jobHasLevels: hasLevels);
+    if (primary == null || primary <= 0) {
+      throw StateError('This pin has no id that can be updated on the job.');
+    }
+
+    final pinStatuses = <({int pinId, int statusId})>[
+      (pinId: primary, statusId: statusId),
+    ];
+    final alternate = pinStatusAlternateId(
+      pin,
+      primary,
+      jobHasLevels: hasLevels,
+    );
+    final alternateByPrimary = <int, int>{
+      if (alternate != null && alternate > 0 && alternate != primary)
+        primary: alternate,
+    };
+
+    try {
+      await _jobsApi.updateJobPinStatuses(jobId: jobId, pinStatuses: pinStatuses);
+    } catch (error) {
+      final retried = await _retryPinStatusUpdateOnNotLinked(
+        jobId: jobId,
+        pinStatuses: pinStatuses,
+        alternateByPrimary: alternateByPrimary,
+        error: error,
+      );
+      if (!retried) rethrow;
+    }
+
+    JobCompletionDebugLog.info(
+      'Updated pin status via PATCH /jobs/$jobId/ | '
+      'has_levels=$hasLevels | pin_id=$primary | status_id=$statusId',
+    );
+  }
+
+  Future<List<PinStatusItem>> fetchActivePinStatuses() {
+    return _jobsApi.fetchPinStatuses(isActive: true);
+  }
+
   /// Marks pins Complete on the server when form/QR work is already done.
   Future<int> markReadyPinsCompleteStatus({
     required int jobId,
@@ -1085,31 +1177,94 @@ final class EmployeeJobRepository {
       );
     }
 
+    // Level jobs: PATCH with level pin `id`.
+    // Jobs without levels: PATCH with `job_pin_id`.
+    final hasLevels = jobHasDrawingLevels(levels);
     final pinStatuses = <({int pinId, int statusId})>[];
+    final seen = <int>{};
+    final alternateByPrimary = <int, int>{};
     for (final pin in ready) {
-      if (pin.id <= 0) continue;
-      pinStatuses.add((pinId: pin.id, statusId: completeStatusId));
+      final primary = pinStatusUpdateId(pin, jobHasLevels: hasLevels);
+      if (primary == null || primary <= 0 || !seen.add(primary)) continue;
+      pinStatuses.add((pinId: primary, statusId: completeStatusId));
+      final alternate = pinStatusAlternateId(
+        pin,
+        primary,
+        jobHasLevels: hasLevels,
+      );
+      if (alternate != null && alternate > 0 && alternate != primary) {
+        alternateByPrimary[primary] = alternate;
+      }
     }
     if (pinStatuses.isEmpty) return 0;
 
-    await _jobsApi.updateJobPinStatuses(jobId: jobId, pinStatuses: pinStatuses);
+    try {
+      await _jobsApi.updateJobPinStatuses(jobId: jobId, pinStatuses: pinStatuses);
+    } catch (error) {
+      final retried = await _retryPinStatusUpdateOnNotLinked(
+        jobId: jobId,
+        pinStatuses: pinStatuses,
+        alternateByPrimary: alternateByPrimary,
+        error: error,
+      );
+      if (!retried) rethrow;
+    }
+
     JobCompletionDebugLog.info(
       'Marked ${pinStatuses.length} pin(s) Complete via PATCH /jobs/$jobId/ | '
       'status_id=$completeStatusId | '
+      'has_levels=$hasLevels | '
       'pin_ids=${pinStatuses.map((row) => row.pinId).join(',')}',
     );
     return pinStatuses.length;
   }
 
+  Future<bool> _retryPinStatusUpdateOnNotLinked({
+    required int jobId,
+    required List<({int pinId, int statusId})> pinStatuses,
+    required Map<int, int> alternateByPrimary,
+    required Object error,
+  }) async {
+    final message = ApiResponseMessage.fromAnyError(error).toLowerCase();
+    if (!message.contains('not linked')) return false;
+    if (alternateByPrimary.isEmpty) return false;
+
+    final retried = <({int pinId, int statusId})>[
+      for (final row in pinStatuses)
+        (
+          pinId: alternateByPrimary[row.pinId] ?? row.pinId,
+          statusId: row.statusId,
+        ),
+    ];
+    final changed = List.generate(
+      pinStatuses.length,
+      (i) => retried[i].pinId != pinStatuses[i].pinId,
+    ).any((value) => value);
+    if (!changed) return false;
+
+    JobCompletionDebugLog.info(
+      'Retrying pin status update with alternate ids after not-linked error | '
+      'pin_ids=${retried.map((row) => row.pinId).join(',')}',
+    );
+    await _jobsApi.updateJobPinStatuses(jobId: jobId, pinStatuses: retried);
+    return true;
+  }
+
   Future<int?> _resolveCompletedPinStatusId() async {
     final statuses = await _jobsApi.fetchPinStatuses(isActive: true);
+    int? fuzzy;
     for (final status in statuses) {
       final name = status.statusName.trim().toLowerCase();
-      if (name.contains('complete') && !name.contains('incomplete')) {
+      if (name == 'complete' || name == 'completed') {
         return int.tryParse(status.id.trim());
       }
+      if (fuzzy == null &&
+          name.contains('complete') &&
+          !name.contains('incomplete')) {
+        fuzzy = int.tryParse(status.id.trim());
+      }
     }
-    return null;
+    return fuzzy;
   }
 
   static String _operativeJobStatusName(JobRead job) {

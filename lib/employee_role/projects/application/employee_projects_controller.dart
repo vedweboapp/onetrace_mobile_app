@@ -111,4 +111,9 @@ final class EmployeeProjectsController
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
   }
+
+  void clearForLogout() {
+    _lastNetworkFetchAt = null;
+    state = const EmployeeProjectsState();
+  }
 }

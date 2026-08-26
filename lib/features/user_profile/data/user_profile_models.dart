@@ -1,24 +1,75 @@
 import 'package:flutter/foundation.dart';
 import 'package:red5/features/user_profile/data/role_models.dart';
 
-/// One row from `communications` on user profile GET/PUT.
+/// One row from `emails[]` on user profile GET/PATCH.
+@immutable
+class UserEmailModel {
+  const UserEmailModel({
+    required this.id,
+    required this.email,
+    required this.isPrimary,
+  });
+
+  final String id;
+  final String email;
+  final bool isPrimary;
+
+  factory UserEmailModel.fromJson(Map<String, dynamic> json) {
+    return UserEmailModel(
+      id: _readString(json, const ['id']),
+      email: _readString(json, const ['email', 'email_address']),
+      isPrimary: _readBool(json, const ['is_primary', 'isPrimary']),
+    );
+  }
+}
+
+/// One row from `phones[]` on user profile GET/PATCH.
+@immutable
+class UserPhoneModel {
+  const UserPhoneModel({
+    required this.id,
+    required this.phone,
+    required this.isPrimary,
+  });
+
+  final String id;
+  final String phone;
+  final bool isPrimary;
+
+  factory UserPhoneModel.fromJson(Map<String, dynamic> json) {
+    return UserPhoneModel(
+      id: _readString(json, const ['id']),
+      phone: _readString(json, const ['phone', 'phone_number', 'mobile']),
+      isPrimary: _readBool(json, const ['is_primary', 'isPrimary']),
+    );
+  }
+}
+
+/// Combined contact row for UI (legacy `communications` or merged emails/phones).
 @immutable
 class UserCommunicationModel {
   const UserCommunicationModel({
     required this.id,
+    required this.emailId,
+    required this.phoneId,
     required this.phone,
     required this.email,
     required this.isPrimary,
   });
 
   final String id;
+  final String emailId;
+  final String phoneId;
   final String phone;
   final String email;
   final bool isPrimary;
 
   factory UserCommunicationModel.fromJson(Map<String, dynamic> json) {
+    final id = _readString(json, const ['id']);
     return UserCommunicationModel(
-      id: _readString(json, const ['id']),
+      id: id,
+      emailId: id,
+      phoneId: id,
       phone: _readString(json, const ['phone', 'phone_number', 'mobile']),
       email: _readString(json, const ['email', 'email_address']),
       isPrimary: _readBool(json, const ['is_primary', 'isPrimary']),
@@ -33,6 +84,7 @@ class UserAddressModel {
     required this.id,
     required this.address1,
     required this.address2,
+    this.country = '',
     required this.city,
     required this.state,
     required this.pincode,
@@ -42,6 +94,7 @@ class UserAddressModel {
   final String id;
   final String address1;
   final String address2;
+  final String country;
   final String city;
   final String state;
   final String pincode;
@@ -62,6 +115,7 @@ class UserAddressModel {
         'address_line2',
         'address2',
       ]),
+      country: _readString(json, const ['country']),
       city: _readString(json, const ['city']),
       state: _readString(json, const ['state', 'province']),
       pincode: _readString(json, const [
@@ -275,6 +329,8 @@ class UserProfileModel {
     required this.state,
     required this.country,
     required this.postalCode,
+    required this.emails,
+    required this.phones,
     required this.communications,
     required this.addresses,
   });
@@ -298,7 +354,13 @@ class UserProfileModel {
   final String country;
   final String postalCode;
 
-  /// `communications` from API (phones/emails per row).
+  /// `emails[]` from API (separate ids for PATCH).
+  final List<UserEmailModel> emails;
+
+  /// `phones[]` from API (separate ids for PATCH).
+  final List<UserPhoneModel> phones;
+
+  /// Combined contact rows for UI (legacy `communications` or merged lists).
   final List<UserCommunicationModel> communications;
 
   /// `addresses` from API (`address_1`, `pincode`, …).
@@ -334,7 +396,9 @@ class UserProfileModel {
       }
     }
 
-    final communications = _parseCommunications(json);
+    final emails = _parseEmails(json);
+    final phones = _parsePhones(json);
+    final communications = _parseCommunications(json, emails, phones);
     final addresses = _parseAddresses(json);
 
     final detail = UserDetail.fromJson(merged);
@@ -356,11 +420,19 @@ class UserProfileModel {
       roleDetail: roleDetail,
       organizationDetail: organizationDetail,
       appearanceSettings: appearanceSettings,
-      dateOfBirth: _readString(json, const [
-        'date_of_birth',
-        'dob',
-        'birth_date',
-      ]),
+      dateOfBirth: () {
+        final fromDetail = _readString(merged, const [
+          'date_of_birth',
+          'dob',
+          'birth_date',
+        ]);
+        if (fromDetail.isNotEmpty) return fromDetail;
+        return _readString(json, const [
+          'date_of_birth',
+          'dob',
+          'birth_date',
+        ]);
+      }(),
       addressLine1: _readString(merged, const [
         'address_line_1',
         'address_line1',
@@ -381,6 +453,8 @@ class UserProfileModel {
         'pincode',
         'zip',
       ]),
+      emails: emails,
+      phones: phones,
       communications: communications,
       addresses: addresses,
     );
@@ -451,16 +525,71 @@ class UserProfileModel {
     );
   }
 
+  static List<UserEmailModel> _parseEmails(Map<String, dynamic> json) {
+    final raw = json['emails'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => UserEmailModel.fromJson(
+            Map<String, dynamic>.from(e.map((k, v) => MapEntry(k.toString(), v))),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  static List<UserPhoneModel> _parsePhones(Map<String, dynamic> json) {
+    final raw = json['phones'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (e) => UserPhoneModel.fromJson(
+            Map<String, dynamic>.from(e.map((k, v) => MapEntry(k.toString(), v))),
+          ),
+        )
+        .toList(growable: false);
+  }
+
   static List<UserCommunicationModel> _parseCommunications(
     Map<String, dynamic> json,
+    List<UserEmailModel> emails,
+    List<UserPhoneModel> phones,
   ) {
     final raw = json['communications'];
-    if (raw is! List) return const [];
-    final out = <UserCommunicationModel>[];
-    for (final e in raw) {
-      if (e is Map) {
-        out.add(UserCommunicationModel.fromJson(Map<String, dynamic>.from(e)));
+    if (raw is List && raw.isNotEmpty) {
+      final out = <UserCommunicationModel>[];
+      for (final e in raw) {
+        if (e is Map) {
+          out.add(
+            UserCommunicationModel.fromJson(Map<String, dynamic>.from(e)),
+          );
+        }
       }
+      if (out.isNotEmpty) return out;
+    }
+
+    if (emails.isEmpty && phones.isEmpty) return const [];
+
+    final n = emails.length > phones.length ? emails.length : phones.length;
+    final out = <UserCommunicationModel>[];
+    for (var i = 0; i < n; i++) {
+      final email = i < emails.length ? emails[i] : null;
+      final phone = i < phones.length ? phones[i] : null;
+      final emailId = email?.id ?? '';
+      final phoneId = phone?.id ?? '';
+      out.add(
+        UserCommunicationModel(
+          id: emailId.isNotEmpty ? emailId : phoneId,
+          emailId: emailId,
+          phoneId: phoneId,
+          phone: phone?.phone ?? '',
+          email: email?.email ?? '',
+          isPrimary: i == 0 ||
+              (email?.isPrimary ?? false) ||
+              (phone?.isPrimary ?? false),
+        ),
+      );
     }
     return out;
   }

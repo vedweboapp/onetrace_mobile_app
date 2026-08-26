@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/constants/app_strings.dart';
 import 'package:red5/core/network/connectivity_service.dart';
+import 'package:red5/core/network/slow_network_toast.dart';
 import 'package:red5/core/widgets/connectivity_status_banner.dart';
 import 'package:red5/core/widgets/top_snackbar.dart';
 import 'package:red5/employee_role/offline/operative_sync_coordinator.dart';
@@ -59,6 +60,17 @@ final class _ConnectivityUiScopeState extends ConsumerState<ConnectivityUiScope>
     }
 
     _subscription = connectivity.isOnlineStream.listen(_onConnectivityChanged);
+    unawaited(_warnIfAlreadyOnWeakConnection(connectivity));
+  }
+
+  Future<void> _warnIfAlreadyOnWeakConnection(
+    ConnectivityService connectivity,
+  ) async {
+    await connectivity.checkOnline();
+    if (!mounted) return;
+    if (connectivity.mayBeWeakConnection) {
+      SlowNetworkToast.maybeShowWeakNetworkToast();
+    }
   }
 
   void _onConnectivityChanged(bool online) {
@@ -76,6 +88,10 @@ final class _ConnectivityUiScopeState extends ConsumerState<ConnectivityUiScope>
         type: AppTopToastType.success,
         duration: const Duration(seconds: 3),
       );
+      final connectivity = ref.read(connectivityServiceProvider);
+      if (connectivity.mayBeWeakConnection) {
+        SlowNetworkToast.maybeShowWeakNetworkToast();
+      }
     } else {
       unawaited(_bannerController.forward(from: 0));
     }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import 'pdf_annotation_point.dart';
-import 'pdf_coordinate_engine.dart';
 import 'pdf_viewport_manager.dart';
 
 /// Enterprise PDF canvas: viewer + matrix-aware pin overlay.

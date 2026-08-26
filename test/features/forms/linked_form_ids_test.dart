@@ -36,4 +36,33 @@ void main() {
       [34, 72],
     );
   });
+
+  test('readLinkedTemplateFormIds reads pin project_form when forms empty', () {
+    expect(
+      readLinkedTemplateFormIds({
+        'forms': [],
+        'levels': [
+          {
+            'plots': [
+              {
+                'pins': [
+                  {
+                    'id': 830,
+                    'job_pin_id': 187,
+                    'project_form': {
+                      'id': 83,
+                      'name': 'Door survey Form',
+                      'submission_id': null,
+                      'submission_status': null,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      [83],
+    );
+  });
 }

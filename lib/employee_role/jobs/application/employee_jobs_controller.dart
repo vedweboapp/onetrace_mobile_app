@@ -125,7 +125,6 @@ final class EmployeeJobsState {
 
   Set<DateTime> get jobDates {
     return applyLocationFilters(jobs)
-        .where(_isActiveJob)
         .map((job) => job.startDate)
         .whereType<DateTime>()
         .map(_dateOnly)
@@ -137,9 +136,7 @@ final class EmployeeJobsState {
     return applyLocationFilters(jobs)
         .where(
           (job) =>
-              _isActiveJob(job) &&
-              job.startDate != null &&
-              _dateOnly(job.startDate!) == target,
+              job.startDate != null && _dateOnly(job.startDate!) == target,
         )
         .toList(growable: false);
   }
@@ -154,7 +151,6 @@ final class EmployeeJobsState {
     final weekEnd = weekStart.add(const Duration(days: 6));
     return applyLocationFilters(jobs)
         .where((job) {
-          if (!_isActiveJob(job)) return false;
           final start = job.startDate;
           if (start == null) return false;
           final day = _dateOnly(start);
@@ -412,6 +408,11 @@ final class EmployeeJobsController extends StateNotifier<EmployeeJobsState> {
 
   void clearDateRange() {
     state = state.copyWith(clearFilterDateRange: true);
+  }
+
+  void clearForLogout() {
+    _lastNetworkFetchAt = null;
+    state = const EmployeeJobsState();
   }
 
   EmployeeJobsState _stateWithValidFilters(EmployeeJobsState next) {

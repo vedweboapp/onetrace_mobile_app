@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_dio_log_interceptor.dart';
+import 'package:red5/core/network/slow_network_toast_interceptor.dart';
 
 /// Status + optional raw bytes (file download, multipart response body).
 final class HttpBytesResult {
@@ -32,6 +33,7 @@ final class DioMultipartTransfer {
   static Dio _createDefaultDio() {
     final dio = Dio(_baseOptions);
     dio.interceptors.add(ApiDioLogInterceptor());
+    dio.interceptors.add(SlowNetworkToastInterceptor());
     return dio;
   }
 

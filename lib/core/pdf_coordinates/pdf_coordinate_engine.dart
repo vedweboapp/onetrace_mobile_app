@@ -3,7 +3,6 @@ import 'package:pdfx/pdfx.dart';
 
 import 'pdf_annotation_point.dart';
 import 'pdf_coordinate_transformer.dart';
-import 'pdf_page_metadata.dart';
 import 'pdf_page_metadata_cache.dart';
 import 'pdf_page_transform.dart';
 import 'pdf_viewport_state.dart';

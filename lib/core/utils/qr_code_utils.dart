@@ -1,15 +1,24 @@
+import 'dart:convert';
+
 /// Helpers for values read from QR stickers and scanners.
 abstract final class QrCodeUtils {
   QrCodeUtils._();
 
-  /// Bare QR id for API payloads, e.g. `QR-VLBUJL` from
-  /// `http://110.225.254.51:5050/scan/QR-VLBUJL`.
+  static final _uuidPattern = RegExp(
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+  );
+
+  /// Bare QR id or public UUID from
+  /// `http://host/scan/18552ae0-af7e-4385-b243-80609f04bf19`.
   ///
   /// Used for:
-  /// - `POST /api/v1/jobs/{job_id}/scan-qr/` → `{ "qr_code": "QR-VLBUJL" }`
-  ///   or `{ "job_pin_id": 14, "qr_code": "QR-VLBUJL" }` for level pins.
+  /// - `POST /api/v1/jobs/{job_id}/scan-qr/` →
+  ///   `{ "public_uuid": "...", "job_pin_id": 157 }`
   /// - `GET /api/v1/qr-codes/{qr_code}/details/`
   static String normalizeScannedValue(String raw) {
+    final uuid = extractPublicUuid(raw);
+    if (uuid != null) return uuid;
+
     var value = raw.trim();
     if (value.isEmpty) return value;
 
@@ -33,12 +42,19 @@ abstract final class QrCodeUtils {
 
     final uri = _parseAsUri(value);
     if (uri != null) {
+      final fromQuery = uri.queryParameters['public_uuid'] ??
+          uri.queryParameters['uuid'];
+      final queryUuid = fromQuery == null ? null : extractPublicUuid(fromQuery);
+      if (queryUuid != null) return queryUuid;
+
       final fromPath = _codeFromPathSegments(uri.pathSegments);
       if (fromPath != null) return canonicalize(fromPath);
 
       for (final segment in uri.pathSegments.reversed) {
         final trimmed = segment.trim();
         if (trimmed.isEmpty || trimmed.toLowerCase() == 'details') continue;
+        final segmentUuid = extractPublicUuid(trimmed);
+        if (segmentUuid != null) return segmentUuid;
         if (trimmed.toLowerCase().startsWith('qr-')) {
           return canonicalize(trimmed);
         }
@@ -67,10 +83,44 @@ abstract final class QrCodeUtils {
     return canonicalize(value);
   }
 
+  /// UUID used as `public_uuid` on `POST .../scan-qr/`.
+  static String? extractPublicUuid(String raw) {
+    var value = raw.trim();
+    if (value.isEmpty) return null;
+
+    if (value.contains('%')) {
+      try {
+        final decoded = Uri.decodeComponent(value);
+        if (decoded.trim().isNotEmpty) value = decoded.trim();
+      } catch (_) {}
+    }
+
+    if (value.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map) {
+          final nested = decoded['public_uuid'] ??
+              decoded['uuid'] ??
+              decoded['qr_code'];
+          if (nested != null) {
+            final nestedUuid = extractPublicUuid(nested.toString());
+            if (nestedUuid != null) return nestedUuid;
+          }
+        }
+      } catch (_) {}
+    }
+
+    final match = _uuidPattern.firstMatch(value);
+    if (match == null) return null;
+    return match.group(0)!.toLowerCase();
+  }
+
   /// Normalizes `QR-xxxx` casing for API requests.
   static String canonicalize(String code) {
     final trimmed = code.trim();
     if (trimmed.isEmpty) return trimmed;
+    final uuid = extractPublicUuid(trimmed);
+    if (uuid != null) return uuid;
     final lower = trimmed.toLowerCase();
     if (!lower.startsWith('qr-')) return trimmed;
     return 'QR-${trimmed.substring(3).toUpperCase()}';

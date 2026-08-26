@@ -50,7 +50,7 @@ import 'package:red5/features/composite_items/presentation/view/composite_item_p
 import 'package:red5/features/items/presentation/views/items_page.dart';
 import 'package:red5/features/sites/presentation/views/sites_page.dart';
 import 'package:red5/features/user_profile/data/user_profile_api_client.dart';
-import 'package:red5/employee_role/data/role_session.dart';
+import 'package:red5/employee_role/data/signed_in_session_cleanup.dart';
 
 String? _absoluteProfileImageUrl(String imageFromApi) {
   final raw = imageFromApi.trim();
@@ -236,10 +236,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> with RouteAware {
     } catch (_) {
       // Ignore logout network errors; still clear local session.
     }
-    await storage.remove(LocalStorageKeys.authAccessToken);
-    await storage.remove(LocalStorageKeys.authRefreshToken);
-    await storage.remove(LocalStorageKeys.authUserId);
-    await RoleSession.clearRole(storage);
+    await SignedInSessionCleanup.clear(ref);
     if (!mounted) return;
     sl<AuthRedirectNotifier>().notifyAuthChanged();
     GoRouter.of(context).go('/');

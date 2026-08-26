@@ -75,7 +75,7 @@ class TechnicianHomePage extends StatelessWidget {
           icon: Icons.timeline_rounded,
         ),
       ],
-      ),
+      ), 
     );
   }
 }

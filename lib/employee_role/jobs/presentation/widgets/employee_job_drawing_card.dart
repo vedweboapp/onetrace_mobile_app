@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_drawing_preview.dart';
 
 /// Card for a job/site drawing level — matches operative home & detail designs UI.
@@ -13,6 +14,7 @@ class EmployeeJobDrawingCard extends StatelessWidget {
     required this.drawingFileUrl,
     required this.cacheKey,
     required this.onTap,
+    this.pins = const [],
   });
 
   final String title;
@@ -21,6 +23,7 @@ class EmployeeJobDrawingCard extends StatelessWidget {
   final String? drawingFileUrl;
   final String cacheKey;
   final VoidCallback onTap;
+  final List<EmployeeJobDrawingPin> pins;
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +51,7 @@ class EmployeeJobDrawingCard extends StatelessWidget {
                     cacheKey: cacheKey,
                     remoteDrawingUrl: drawingFileUrl,
                     title: title,
+                    pins: pins,
                   ),
                 ),
               ),
@@ -101,11 +105,13 @@ class _DrawingPreview extends StatelessWidget {
     required this.cacheKey,
     required this.remoteDrawingUrl,
     required this.title,
+    this.pins = const [],
   });
 
   final String cacheKey;
   final String? remoteDrawingUrl;
   final String title;
+  final List<EmployeeJobDrawingPin> pins;
 
   @override
   Widget build(BuildContext context) {
@@ -113,6 +119,7 @@ class _DrawingPreview extends StatelessWidget {
       cacheKey: cacheKey,
       remoteDrawingUrl: remoteDrawingUrl,
       fallbackTitle: title,
+      pins: pins,
     );
   }
 }

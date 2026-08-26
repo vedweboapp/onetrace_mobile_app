@@ -8,6 +8,7 @@ import 'package:red5/core/theme/app_colors.dart';
 import 'package:red5/core/theme/app_fonts.dart';
 import 'package:red5/core/utils/debounced_search.dart';
 import 'package:red5/employee_role/jobs/data/assigned_jobs_filter.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/features/material_requests/data/material_request_models.dart';
 import 'package:red5/features/material_requests/data/material_requests_api_client.dart';
 import 'package:red5/features/material_requests/presentation/views/material_request_detail_page.dart';
@@ -30,7 +31,7 @@ class MaterialRequestsListBody extends ConsumerStatefulWidget {
   final double listBottomPadding;
   final double searchHorizontalPadding;
 
-  /// When true, loads `GET /material-requests/?worker=<auth user id>`.
+  /// When true, loads with `worker=<auth user id>` (and `job=` when known).
   final bool scopeToCurrentWorker;
 
   /// Optional `?job=` filter.
@@ -96,11 +97,36 @@ class _MaterialRequestsListBodyState
         }
       }
 
-      final rows = await api.fetchMaterialRequests(
-        workerId: workerId,
-        jobId: widget.jobId,
-        statusId: widget.statusId,
-      );
+      late final List<MaterialRequestRead> rows;
+      if (workerId != null && workerId > 0) {
+        // Greg pattern: /material-requests/?job=&worker=
+        if (widget.jobId != null && widget.jobId! > 0) {
+          rows = await api.fetchMaterialRequests(
+            workerId: workerId,
+            jobId: widget.jobId,
+            statusId: widget.statusId,
+          );
+        } else {
+          final jobs = await ref
+              .read(employeeJobRepositoryProvider)
+              .fetchJobs();
+          final jobIds = <int>[
+            for (final job in jobs)
+              if (job.id > 0) job.id,
+          ];
+          rows = await api.fetchMaterialRequestsForJobs(
+            workerId: workerId,
+            jobIds: jobIds,
+            statusId: widget.statusId,
+          );
+        }
+      } else {
+        rows = await api.fetchMaterialRequests(
+          jobId: widget.jobId,
+          statusId: widget.statusId,
+        );
+      }
+
       final items = rows.map((row) => row.toListItem()).toList(growable: false);
       if (!mounted) return;
       setState(() {

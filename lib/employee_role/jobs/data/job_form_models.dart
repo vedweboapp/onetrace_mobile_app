@@ -126,6 +126,9 @@ final class JobFormAssignment {
   /// - `job_form_id` — sent in `POST .../submit-form/` (e.g. 14)
   /// - `project_form_id` — project-job form template id (e.g. 18)
   /// - `dynamic_form_id` — service-job form template id (e.g. 34)
+  ///
+  /// When top-level `forms` is empty (common for project jobs), falls back to
+  /// `levels[].plots[].pins[].project_form` + `job_pin_id`.
   static List<JobFormAssignment> listFromJobRaw(Map<String, dynamic> raw) {
     for (final key in const [
       'forms',
@@ -149,7 +152,72 @@ final class JobFormAssignment {
       }
     }
 
-    return const [];
+    return listFromDrawingLevels(raw['levels']);
+  }
+
+  /// Pin-linked forms: `job_form_id` = `job_pin_id`, `formId` = `project_form.id`.
+  static List<JobFormAssignment> listFromDrawingLevels(dynamic levelsRaw) {
+    if (levelsRaw is! List) return const [];
+    final out = <JobFormAssignment>[];
+    final seen = <String>{};
+
+    void visitPin(Map<String, dynamic> pinMap) {
+      final nestedForm =
+          pinMap['project_form'] ?? pinMap['dynamic_form'] ?? pinMap['form'];
+      int? formId = _readInt(pinMap['project_form_id']) ??
+          _readInt(pinMap['dynamic_form_id']) ??
+          _readInt(pinMap['form_id']);
+      int? submissionId;
+      if (nestedForm is Map) {
+        final formMap = Map<String, dynamic>.from(
+          nestedForm.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        formId ??= _readInt(formMap['id']) ??
+            _readInt(formMap['project_form_id']) ??
+            _readInt(formMap['dynamic_form_id']);
+        submissionId = _readInt(formMap['submission_id']);
+      }
+      if (formId == null || formId <= 0) return;
+
+      final jobPinId = _readInt(pinMap['job_pin_id']) ?? _readInt(pinMap['id']);
+      if (jobPinId == null || jobPinId <= 0) return;
+
+      final key = '$jobPinId:$formId';
+      if (!seen.add(key)) return;
+      out.add(
+        JobFormAssignment(
+          jobFormId: jobPinId,
+          formId: formId,
+          submissionId: submissionId,
+        ),
+      );
+    }
+
+    for (final level in levelsRaw) {
+      if (level is! Map) continue;
+      final levelMap = Map<String, dynamic>.from(
+        level.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final plots = levelMap['plots'];
+      if (plots is! List) continue;
+      for (final plot in plots) {
+        if (plot is! Map) continue;
+        final plotMap = Map<String, dynamic>.from(
+          plot.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        final pins = plotMap['pins'];
+        if (pins is! List) continue;
+        for (final pin in pins) {
+          if (pin is! Map) continue;
+          visitPin(
+            Map<String, dynamic>.from(
+              pin.map((k, v) => MapEntry(k.toString(), v)),
+            ),
+          );
+        }
+      }
+    }
+    return out;
   }
 
   static List<JobFormAssignment> fromLinkedForms(
@@ -249,6 +317,7 @@ final class JobFormFieldValue {
 bool isJobFormAttachmentFieldType(String? fieldType) {
   switch (fieldType?.trim().toLowerCase()) {
     case 'image_upload':
+    case 'multi_image_upload':
     case 'image':
     case 'file':
     case 'file_upload':
@@ -622,6 +691,7 @@ final class JobLinkedFormSummary {
   bool get isSubmitted => status?.trim().toLowerCase() == 'submitted';
 
   /// Parses `GET /jobs/{id}/` → `data.forms[]` for operative form picker display.
+  /// Falls back to pin `project_form` when top-level `forms` is empty.
   static List<JobLinkedFormSummary> listFromJobRaw(Map<String, dynamic> raw) {
     for (final key in const [
       'forms',
@@ -645,7 +715,62 @@ final class JobLinkedFormSummary {
       }
     }
 
-    return const [];
+    return listFromDrawingLevels(raw['levels']);
+  }
+
+  static List<JobLinkedFormSummary> listFromDrawingLevels(dynamic levelsRaw) {
+    if (levelsRaw is! List) return const [];
+    final out = <JobLinkedFormSummary>[];
+    final seen = <String>{};
+
+    for (final level in levelsRaw) {
+      if (level is! Map) continue;
+      final levelMap = Map<String, dynamic>.from(
+        level.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final plots = levelMap['plots'];
+      if (plots is! List) continue;
+      for (final plot in plots) {
+        if (plot is! Map) continue;
+        final plotMap = Map<String, dynamic>.from(
+          plot.map((k, v) => MapEntry(k.toString(), v)),
+        );
+        final pins = plotMap['pins'];
+        if (pins is! List) continue;
+        for (final pin in pins) {
+          if (pin is! Map) continue;
+          final pinMap = Map<String, dynamic>.from(
+            pin.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          final nestedForm = pinMap['project_form'] ??
+              pinMap['dynamic_form'] ??
+              pinMap['form'];
+          if (nestedForm is! Map) continue;
+          final formMap = Map<String, dynamic>.from(
+            nestedForm.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          final formId = _readInt(formMap['id']) ??
+              _readInt(formMap['project_form_id']) ??
+              _readInt(pinMap['project_form_id']);
+          if (formId == null || formId <= 0) continue;
+          final jobPinId =
+              _readInt(pinMap['job_pin_id']) ?? _readInt(pinMap['id']);
+          final key = '${jobPinId ?? 0}:$formId';
+          if (!seen.add(key)) continue;
+          final name = formMap['name']?.toString().trim() ?? '';
+          out.add(
+            JobLinkedFormSummary(
+              formId: formId,
+              name: name.isNotEmpty ? name : 'Form $formId',
+              jobFormId: jobPinId,
+              submissionId: _readInt(formMap['submission_id']),
+              status: formMap['submission_status']?.toString(),
+            ),
+          );
+        }
+      }
+    }
+    return out;
   }
 
   static List<JobLinkedFormSummary> _parseLinkedFormsList(dynamic raw) {

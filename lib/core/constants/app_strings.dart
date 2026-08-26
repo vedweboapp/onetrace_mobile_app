@@ -42,7 +42,8 @@ class AppStrings {
   static const signupOrSignUpWith = 'OR SIGN UP WITH';
   static const signupFieldRequired = 'This field is required';
   static const signupEmailInvalid = 'Please enter a valid email';
-  static const signupPasswordMinLength = 'Password must be at least 6 characters';
+  static const signupPasswordMinLength =
+      'Password must be at least 6 characters';
   static const signupVerifyEmailInvalid = 'Enter a valid email to verify';
   static String signupVerifySentTo(String email) =>
       'Verification link sent to $email';
@@ -61,10 +62,10 @@ class AppStrings {
   static const signupAlreadyHaveAccount = 'Already have an account? ';
   static const signupLogIn = 'Log In';
   static const otpVerifyTitle = 'Enter Code';
+
   /// Forgot-password OTP step (same sheet as sign-in OTP, different labels).
   static const otpForgotPasswordVerifyTitle = 'Verify Code';
-  static const otpVerifySubtitle =
-      'Enter your code to reset your password';
+  static const otpVerifySubtitle = 'Enter your code to reset your password';
   static const otpVerifyOtpButton = 'Verify OTP';
   static const otpLabel = 'OTP';
   static const otpResendLead = "Didn't receive the code? ";
@@ -111,19 +112,21 @@ class AppStrings {
       'Check your Wi‑Fi or mobile data and try again.';
   static const connectivityOnlineTitle = 'Connected';
   static const connectivityOnlineSubtitle = "You're back online";
-  static const apiErrorTimeout =
-      'The request took too long. Please try again.';
+  static const connectivityWeakTitle = 'Slow network connection';
+  static const connectivityWeakSubtitle =
+      'Loading is taking longer than usual. Please try again';
+  static const connectivityWeakCellularSubtitle =
+      'Mobile data looks slow. Loading may take longer than usual.';
+  static const apiErrorTimeout = 'The request took too long. Please try again.';
   static const apiErrorBadCertificate =
       'A secure connection could not be verified.';
   static const apiErrorCancelled = 'Request was cancelled.';
   static const apiErrorBadRequest =
       'We couldn\'t process that request. Please check your input.';
-  static const apiErrorUnauthorized =
-      'Please sign in again to continue.';
+  static const apiErrorUnauthorized = 'Please sign in again to continue.';
   static const apiErrorForbidden =
       'You don\'t have permission to perform this action.';
-  static const apiErrorNotFound =
-      'Nothing was found for this request.';
+  static const apiErrorNotFound = 'Nothing was found for this request.';
   static const apiErrorConflict =
       'This action conflicts with the current server state.';
   static const apiErrorValidation =
@@ -134,14 +137,14 @@ class AppStrings {
       'Something went wrong on the server. Please try again.';
   static const apiErrorServiceUnavailable =
       'The service is unavailable. Please try again later.';
+
   /// When no backend message and no clearer status phrase applies.
   static const apiErrorGenericDetailFallback =
       'Something went wrong. Please try again.';
   static const apiErrorSignInFailed = 'Sign in failed';
   static const apiErrorLoadQuotes = 'Could not load quotes.';
   static const apiErrorLoadQuote = 'Could not load this quote.';
-  static const apiErrorOpenCreateQuote =
-      'Could not open Create Quote.';
+  static const apiErrorOpenCreateQuote = 'Could not open Create Quote.';
   static const apiErrorSendOtp = 'Could not send OTP. Please try again.';
   static const apiErrorResendOtp = 'Could not resend OTP. Please try again.';
   static const apiErrorVerifyOtp =

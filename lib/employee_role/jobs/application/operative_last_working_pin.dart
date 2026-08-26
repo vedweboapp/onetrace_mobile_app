@@ -31,6 +31,17 @@ class OperativeLastWorkingPin {
     if (value == null || value <= 0) return null;
     return value;
   }
+
+  static Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs
+        .getKeys()
+        .where((key) => key.startsWith('operative_last_working_pin_'))
+        .toList(growable: false);
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
+  }
 }
 
 /// Picks which pin the canvas should zoom to when an operative opens a design.
@@ -50,17 +61,11 @@ int? resolveOperativeFocusPinId({
   bool hasPin(int id) => pins.any((p) => p.id == id);
 
   final lastId = lastWorkingPinId;
-  if (lastId != null && lastId > 0 && hasPin(lastId)) {
-    final lastPin = pins.firstWhere((p) => p.id == lastId);
-    if (!isOperativePinComplete(lastPin, state)) {
-      return lastId;
-    }
-  }
+  if (lastId != null && lastId > 0 && hasPin(lastId)) return lastId;
 
   for (final pin in pins) {
     if (!isOperativePinComplete(pin, state)) return pin.id;
   }
 
-  if (lastId != null && lastId > 0 && hasPin(lastId)) return lastId;
   return pins.first.id;
 }

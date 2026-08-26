@@ -24,8 +24,8 @@ final class JobFormAttachmentStorage {
     );
 
     final out = <JobFormFieldValue>[];
-    for (final row in values) {
-      out.add(await _persistRow(row, scopedDir));
+    for (var i = 0; i < values.length; i++) {
+      out.add(await _persistRow(values[i], scopedDir, index: i));
     }
     return out;
   }
@@ -48,8 +48,9 @@ final class JobFormAttachmentStorage {
 
   static Future<JobFormFieldValue> _persistRow(
     JobFormFieldValue row,
-    Directory scopedDir,
-  ) async {
+    Directory scopedDir, {
+    required int index,
+  }) async {
     final srcPath = row.localFilePath?.trim();
     if (srcPath == null || srcPath.isEmpty) return row;
 
@@ -57,7 +58,10 @@ final class JobFormAttachmentStorage {
     if (!await src.exists()) return row;
 
     final filename = _safeFilename(row);
-    final destPath = p.join(scopedDir.path, 'f${row.fieldId}_$filename');
+    final destPath = p.join(
+      scopedDir.path,
+      'f${row.fieldId}_${index}_$filename',
+    );
     final normalizedSrc = p.normalize(srcPath);
     final normalizedDest = p.normalize(destPath);
 

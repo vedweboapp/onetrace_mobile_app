@@ -90,6 +90,42 @@ final class QrCodesApiClient {
     return QrCodeModel.fromJson(_entityBody(root));
   }
 
+  /// Finds a catalog QR by scanned sticker value (`QR-VLBUJL` or numeric id).
+  Future<QrCodeModel?> findQrCode(String scanned) async {
+    final normalized = QrCodeUtils.normalizeScannedValue(scanned);
+    if (normalized.isEmpty) return null;
+
+    try {
+      final page = await fetchQrCodesPage(search: normalized, pageSize: 50);
+      QrCodeModel? suffixMatch;
+      for (final item in page.items) {
+        if (item.qrCodeId.toUpperCase() == normalized.toUpperCase()) {
+          return item;
+        }
+        if (suffixMatch == null &&
+            item.qrCodeId.toUpperCase() ==
+                normalized.toUpperCase().replaceFirst(RegExp('^QR-'), '')) {
+          suffixMatch = item;
+        }
+      }
+      if (suffixMatch != null) return suffixMatch;
+    } catch (_) {}
+
+    final numericId = int.tryParse(normalized) ??
+        (normalized.toUpperCase().startsWith('QR-')
+            ? int.tryParse(normalized.substring(3))
+            : null);
+    if (numericId == null || numericId <= 0) return null;
+
+    try {
+      final byId = await fetchQrCodeById(numericId);
+      if (byId.id > 0) return byId;
+    } on DioException catch (error) {
+      if (!_isNotFound(error)) rethrow;
+    }
+    return null;
+  }
+
   /// `GET /qr-codes/{qr_code}/details/` — public job lookup by QR value.
   Future<QrCodeJobDetails> fetchQrCodeDetails(String qrCode) async {
     final normalized = QrCodeUtils.normalizeScannedValue(qrCode);

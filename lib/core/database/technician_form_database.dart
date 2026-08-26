@@ -383,6 +383,16 @@ final class TechnicianFormDatabase {
     return rows.first['job_json'] as String?;
   }
 
+  /// Drops cached jobs/forms for the signed-out technician.
+  Future<void> clearUserSessionCache() async {
+    await _db.delete(_jobListCacheTable);
+    await _db.delete(_jobDetailCacheTable);
+    await _db.delete(_tableName);
+    await _db.delete(_jobFormLinkTable);
+    await _db.delete(_submissionTable);
+    await _db.delete(_syncQueueTable);
+  }
+
   Future<void> enqueueSyncOperation({
     required String id,
     required String operationType,

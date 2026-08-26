@@ -24,12 +24,16 @@ final class JobQrScanResult {
     required this.registeredWithJob,
     required this.qrCode,
     this.queuedOffline = false,
+    this.message,
+    this.projectFormName,
   });
 
   final QrCodeJobDetails details;
   final bool registeredWithJob;
   final String qrCode;
   final bool queuedOffline;
+  final String? message;
+  final String? projectFormName;
 }
 
 final class JobQrScanRepository {
@@ -48,25 +52,26 @@ final class JobQrScanRepository {
   final ConnectivityService _connectivity;
   final OperativeSyncQueue _syncQueue;
 
-  /// Registers the scan on a job (`POST .../scan-qr/`) and loads public details.
+  /// Registers the scan on a job (`POST .../scan-qr/`).
   ///
-  /// When [jobId] is set, the scanned value is assigned to the job (or pin via
-  /// [jobPinId]) and the call returns after POST — no pre-attached QR required.
+  /// Form / pin scans send `{ "public_uuid": "...", "job_pin_id": 157 }`.
   Future<JobQrScanResult> processScan({
     required String qrCode,
     int? jobId,
     int? jobPinId,
     bool fromSync = false,
   }) async {
-    final normalized = QrCodeUtils.normalizeScannedValue(qrCode);
-    if (normalized.isEmpty) {
+    final publicUuid = QrCodeUtils.extractPublicUuid(qrCode) ??
+        QrCodeUtils.normalizeScannedValue(qrCode);
+    if (publicUuid.isEmpty) {
       throw ArgumentError('QR code is empty');
     }
     if (!_connectivity.isOnline && !fromSync) {
       await _syncQueue.enqueue(
         type: OperativeSyncOperationType.qrScan,
         payload: <String, dynamic>{
-          'qrCode': normalized,
+          'qrCode': publicUuid,
+          'publicUuid': publicUuid,
           if (jobId != null) 'jobId': jobId,
           if (jobPinId != null && jobPinId > 0) 'jobPinId': jobPinId,
         },
@@ -75,10 +80,10 @@ final class JobQrScanRepository {
         details: QrCodeJobDetails(
           jobId: jobId ?? 0,
           title: jobId != null ? 'Job $jobId' : 'Queued scan',
-          qrCode: normalized,
+          qrCode: publicUuid,
         ),
         registeredWithJob: jobId != null && jobId > 0,
-        qrCode: normalized,
+        qrCode: publicUuid,
         queuedOffline: true,
       );
     }
@@ -87,53 +92,49 @@ final class JobQrScanRepository {
     final activeJobId = jobId;
 
     if (activeJobId != null && activeJobId > 0) {
-      await _jobFormsApi.scanJobQr(
+      final assignment = await _jobFormsApi.scanJobQr(
         jobId: activeJobId,
-        qrCode: normalized,
+        qrCode: publicUuid,
         jobPinId: jobPinId,
       );
-      registered = true;
 
-      // Assignment flow: POST links the scanned QR to job/pin qr_code field.
       return JobQrScanResult(
         details: QrCodeJobDetails(
-          jobId: activeJobId,
-          title: 'Job',
-          qrCode: normalized,
+          jobId: assignment.jobId ?? activeJobId,
+          title: assignment.projectFormName?.trim().isNotEmpty == true
+              ? assignment.projectFormName!.trim()
+              : 'Job',
+          qrCode: assignment.publicUuid,
         ),
         registeredWithJob: true,
-        qrCode: normalized,
+        qrCode: assignment.publicUuid,
+        message: assignment.message,
+        projectFormName: assignment.projectFormName,
       );
     }
 
-    QrCodeJobDetails details;
-    try {
-      details = await _qrCodesApi.fetchQrCodeDetails(normalized);
-    } on DioException {
-      if (registered && activeJobId != null && activeJobId > 0) {
-        details = QrCodeJobDetails(
-          jobId: activeJobId,
-          title: 'Job',
-          qrCode: normalized,
-        );
-      } else {
-        rethrow;
-      }
-    }
+    final details = await _qrCodesApi.fetchQrCodeDetails(publicUuid);
 
     if (!registered && details.jobId > 0) {
-      await _jobFormsApi.scanJobQr(
+      final assignment = await _jobFormsApi.scanJobQr(
         jobId: details.jobId,
-        qrCode: normalized,
+        qrCode: publicUuid,
         jobPinId: jobPinId,
       );
       registered = true;
+      return JobQrScanResult(
+        details: details,
+        registeredWithJob: true,
+        qrCode: assignment.publicUuid,
+        message: assignment.message,
+        projectFormName: assignment.projectFormName,
+      );
     }
 
     return JobQrScanResult(
       details: details,
       registeredWithJob: registered,
-      qrCode: normalized,
+      qrCode: publicUuid,
     );
   }
 }

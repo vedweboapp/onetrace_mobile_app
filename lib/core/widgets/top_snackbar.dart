@@ -70,9 +70,15 @@ void tryShowAppTopToast({
   Duration duration = const Duration(seconds: 4),
 }) {
   final nav = appRootNavigatorKey.currentState;
-  final ctx = nav?.context;
-  if (ctx == null) return;
-  ctx.showAppTopToast(
+  // Prefer [NavigatorState.overlay] — [NavigatorState.context] sits *above*
+  // the Overlay, so Overlay.maybeOf(nav.context) is always null and used to
+  // fall back to a bottom SnackBar.
+  final overlay = nav?.overlay;
+  final ctx = overlay?.context ?? nav?.context;
+  if (overlay == null || ctx == null) return;
+  _showAppTopToastOnOverlay(
+    context: ctx,
+    overlay: overlay,
     title: title,
     subtitle: subtitle,
     type: type,
@@ -94,6 +100,63 @@ void tryShowSuccessTopPopup({
   );
 }
 
+void _showAppTopToastOnOverlay({
+  required BuildContext context,
+  required OverlayState overlay,
+  required String title,
+  String? subtitle,
+  AppTopToastType type = AppTopToastType.success,
+  Duration duration = const Duration(seconds: 4),
+}) {
+  _removeMessageOverlay();
+
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  messenger
+    ?..hideCurrentSnackBar()
+    ..clearMaterialBanners();
+
+  late OverlayEntry entry;
+  void removeEntry() {
+    if (_messageOverlayEntry != entry) return;
+    _messageOverlayEntry = null;
+    entry.remove();
+  }
+
+  entry = OverlayEntry(
+    builder: (ctx) {
+      final topPad = MediaQuery.paddingOf(ctx).top + 10;
+      final maxW = math.min(340.0, MediaQuery.sizeOf(ctx).width - 32);
+      return Stack(
+        children: [
+          Positioned(
+            top: topPad,
+            left: 16,
+            right: 16,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxW),
+                child: _TopToastAnimatedShell(
+                  displayDuration: duration,
+                  onRemoved: removeEntry,
+                  builder: (dismiss) => AppTopToastCard(
+                    title: title,
+                    subtitle: subtitle,
+                    type: type,
+                    onClose: dismiss,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+
+  _messageOverlayEntry = entry;
+  overlay.insert(entry);
+}
+
 extension TopSnackbarX on BuildContext {
   /// Universal top toast: invite-style card, slide + fade in, auto-dismiss,
   /// close control, and swipe up/left/right to dismiss.
@@ -103,67 +166,44 @@ extension TopSnackbarX on BuildContext {
     AppTopToastType type = AppTopToastType.success,
     Duration duration = const Duration(seconds: 4),
   }) {
-    _removeMessageOverlay();
-
-    final messenger = ScaffoldMessenger.maybeOf(this);
-    messenger
-      ?..hideCurrentSnackBar()
-      ..clearMaterialBanners();
-
-    final overlay = Overlay.maybeOf(this, rootOverlay: true);
+    final overlay = Overlay.maybeOf(this, rootOverlay: true) ??
+        appRootNavigatorKey.currentState?.overlay;
     if (overlay == null) {
-      messenger?.showSnackBar(
-        SnackBar(
-          content: Text(
-            (subtitle == null || subtitle.trim().isEmpty)
-                ? title
-                : '$title\n$subtitle',
+      // Last resort — still prefer floating near the top over a bottom bar.
+      final messenger = ScaffoldMessenger.maybeOf(this);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..clearMaterialBanners()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              (subtitle == null || subtitle.trim().isEmpty)
+                  ? title
+                  : '$title\n$subtitle',
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              top: MediaQuery.paddingOf(this).top + 12,
+              left: 16,
+              right: 16,
+              bottom: MediaQuery.sizeOf(this).height -
+                  MediaQuery.paddingOf(this).top -
+                  120,
+            ),
+            dismissDirection: DismissDirection.up,
           ),
-        ),
-      );
+        );
       return;
     }
 
-    late OverlayEntry entry;
-    void removeEntry() {
-      if (_messageOverlayEntry != entry) return;
-      _messageOverlayEntry = null;
-      entry.remove();
-    }
-
-    entry = OverlayEntry(
-      builder: (ctx) {
-        final topPad = MediaQuery.paddingOf(ctx).top + 10;
-        final maxW = math.min(340.0, MediaQuery.sizeOf(ctx).width - 32);
-        return Stack(
-          children: [
-            Positioned(
-              top: topPad,
-              left: 16,
-              right: 16,
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxW),
-                  child: _TopToastAnimatedShell(
-                    displayDuration: duration,
-                    onRemoved: removeEntry,
-                    builder: (dismiss) => AppTopToastCard(
-                      title: title,
-                      subtitle: subtitle,
-                      type: type,
-                      onClose: dismiss,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+    _showAppTopToastOnOverlay(
+      context: this,
+      overlay: overlay,
+      title: title,
+      subtitle: subtitle,
+      type: type,
+      duration: duration,
     );
-
-    _messageOverlayEntry = entry;
-    overlay.insert(entry);
   }
 
   /// Success toast (same visual as invite success); prefer [showAppTopToast] for other types.
@@ -190,7 +230,8 @@ extension TopSnackbarX on BuildContext {
       ?..hideCurrentSnackBar()
       ..clearMaterialBanners();
 
-    final overlay = Overlay.maybeOf(this, rootOverlay: true);
+    final overlay = Overlay.maybeOf(this, rootOverlay: true) ??
+        appRootNavigatorKey.currentState?.overlay;
     if (overlay == null) {
       messenger?.showSnackBar(snackBar);
       return;

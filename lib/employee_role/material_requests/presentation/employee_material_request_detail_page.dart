@@ -15,7 +15,7 @@ import 'package:red5/features/material_requests/data/material_request_models.dar
 import 'package:red5/features/material_requests/data/material_requests_api_client.dart';
 import 'package:red5/features/material_requests/presentation/widgets/material_request_widgets.dart';
 
-/// Operative material-request detail: Overview · Dispatch · Return · Timesheet.
+/// Operative material-request detail: Overview · Dispatch · Return.
 class EmployeeMaterialRequestDetailPage extends ConsumerStatefulWidget {
   const EmployeeMaterialRequestDetailPage({
     super.key,
@@ -57,7 +57,7 @@ class _EmployeeMaterialRequestDetailPageState
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     Future.microtask(_load);
   }
 
@@ -94,39 +94,29 @@ class _EmployeeMaterialRequestDetailPageState
         widget.materialRequestId.trim(),
       );
 
-      // Dispatch uses worker + material_request (not job / job_worker).
-      var dispatches = const <MaterialDispatchRead>[];
-      var returns = const <MaterialReturnRequestRead>[];
-      try {
-        dispatches = await api.fetchDispatches(
-          workerId: workerId,
-          materialRequestId: request.id,
-        );
-      } catch (_) {
-        dispatches = const [];
-      }
-      try {
-        returns = await api.fetchReturnRequests(
-          workerId: workerId,
-          materialRequestId: request.id,
-        );
-      } catch (_) {
-        // Fallback: some backends filter return-request by job instead.
-        final returnsByJob = <MaterialReturnRequestRead>[];
-        final seen = <int>{};
-        for (final job in request.jobs) {
-          try {
-            final rows = await api.fetchReturnRequests(
-              workerId: workerId,
-              jobId: job.id,
-            );
-            for (final row in rows) {
-              if (seen.add(row.id)) returnsByJob.add(row);
-            }
-          } catch (_) {}
-        }
-        returns = returnsByJob;
-      }
+      final jobIds = <int>[
+        for (final job in request.jobs)
+          if (job.id > 0) job.id,
+      ];
+
+      // Greg pattern: /dispatch/?job=&worker= and /return-request/?job=&worker=
+      final dispatches = await api.fetchDispatchesForMaterialRequest(
+        materialRequestId: request.id,
+        workerId: workerId,
+        jobIds: jobIds,
+      );
+
+      final dispatchLineIds = <int>{
+        for (final dispatch in dispatches)
+          for (final item in dispatch.items)
+            if (item.id > 0) item.id,
+      };
+      final returns = await api.fetchReturnRequestsForMaterialRequest(
+        materialRequestId: request.id,
+        workerId: workerId,
+        jobIds: jobIds,
+        dispatchLineIds: dispatchLineIds,
+      );
 
       if (!mounted) return;
       setState(() {
@@ -506,6 +496,20 @@ class _EmployeeMaterialRequestDetailPageState
     );
   }
 
+  ({Color bg, Color fg}) _returnStatusColors(String? statusName) {
+    final normalized = statusName?.trim().toLowerCase() ?? '';
+    if (normalized.contains('complete')) {
+      return (bg: const Color(0xFFECFDF5), fg: const Color(0xFF047857));
+    }
+    if (normalized.contains('reject')) {
+      return (bg: const Color(0xFFFEF2F2), fg: const Color(0xFFB91C1C));
+    }
+    if (normalized.contains('pending') || normalized.contains('request')) {
+      return (bg: const Color(0xFFFFF7ED), fg: const Color(0xFFC2410C));
+    }
+    return (bg: const Color(0xFFF3F4F6), fg: const Color(0xFF374151));
+  }
+
   Widget _returnTab() {
     if (_returns.isEmpty) {
       return Center(
@@ -525,6 +529,8 @@ class _EmployeeMaterialRequestDetailPageState
         final dateLabel = row.requestedDate == null
             ? '—'
             : _dateFormat.format(row.requestedDate!);
+        final statusColors = _returnStatusColors(row.statusName);
+        final firstItem = row.items.isEmpty ? null : row.items.first;
         return Material(
           color: AppColors.white,
           borderRadius: BorderRadius.circular(14),
@@ -558,13 +564,13 @@ class _EmployeeMaterialRequestDetailPageState
                           vertical: 5,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFF7ED),
+                          color: statusColors.bg,
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                          (row.statusName ?? 'Return request').trim(),
+                          row.displayStatusLabel,
                           style: AppFonts.labelMedium(
-                            color: const Color(0xFFC2410C),
+                            color: statusColors.fg,
                           ).copyWith(fontWeight: FontWeight.w700, fontSize: 10),
                         ),
                       ),
@@ -577,6 +583,17 @@ class _EmployeeMaterialRequestDetailPageState
                       color: _muted,
                     ).copyWith(fontWeight: FontWeight.w600),
                   ),
+                  if (firstItem != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      firstItem.displayReturnType == null
+                          ? firstItem.itemName
+                          : '${firstItem.itemName} · ${firstItem.displayReturnType}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppFonts.bodySmall(color: _muted),
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   Text(dateLabel, style: AppFonts.bodySmall(color: _muted)),
                 ],
@@ -585,19 +602,6 @@ class _EmployeeMaterialRequestDetailPageState
           ),
         );
       },
-    );
-  }
-
-  Widget _timesheetTab() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          'Timesheet for this material request will appear here.',
-          textAlign: TextAlign.center,
-          style: AppFonts.bodyMedium(color: _muted),
-        ),
-      ),
     );
   }
 
@@ -647,7 +651,6 @@ class _EmployeeMaterialRequestDetailPageState
                   Tab(text: 'Overview'),
                   Tab(text: 'Dispatch'),
                   Tab(text: 'Return'),
-                  Tab(text: 'Timesheet'),
                 ],
               ),
             ],
@@ -685,7 +688,6 @@ class _EmployeeMaterialRequestDetailPageState
                 _overviewTab(request),
                 _dispatchTab(),
                 _returnTab(),
-                _timesheetTab(),
               ],
             ),
     );

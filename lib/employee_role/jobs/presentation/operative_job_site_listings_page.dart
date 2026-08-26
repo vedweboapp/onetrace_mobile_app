@@ -8,7 +8,6 @@ import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/presentation/employee_job_details_page.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_drawings_list_body.dart';
-import 'package:red5/employee_role/projects/application/project_map_controller.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/project_map_overlays.dart';
 
 enum OperativeJobSiteListingsTab { list, drawings }

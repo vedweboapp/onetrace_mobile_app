@@ -270,8 +270,14 @@ class _OperativeJobWorkflowPageState
                   : job.usesDesignsWorkflow
                       ? _DesignsBody(
                           job: job,
+                          state: state,
                           designLevels: _designLevels(job),
                           onOpenDrawing: (level) => _openDrawing(job, level),
+                          onComplete: () => completeOperativeJob(
+                            context: context,
+                            container: ProviderScope.containerOf(context),
+                            jobId: widget.jobId,
+                          ),
                         )
                       : _FormsBody(
                           job: job,
@@ -290,49 +296,86 @@ class _OperativeJobWorkflowPageState
 class _DesignsBody extends StatelessWidget {
   const _DesignsBody({
     required this.job,
+    required this.state,
     required this.designLevels,
     required this.onOpenDrawing,
+    required this.onComplete,
   });
 
   final EmployeeJobDetail job;
+  final EmployeeJobDetailState state;
   final List<EmployeeJobDrawingLevel> designLevels;
   final ValueChanged<EmployeeJobDrawingLevel> onOpenDrawing;
+  final VoidCallback onComplete;
 
   @override
   Widget build(BuildContext context) {
     final pinCount =
         job.levels.fold<int>(0, (sum, level) => sum + level.pinCount);
+    final incomplete = countIncompleteOperativePins(job, state);
+    final canCompleteJob = pinCount > 0 && incomplete == 0;
+    final allFormless = pinCount > 0 &&
+        collectJobPinEntries(job.levels).every((entry) => !entry.pin.hasForm);
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+    return Column(
       children: [
-        Text(
-          'Designs',
-          style: AppFonts.titleLarge(color: AppColors.inkStrong)
-              .copyWith(fontWeight: FontWeight.w900, fontSize: 24),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              Text(
+                'Designs',
+                style: AppFonts.titleLarge(color: AppColors.inkStrong)
+                    .copyWith(fontWeight: FontWeight.w900, fontSize: 24),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                pinCount > 0
+                    ? allFormless
+                        ? (pinCount == 1
+                            ? 'No form is required for this pin. Tap Complete Job when you are done.'
+                            : 'No forms are assigned to these pins. Tap Complete Job when you are done.')
+                        : 'Open a drawing to start. You’ll confirm the checklist first, then tap pins to fill forms.'
+                    : 'Open a drawing to review site plans.',
+                style: AppFonts.bodyMedium(color: AppColors.muted),
+              ),
+              const SizedBox(height: 20),
+              if (designLevels.isEmpty)
+                Text(
+                  'No drawings attached to this job.',
+                  style: AppFonts.bodyMedium(color: AppColors.muted),
+                )
+              else
+                for (var i = 0; i < designLevels.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 14),
+                  _DesignCard(
+                    job: job,
+                    level: designLevels[i],
+                    onTap: () => onOpenDrawing(designLevels[i]),
+                  ),
+                ],
+            ],
+          ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          pinCount > 0
-              ? 'Open a drawing to start. You’ll confirm the checklist first, then tap pins to fill forms.'
-              : 'Open a drawing to review site plans.',
-          style: AppFonts.bodyMedium(color: AppColors.muted),
-        ),
-        const SizedBox(height: 20),
-        if (designLevels.isEmpty)
-          Text(
-            'No drawings attached to this job.',
-            style: AppFonts.bodyMedium(color: AppColors.muted),
-          )
-        else
-          for (var i = 0; i < designLevels.length; i++) ...[
-            if (i > 0) const SizedBox(height: 14),
-            _DesignCard(
-              job: job,
-              level: designLevels[i],
-              onTap: () => onOpenDrawing(designLevels[i]),
+        if (canCompleteJob)
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: FilledButton(
+                  onPressed: onComplete,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.inkStrong,
+                    foregroundColor: AppColors.white,
+                  ),
+                  child: const Text('Complete Job'),
+                ),
+              ),
             ),
-          ],
+          ),
       ],
     );
   }
@@ -364,6 +407,9 @@ class _DesignCard extends StatelessWidget {
           : 'Drawing available',
       drawingFileUrl: resolveEmployeeDrawingFileUrl(level.drawingFileUrl),
       cacheKey: 'job-${job.id}-level-${level.id}',
+      pins: [
+        for (final plot in level.plots) ...plot.pins,
+      ],
       onTap: onTap,
     );
   }

@@ -887,7 +887,9 @@ final class QuoteProjectApiClient {
 
   /// `PATCH /jobs/{jobId}/` — update one or more job pin statuses.
   ///
-  /// [pinStatuses] uses each pin's API `id` (not `job_pin_id`).
+  /// Callers should pass:
+  /// - level/drawing jobs → each pin's level `id`
+  /// - jobs without levels → each pin's `job_pin_id`
   Future<JobRead> updateJobPinStatuses({
     required int jobId,
     required List<({int pinId, int statusId})> pinStatuses,
@@ -1357,23 +1359,22 @@ final class QuoteProjectApiClient {
     String? jobStatus,
     String? assignedWorker,
     String? jobSource,
+    String? jobCategory,
     String? search,
     int page = 1,
     int pageSize = 50,
   }) async {
     final response = await _dio.get<dynamic>(
       AppApiUrls.jobs,
-      queryParameters: <String, dynamic>{
-        if (jobStatus != null && jobStatus.trim().isNotEmpty)
-          'job_status': jobStatus.trim(),
-        if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
-          'assigned_worker': assignedWorker.trim(),
-        if (jobSource != null && jobSource.trim().isNotEmpty)
-          'job_source': jobSource.trim(),
-        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
-        'page': page < 1 ? 1 : page,
-        'page_size': pageSize,
-      },
+      queryParameters: _jobsListQuery(
+        jobStatus: jobStatus,
+        assignedWorker: assignedWorker,
+        jobSource: jobSource,
+        jobCategory: jobCategory,
+        search: search,
+        page: page,
+        pageSize: pageSize,
+      ),
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     return _jobReadsFromApiRoot(root);
@@ -1386,21 +1387,20 @@ final class QuoteProjectApiClient {
     String? jobStatus,
     String? assignedWorker,
     String? jobSource,
+    String? jobCategory,
     String? search,
   }) async {
     final response = await _dio.get<dynamic>(
       AppApiUrls.jobs,
-      queryParameters: <String, dynamic>{
-        if (jobStatus != null && jobStatus.trim().isNotEmpty)
-          'job_status': jobStatus.trim(),
-        if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
-          'assigned_worker': assignedWorker.trim(),
-        if (jobSource != null && jobSource.trim().isNotEmpty)
-          'job_source': jobSource.trim(),
-        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
-        'page': page < 1 ? 1 : page,
-        'page_size': pageSize,
-      },
+      queryParameters: _jobsListQuery(
+        jobStatus: jobStatus,
+        assignedWorker: assignedWorker,
+        jobSource: jobSource,
+        jobCategory: jobCategory,
+        search: search,
+        page: page,
+        pageSize: pageSize,
+      ),
     );
     final root = _coerceMap(_normalizeResponseData(response.data));
     final items = _jobReadsFromApiRoot(root);
@@ -1513,6 +1513,7 @@ final class QuoteProjectApiClient {
     String? jobStatus,
     String? assignedWorker,
     String? jobSource,
+    String? jobCategory,
     String? search,
     int pageSize = 50,
   }) async {
@@ -1521,18 +1522,15 @@ final class QuoteProjectApiClient {
     while (true) {
       final response = await _dio.get<dynamic>(
         AppApiUrls.jobs,
-        queryParameters: <String, dynamic>{
-          if (jobStatus != null && jobStatus.trim().isNotEmpty)
-            'job_status': jobStatus.trim(),
-          if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
-            'assigned_worker': assignedWorker.trim(),
-          if (jobSource != null && jobSource.trim().isNotEmpty)
-            'job_source': jobSource.trim(),
-          if (search != null && search.trim().isNotEmpty)
-            'search': search.trim(),
-          'page': page,
-          'page_size': pageSize,
-        },
+        queryParameters: _jobsListQuery(
+          jobStatus: jobStatus,
+          assignedWorker: assignedWorker,
+          jobSource: jobSource,
+          jobCategory: jobCategory,
+          search: search,
+          page: page,
+          pageSize: pageSize,
+        ),
       );
       if (kDebugMode && page == 1) {
         JobCompletionDebugLog.banner('Employee home — GET /jobs/');
@@ -2219,6 +2217,30 @@ final class QuoteProjectApiClient {
     return readApiRows(
       root,
     ).map(JobRead.tryFromMap).whereType<JobRead>().toList(growable: false);
+  }
+
+  static Map<String, dynamic> _jobsListQuery({
+    String? jobStatus,
+    String? assignedWorker,
+    String? jobSource,
+    String? jobCategory,
+    String? search,
+    required int page,
+    required int pageSize,
+  }) {
+    return <String, dynamic>{
+      if (jobStatus != null && jobStatus.trim().isNotEmpty)
+        'job_status': jobStatus.trim(),
+      if (assignedWorker != null && assignedWorker.trim().isNotEmpty)
+        'assigned_worker': assignedWorker.trim(),
+      if (jobSource != null && jobSource.trim().isNotEmpty)
+        'job_source': jobSource.trim(),
+      if (jobCategory != null && jobCategory.trim().isNotEmpty)
+        'job_category': jobCategory.trim(),
+      if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      'page': page < 1 ? 1 : page,
+      'page_size': pageSize,
+    };
   }
 
   static dynamic _normalizeResponseData(dynamic data) {

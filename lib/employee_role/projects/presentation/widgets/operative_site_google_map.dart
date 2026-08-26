@@ -19,11 +19,14 @@ import 'package:red5/employee_role/projects/data/project_map_job.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/operative_map_pin_action_card.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/operative_map_marker_art.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/operative_route_bottom_card.dart';
+import 'package:red5/employee_role/projects/presentation/widgets/operative_flutter_site_map.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/operative_painted_site_map.dart';
 import 'package:red5/employee_role/projects/presentation/widgets/project_map_overlays.dart';
 
 /// Ride-hailing style map for operative site views.
-/// Uses Google Maps when online; falls back to painted map offline.
+///
+/// Online: Carto OSM tiles via [flutter_map] (works without Maps SDK).
+/// Offline: painted fallback map.
 class OperativeSiteGoogleMap extends ConsumerStatefulWidget {
   const OperativeSiteGoogleMap({
     super.key,
@@ -71,12 +74,7 @@ class _OperativeSiteGoogleMapState
     extends ConsumerState<OperativeSiteGoogleMap> {
   static const _mapLoadTimeout = Duration(seconds: 30);
 
-  GoogleMapController? _googleMapController;
-  Set<Marker> _markers = {};
-  Set<Polyline> _polylines = {};
-  BitmapDescriptor? _pinIcon;
-  BitmapDescriptor? _pinSelectedIcon;
-  BitmapDescriptor? _userDotIcon;
+  final _mapController = OperativeFlutterSiteMapController();
   StreamSubscription<bool>? _connectivitySub;
   Timer? _mapLoadTimeoutTimer;
   var _isOnline = true;
@@ -153,10 +151,8 @@ class _OperativeSiteGoogleMapState
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Text(
-          'Map tiles blocked. In Google Cloud enable Maps SDK for Android '
-          '(and iOS), confirm billing is on, and allow package '
-          'com.example.red5 + your debug SHA-1 on the API key. Then fully '
-          'restart the app (not hot reload).',
+          'Map tiles failed to load. Check your internet connection, then '
+          'pull to refresh or reopen this screen.',
           style: AppFonts.bodySmall(color: AppColors.muted),
         ),
       ),
@@ -180,55 +176,32 @@ class _OperativeSiteGoogleMapState
         if (!online) {
           _mapReady = true;
           _cancelMapLoadTimeout();
-          _markers = {};
-          _polylines = {};
           _selectedPinScreen = null;
-          _googleMapController = null;
         } else {
           _mapReady = false;
           _loadTimedOut = false;
           _startMapLoadTimeout();
         }
       });
-      if (online) {
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          await _ensureMarkerIcons();
-          await _rebuildMarkersAndPolylines();
-        });
-      }
     });
     if (widget.routePinId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _loadRoute());
     }
-    unawaited(() async {
-      await _ensureMarkerIcons();
-      if (mounted) await _rebuildMarkersAndPolylines();
-    }());
   }
 
   @override
   void didUpdateWidget(covariant OperativeSiteGoogleMap oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    final selectionOrPinsChanged =
-        oldWidget.pins != widget.pins ||
-        oldWidget.selectedPinId != widget.selectedPinId ||
-        oldWidget.routePinId != widget.routePinId ||
-        oldWidget.pinStyle != widget.pinStyle;
-    if (selectionOrPinsChanged) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (oldWidget.pinStyle != widget.pinStyle) {
-          await _ensureMarkerIcons(force: true);
-        }
-        await _rebuildMarkersAndPolylines();
-        await _updateSelectedPinScreen();
-      });
-    }
-
     if (oldWidget.pins != widget.pins &&
         widget.pins.isNotEmpty &&
         widget.routePinId == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _fitCamera());
+    }
+    if (oldWidget.selectedPinId != widget.selectedPinId) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => unawaited(_mapController.refreshSelectedPinScreen()),
+      );
     }
     if (!oldWidget.isLoading && widget.isLoading) {
       _loadTimedOut = false;
@@ -246,28 +219,7 @@ class _OperativeSiteGoogleMapState
   void dispose() {
     _mapLoadTimeoutTimer?.cancel();
     unawaited(_connectivitySub?.cancel());
-    _googleMapController?.dispose();
     super.dispose();
-  }
-
-  Future<void> _ensureMarkerIcons({bool force = false}) async {
-    if (force) {
-      _pinIcon = null;
-      _pinSelectedIcon = null;
-      _userDotIcon = null;
-    }
-
-    // Same site pin art as the dedicated route screen.
-    if (widget.pinStyle == OperativeMapPinStyle.circle) {
-      _pinIcon ??= await OperativeMapMarkerArt.bitmapCircle(selected: false);
-      _pinSelectedIcon ??=
-          await OperativeMapMarkerArt.bitmapCircle(selected: true);
-    } else {
-      _pinIcon ??= await OperativeMapMarkerArt.bitmapTeardrop(selected: false);
-      _pinSelectedIcon ??=
-          await OperativeMapMarkerArt.bitmapTeardrop(selected: true);
-    }
-    _userDotIcon ??= await OperativeMapMarkerArt.bitmapUserDot();
   }
 
   LatLng get _initialCenter => _viewportForPins().center;
@@ -309,112 +261,14 @@ class _OperativeSiteGoogleMapState
     );
   }
 
-  Future<void> _rebuildMarkersAndPolylines() async {
-    await _ensureMarkerIcons();
-    if (!mounted) return;
-
-    final markers = <Marker>{
-      for (final pin in widget.pins)
-        Marker(
-          markerId: MarkerId(pin.id),
-          position: pin.position,
-          // Teardrop tip / circle bottom sits on the site coordinate.
-          anchor: const Offset(0.5, 1),
-          icon: pin.id == widget.selectedPinId
-              ? (_pinSelectedIcon ?? BitmapDescriptor.defaultMarker)
-              : (_pinIcon ?? BitmapDescriptor.defaultMarker),
-          infoWindow: InfoWindow(
-            title: pin.title,
-            snippet: pin.subtitle,
-          ),
-          onTap: () => widget.onPinTap?.call(pin),
-          consumeTapEvents: true,
-        ),
-    };
-
-    final plan = _routePlan;
-    final polylines = <Polyline>{};
-    if (plan != null && plan.polyline.length >= 2) {
-      final points = plan.polyline
-          .map((p) => LatLng(p.latitude, p.longitude))
-          .toList(growable: false);
-      polylines.add(
-        Polyline(
-          polylineId: const PolylineId('route-outline'),
-          points: points,
-          width: 7,
-          color: const Color(0xFF111827),
-        ),
-      );
-      polylines.add(
-        Polyline(
-          polylineId: const PolylineId('route'),
-          points: points,
-          width: 4,
-          color: const Color(0xFF00A553),
-        ),
-      );
-      markers.add(
-        Marker(
-          markerId: const MarkerId('route-origin'),
-          position: LatLng(plan.origin.latitude, plan.origin.longitude),
-          anchor: const Offset(0.5, 0.5),
-          icon: _userDotIcon ??
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-        ),
-      );
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _markers = markers;
-      _polylines = polylines;
-    });
-  }
-
   Future<void> _fitCamera() async {
-    final controller = _googleMapController;
-    if (controller == null || widget.pins.isEmpty) return;
-    final padding = widget.embedded ? 48.0 : 72.0;
-    try {
-      if (widget.pins.length == 1) {
-        await controller.animateCamera(
-          CameraUpdate.newLatLngZoom(widget.pins.first.position, 14.5),
-        );
-        return;
-      }
-      final bounds = _boundsFor(widget.pins.map((p) => p.position));
-      await controller.animateCamera(
-        CameraUpdate.newLatLngBounds(bounds, padding),
-      );
-    } catch (_) {
-      await controller.animateCamera(
-        CameraUpdate.newLatLngZoom(_initialCenter, _initialZoom),
-      );
-    }
+    if (widget.pins.isEmpty) return;
+    await _mapController.fitPins();
   }
 
   Future<void> _fitRouteCamera() async {
-    final controller = _googleMapController;
-    final plan = _routePlan;
-    if (controller == null || plan == null) return;
-    final points = <LatLng>[
-      LatLng(plan.origin.latitude, plan.origin.longitude),
-      for (final p in plan.polyline) LatLng(p.latitude, p.longitude),
-      LatLng(plan.destination.latitude, plan.destination.longitude),
-    ];
-    if (points.isEmpty) return;
-    final padding = widget.embedded ? 40.0 : 64.0;
-    try {
-      final bounds = _boundsFor(points);
-      await controller.animateCamera(
-        CameraUpdate.newLatLngBounds(bounds, padding),
-      );
-    } catch (_) {
-      await controller.animateCamera(
-        CameraUpdate.newLatLngZoom(points.first, 14),
-      );
-    }
+    if (_routePlan == null) return;
+    await _mapController.fitRoute();
   }
 
   Future<void> _recenter() async {
@@ -433,11 +287,7 @@ class _OperativeSiteGoogleMapState
     }
     target ??= widget.pins.isNotEmpty ? widget.pins.first : null;
     if (target == null) return;
-    final controller = _googleMapController;
-    if (controller == null) return;
-    await controller.animateCamera(
-      CameraUpdate.newLatLngZoom(target.position, 15),
-    );
+    await _mapController.recenter(target.position, zoom: 15);
   }
 
   OperativeMapPin? get _selectedPin {
@@ -473,7 +323,6 @@ class _OperativeSiteGoogleMapState
           _routePlan = null;
           _loadingRoute = false;
         });
-        await _rebuildMarkersAndPolylines();
       }
       return;
     }
@@ -485,7 +334,6 @@ class _OperativeSiteGoogleMapState
       _loadingRoute = true;
       _routePlan = null;
     });
-    await _rebuildMarkersAndPolylines();
 
     try {
       final service = ref.read(operativeMapRouteServiceProvider);
@@ -502,7 +350,6 @@ class _OperativeSiteGoogleMapState
         _routePlan = plan;
         _loadingRoute = false;
       });
-      await _rebuildMarkersAndPolylines();
       WidgetsBinding.instance.addPostFrameCallback((_) => _fitRouteCamera());
     } catch (_) {
       if (!mounted || widget.routePinId != routePinId) return;
@@ -516,39 +363,7 @@ class _OperativeSiteGoogleMapState
       _routePlan = null;
       _loadingRoute = false;
     });
-    unawaited(_rebuildMarkersAndPolylines());
     WidgetsBinding.instance.addPostFrameCallback((_) => _fitCamera());
-  }
-
-  Future<void> _updateSelectedPinScreen() async {
-    final controller = _googleMapController;
-    final pin = _selectedPin;
-    if (controller == null || !_mapReady || pin == null || !_useNetworkTiles) {
-      if (_selectedPinScreen != null && mounted) {
-        setState(() => _selectedPinScreen = null);
-      }
-      return;
-    }
-    try {
-      final screen = await controller.getScreenCoordinate(pin.position);
-      final yOffset = widget.pinStyle == OperativeMapPinStyle.circle
-          ? 22.0
-          : 56.0;
-      if (!mounted) return;
-      setState(() {
-        _selectedPinScreen = Offset(
-          screen.x.toDouble(),
-          screen.y.toDouble() - yOffset,
-        );
-        _cameraTick++;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _selectedPinScreen = null;
-        _cameraTick++;
-      });
-    }
   }
 
   Offset? _pinCardAnchor(Size mapSize) {
@@ -699,14 +514,17 @@ class _OperativeSiteGoogleMapState
 
     Widget result = mapBody;
 
-    // Do not ClipRRect the native GoogleMap — it can blank the Android surface.
+    // Website-style JS map clips fine inside rounded borders.
     if (widget.embedded) {
-      result = DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(widget.borderRadius),
-          border: Border.all(color: AppColors.borderLight),
+      result = ClipRRect(
+        borderRadius: BorderRadius.circular(widget.borderRadius),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+            border: Border.all(color: AppColors.borderLight),
+          ),
+          child: mapBody,
         ),
-        child: mapBody,
       );
       result = NotificationListener<ScrollNotification>(
         onNotification: (_) => true,
@@ -718,49 +536,43 @@ class _OperativeSiteGoogleMapState
   }
 
   Widget _buildNetworkMap() {
-    return GoogleMap(
+    final plan = _routePlan;
+    return OperativeFlutterSiteMap(
       key: ValueKey(
-        'gmap-${widget.isDark}-${widget.pins.length}-${widget.routePinId ?? "none"}',
+        'osm-map-${widget.isDark}-${widget.pins.length}-${widget.routePinId ?? "none"}',
       ),
-      initialCameraPosition: CameraPosition(
-        target: _initialCenter,
-        zoom: _initialZoom,
-      ),
-      // Default Google style — custom ride styles previously looked blank/beige.
-      mapType: MapType.normal,
-      markers: _markers,
-      polylines: _polylines,
-      myLocationEnabled: false,
-      myLocationButtonEnabled: false,
-      zoomControlsEnabled: false,
-      mapToolbarEnabled: false,
-      compassEnabled: false,
-      liteModeEnabled: false,
-      onMapCreated: (controller) async {
-        _googleMapController = controller;
-        await _ensureMarkerIcons();
-        await _rebuildMarkersAndPolylines();
+      controller: _mapController,
+      pins: widget.pins,
+      selectedPinId: widget.selectedPinId,
+      initialCenter: _initialCenter,
+      initialZoom: _initialZoom,
+      pinStyle: widget.pinStyle,
+      isDark: widget.isDark,
+      routePoints: plan == null
+          ? const []
+          : [
+              for (final p in plan.polyline)
+                LatLng(p.latitude, p.longitude),
+            ],
+      routeOrigin: plan == null
+          ? null
+          : LatLng(plan.origin.latitude, plan.origin.longitude),
+      onPinTap: widget.onPinTap,
+      onMapTap: _showRoute ? null : widget.onClearSelection,
+      onMapReady: () {
         if (!mounted) return;
-        setState(() => _mapReady = true);
+        setState(() {
+          _mapReady = true;
+          _loadTimedOut = false;
+        });
         _cancelMapLoadTimeout();
-        if (_showRoute && _routePlan != null) {
-          await _fitRouteCamera();
-        } else {
-          await _fitCamera();
-        }
-        await _updateSelectedPinScreen();
       },
-      onCameraMove: (_) {
-        if (_showPinActionCard && mounted) {
-          setState(() => _cameraTick++);
-        }
-      },
-      onCameraIdle: () {
-        unawaited(_updateSelectedPinScreen());
-      },
-      onTap: (_) {
-        if (_showRoute) return;
-        widget.onClearSelection?.call();
+      onSelectedPinScreen: (screen) {
+        if (!mounted) return;
+        setState(() {
+          _selectedPinScreen = screen;
+          _cameraTick++;
+        });
       },
     );
   }

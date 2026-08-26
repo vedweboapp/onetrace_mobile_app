@@ -86,7 +86,9 @@ class _OperativeJobFormSyncResultSheet extends StatelessWidget {
                         Text(
                           result.isEmpty
                               ? 'No forms to submit'
-                              : 'Submit-form response',
+                              : result.hasFailures
+                                  ? 'Form submission'
+                                  : 'Form submitted',
                           style: AppFonts.titleMedium(
                             color: AppColors.inkStrong,
                           ).copyWith(fontWeight: FontWeight.w900, fontSize: 20),
@@ -152,8 +154,11 @@ class _OperativeJobFormSyncResultSheet extends StatelessWidget {
                                   const SizedBox(height: 2),
                                   Text(
                                     entry.success
-                                        ? 'POST submit-form · submission #${entry.submissionId ?? '—'} · ${entry.status ?? 'submitted'}'
-                                        : entry.error ?? 'Submit failed',
+                                        ? 'Submitted successfully'
+                                        : (entry.error?.trim().isNotEmpty ==
+                                                true
+                                            ? entry.error!.trim()
+                                            : 'Submit failed'),
                                     style: AppFonts.bodySmall(
                                       color: AppColors.muted,
                                     ),

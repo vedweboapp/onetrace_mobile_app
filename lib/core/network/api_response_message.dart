@@ -114,20 +114,19 @@ abstract final class ApiResponseMessage {
       final payloadMap = Map<String, dynamic>.from(
         payload.map((k, v) => MapEntry(k.toString(), v)),
       );
-      final direct = _stringFromNested(payloadMap['message']) ??
-          _stringFromNested(payloadMap['error']) ??
-          _stringFromNested(payloadMap['title']);
-      if (direct != null) return direct;
 
-      final detail = _detailToString(payloadMap['detail']);
-      if (detail != null) return detail;
-
+      // Prefer structured field / nested errors over a generic "Validation failed".
       final nested = payloadMap['errors'];
       if (nested is Map) {
         final nestedMap = Map<String, dynamic>.from(
           nested.map((k, v) => MapEntry(k.toString(), v)),
         );
-        final fromNestedMap = _firstFieldMessage(nestedMap);
+        final nfe = nestedMap['non_field_errors'];
+        if (nfe is List) {
+          final s = _listToMessage(nfe);
+          if (s != null) return s;
+        }
+        final fromNestedMap = _formatFieldErrors(nestedMap);
         if (fromNestedMap != null) return fromNestedMap;
       }
       if (nested is List) {
@@ -141,8 +140,16 @@ abstract final class ApiResponseMessage {
         if (s != null) return s;
       }
 
-      final fromFields = _firstFieldMessage(payloadMap);
+      final detail = _detailToString(payloadMap['detail']);
+      if (detail != null) return detail;
+
+      final fromFields = _formatFieldErrors(payloadMap);
       if (fromFields != null) return fromFields;
+
+      final direct = _stringFromNested(payloadMap['message']) ??
+          _stringFromNested(payloadMap['error']) ??
+          _stringFromNested(payloadMap['title']);
+      if (direct != null) return direct;
 
       return null;
     }
@@ -153,7 +160,7 @@ abstract final class ApiResponseMessage {
     return s.isEmpty ? null : s;
   }
 
-  static String? _firstFieldMessage(Map<String, dynamic> map) {
+  static String? _formatFieldErrors(Map<String, dynamic> map) {
     const skipKeys = {
       'detail',
       'message',
@@ -161,22 +168,70 @@ abstract final class ApiResponseMessage {
       'title',
       'non_field_errors',
       'errors',
+      'success',
+      'error_code',
     };
+    final parts = <String>[];
     for (final entry in map.entries) {
       if (skipKeys.contains(entry.key)) continue;
-      final v = entry.value;
-      final msg =
-          _stringFromNested(v) ?? (v is List ? _listToMessage(v) : null);
-      if (msg != null && msg.trim().isNotEmpty) {
-        final clean = msg.trim();
-        final lowerKey = entry.key.replaceAll('_', ' ');
-        if (clean.toLowerCase().contains(lowerKey.toLowerCase())) {
-          return clean;
-        }
-        return '${entry.key}: $clean';
-      }
+      final formatted = _formatErrorValue(entry.key, entry.value);
+      if (formatted != null && formatted.isNotEmpty) parts.add(formatted);
     }
-    return null;
+    if (parts.isEmpty) return null;
+    return parts.length == 1 ? parts.first : parts.join('\n');
+  }
+
+  static String? _formatErrorValue(String key, dynamic value) {
+    if (value == null) return null;
+    if (value is String) {
+      final t = value.trim();
+      if (t.isEmpty) return null;
+      return _labelError(key, t);
+    }
+    if (value is List) {
+      if (value.isEmpty) return null;
+      // Nested list of field maps: [{ "email": ["..."] }, ...]
+      if (value.first is Map) {
+        final nested = <String>[];
+        for (var i = 0; i < value.length; i++) {
+          final item = value[i];
+          if (item is! Map) continue;
+          final itemMap = Map<String, dynamic>.from(
+            item.map((k, v) => MapEntry(k.toString(), v)),
+          );
+          final inner = _formatFieldErrors(itemMap);
+          if (inner != null) nested.add(inner);
+        }
+        if (nested.isEmpty) return null;
+        return nested.join('\n');
+      }
+      final listMsg = _listToMessage(value);
+      if (listMsg == null) return null;
+      return _labelError(key, listMsg);
+    }
+    if (value is Map) {
+      final nestedMap = Map<String, dynamic>.from(
+        value.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final nested = _formatFieldErrors(nestedMap);
+      if (nested == null) return null;
+      // Avoid double-prefixing when nested already includes field names.
+      return nested;
+    }
+    final t = value.toString().trim();
+    return t.isEmpty ? null : _labelError(key, t);
+  }
+
+  static String _labelError(String key, String message) {
+    final clean = message.trim();
+    final lowerKey = key.replaceAll('_', ' ');
+    if (clean.toLowerCase().contains(lowerKey.toLowerCase())) return clean;
+    // Prefer readable API sentences over "job_status: …" style prefixes.
+    if (clean.contains(' ') &&
+        (clean.endsWith('.') || clean.length > 28 || key.contains('_'))) {
+      return clean;
+    }
+    return '$key: $clean';
   }
 
   static String? _stringFromNested(dynamic value) {

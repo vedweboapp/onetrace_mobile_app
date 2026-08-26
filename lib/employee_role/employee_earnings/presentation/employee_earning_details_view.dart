@@ -88,7 +88,7 @@ extension EmployeeEarningDetailsJobStatusX on JobStatus {
       case JobStatus.paid:
         return 'PAID';
       case JobStatus.inApproval:
-        return 'IN APPROVAL';
+        return 'PENDING';
       case JobStatus.approved:
         return 'APPROVED';
     }
@@ -176,8 +176,10 @@ class EarningDetailsScreen extends ConsumerWidget {
       ),
       body: detailAsync.when(
         data: (detail) => RefreshIndicator(
-          onRefresh: () async =>
-              ref.refresh(earningDetailProvider(jobId).future),
+          onRefresh: () async {
+            ref.invalidate(employeeEarningsProvider);
+            await ref.read(employeeEarningsProvider.future);
+          },
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
             children: [

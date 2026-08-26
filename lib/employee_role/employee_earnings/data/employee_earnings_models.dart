@@ -193,36 +193,35 @@ final class EmployeeEarningJob {
   String get jobName => jobSerialNumber;
 
   JobStatus get status {
-    final normalized = earningStatus.trim().toLowerCase();
-    switch (normalized) {
+    switch (earningStatus.trim().toLowerCase()) {
       case 'paid':
         return JobStatus.paid;
       case 'approved':
         return JobStatus.approved;
+      case 'unpaid':
       default:
         return JobStatus.inApproval;
     }
   }
 
   factory EmployeeEarningJob.fromMap(Map<String, dynamic> map) {
-    final projectRaw = map['project'];
-    final clientRaw = map['client'];
-    final siteRaw = map['site'];
-    final paymentDetailsRaw = map['payment_details'];
-    final paymentSummaryRaw = map['payment_summary'];
+    final projectMap = _asMap(map['project']);
+    final clientMap = _asMap(map['client']);
+    final siteMap = _asMap(map['site']);
+    final paymentDetailsMap = _asMap(map['payment_details']);
+    final paymentSummaryMap = _asMap(map['payment_summary']);
 
     return EmployeeEarningJob(
       id: int.tryParse(map['id']?.toString() ?? '') ?? 0,
       jobSerialNumber: map['job_serial_number']?.toString() ?? '',
-      project: projectRaw is Map<String, dynamic>
-          ? EmployeeEarningProject.fromMap(projectRaw)
-          : null,
-      client: clientRaw is Map<String, dynamic>
-          ? EmployeeEarningClient.fromMap(clientRaw)
-          : const EmployeeEarningClient(id: 0, name: 'Unknown client'),
-      site: siteRaw is Map<String, dynamic>
-          ? EmployeeEarningSite.fromMap(siteRaw)
-          : const EmployeeEarningSite(
+      project: projectMap.isEmpty
+          ? null
+          : EmployeeEarningProject.fromMap(projectMap),
+      client: clientMap.isEmpty
+          ? const EmployeeEarningClient(id: 0, name: 'Unknown client')
+          : EmployeeEarningClient.fromMap(clientMap),
+      site: siteMap.isEmpty
+          ? const EmployeeEarningSite(
               id: 0,
               siteName: 'Unknown site',
               addressLine1: '',
@@ -231,65 +230,41 @@ final class EmployeeEarningJob {
               state: '',
               country: '',
               zipCode: '',
-            ),
+            )
+          : EmployeeEarningSite.fromMap(siteMap),
       pinIds: _parseIntList(map['pin_ids']),
       hoursWorked: _parseDouble(map['hours_worked']),
       hourlyRate: _parseOptionalDouble(map['hourly_rate']),
       fixedRate: _parseOptionalDouble(map['fixed_rate']),
       jobAmount: _parseDouble(map['job_amount']),
       earningStatus: map['earning_status']?.toString() ?? '',
-      paymentDetails: paymentDetailsRaw is Map<String, dynamic>
-          ? EmployeePaymentDetails.fromMap(paymentDetailsRaw)
-          : const EmployeePaymentDetails(
+      paymentDetails: paymentDetailsMap.isEmpty
+          ? const EmployeePaymentDetails(
               paymentDate: null,
               amountPaid: 0,
               paymentMethod: '',
               transactionId: '',
-            ),
-      paymentSummary: paymentSummaryRaw is Map<String, dynamic>
-          ? EmployeePaymentSummary.fromMap(paymentSummaryRaw)
-          : const EmployeePaymentSummary(
+            )
+          : EmployeePaymentDetails.fromMap(paymentDetailsMap),
+      paymentSummary: paymentSummaryMap.isEmpty
+          ? const EmployeePaymentSummary(
               approvedOn: null,
               paymentStatus: '',
               paymentDate: null,
               amount: 0,
-            ),
+            )
+          : EmployeePaymentSummary.fromMap(paymentSummaryMap),
     );
   }
+}
 
-  static double _parseDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+Map<String, dynamic> _asMap(dynamic raw) {
+  if (raw is Map) {
+    return Map<String, dynamic>.from(
+      raw.map((k, v) => MapEntry(k.toString(), v)),
+    );
   }
-
-  static double? _parseOptionalDouble(dynamic value) {
-    if (value == null) return null;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString());
-  }
-
-  static DateTime? _parseDate(dynamic value) {
-    if (value == null) return null;
-    if (value is String && value.trim().isNotEmpty) {
-      try {
-        return DateTime.parse(value);
-      } catch (_) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  static List<int> _parseIntList(dynamic value) {
-    if (value is List) {
-      return value
-          .where((item) => item != null)
-          .map((item) => int.tryParse(item?.toString() ?? '') ?? 0)
-          .where((item) => item > 0)
-          .toList(growable: false);
-    }
-    return const <int>[];
-  }
+  return const <String, dynamic>{};
 }
 
 final class EmployeeEarningsSummary {
@@ -337,7 +312,11 @@ final class EmployeeEarningsListResponse {
     final jobs = jobsRaw is List
         ? jobsRaw
               .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
+              .map(
+                (item) => Map<String, dynamic>.from(
+                  item.map((k, v) => MapEntry(k.toString(), v)),
+                ),
+              )
               .map(EmployeeEarningJob.fromMap)
               .toList(growable: false)
         : const <EmployeeEarningJob>[];

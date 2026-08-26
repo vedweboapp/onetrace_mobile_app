@@ -9,6 +9,8 @@ import 'package:red5/employee_role/employee_home/employee_home_page.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_session_controller.dart';
 import 'package:red5/employee_role/jobs/application/employee_jobs_controller.dart';
+import 'package:red5/employee_role/jobs/application/operative_pin_workflow.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_repository.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_submission_repository.dart';
@@ -32,6 +34,25 @@ class EmployeeJobConfirmationPage extends ConsumerStatefulWidget {
 class _EmployeeJobConfirmationPageState
     extends ConsumerState<EmployeeJobConfirmationPage> {
   bool _isCompleting = false;
+
+  String _friendlyCompleteError(Object error) {
+    final raw = ApiResponseMessage.fromAnyError(
+      error,
+      genericFallback: 'Could not complete job. Please try again.',
+    );
+    final lower = raw.toLowerCase();
+    if (lower.contains('not linked with this job') ||
+        lower.contains('not linked')) {
+      return 'Could not update pin status for this job. '
+          'Open the pin again, then try Complete Job.';
+    }
+    if (lower.contains('all assigned pins must be completed') ||
+        (lower.contains('pin') && lower.contains('complet'))) {
+      return 'Some pins are still not marked Complete on the server. '
+          'Open each pin, submit its form if one is required, then try Complete Job again.';
+    }
+    return raw;
+  }
 
   Future<void> _completeJob() async {
     final activeJobId = widget.jobId;
@@ -62,6 +83,14 @@ class _EmployeeJobConfirmationPageState
           ...localPinKeys,
         };
         if (job != null) {
+          final operativeIncomplete = countIncompleteOperativePins(job, detailState);
+          if (operativeIncomplete > 0) {
+            throw StateError(
+              operativeIncomplete == 1
+                  ? 'Finish the remaining pin before completing this job.'
+                  : 'Finish all $operativeIncomplete remaining pins before completing this job.',
+            );
+          }
           await ref
               .read(employeeJobRepositoryProvider)
               .markReadyPinsCompleteStatus(
@@ -82,8 +111,8 @@ class _EmployeeJobConfirmationPageState
         if (incompletePins > 0) {
           throw StateError(
             incompletePins == 1
-                ? 'Complete the remaining pin status before finishing this job.'
-                : 'Complete all $incompletePins pin statuses before finishing this job.',
+                ? 'Finish the remaining pin before completing this job. Open the pin, submit its form if required, then try again.'
+                : 'Finish all $incompletePins remaining pins before completing this job. Open each pin, submit its form if required, then try again.',
           );
         }
         JobCompletionDebugLog.info(
@@ -93,11 +122,24 @@ class _EmployeeJobConfirmationPageState
 
       JobCompletionDebugLog.step('Step 2/2 — Mark job completed (PATCH /jobs/$activeJobId/)');
       final detailState = ref.read(employeeJobDetailControllerProvider);
+      final localPinKeys = detailState.job == null
+          ? const <String>{}
+          : pinFormKeysFromLocalSubmissions(
+              levels: detailState.job!.levels,
+              rows: await ref
+                  .read(jobFormSubmissionRepositoryProvider)
+                  .listLocalSubmissionsForJob(activeJobId),
+            );
+      final mergedKeys = <String>{
+        ...detailState.completedPinFormKeys,
+        ...localPinKeys,
+      };
       final completedJob = await ref
           .read(employeeJobRepositoryProvider)
           .markJobCompleted(
             activeJobId,
-            completedPinFormKeys: detailState.completedPinFormKeys,
+            completedPinFormKeys: mergedKeys,
+            scannedPinQrKeys: detailState.scannedPinQrKeys,
           );
       JobCompletionDebugLog.info(
         'completed_at=${completedJob.completedAt?.toIso8601String() ?? 'n/a'} | status=${completedJob.displayStatus}',
@@ -139,20 +181,48 @@ class _EmployeeJobConfirmationPageState
       );
       setState(() => _isCompleting = false);
       context.showTopSnackBar(
-        SnackBar(
-          content: Text(
-            ApiResponseMessage.fromAnyError(
-              e,
-              genericFallback: 'Could not complete job. Please try again.',
-            ),
-          ),
-        ),
+        SnackBar(content: Text(_friendlyCompleteError(e))),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final detailState = ref.watch(employeeJobDetailControllerProvider);
+    final job = detailState.job;
+    final pinEntries =
+        job == null ? const [] : collectJobPinEntries(job.levels);
+    final incompleteServer = job == null
+        ? 0
+        : countIncompleteAssignedPins(job.levels);
+    final incompleteWork = job == null
+        ? 0
+        : countIncompleteOperativePins(job, detailState);
+    final allFormless = pinEntries.isNotEmpty &&
+        pinEntries.every((entry) => !entry.pin.hasForm);
+    final readyToComplete = incompleteWork == 0 && incompleteServer == 0;
+    final almostReady = incompleteWork == 0 && incompleteServer > 0;
+
+    final headline = allFormless && pinEntries.length == 1
+        ? 'Ready to complete'
+        : incompleteWork > 0
+            ? 'Almost there'
+            : 'Form submitted\nsuccessfully';
+    final subtitle = incompleteWork > 0
+        ? 'Finish the remaining pin work, then come back to complete the job.'
+        : almostReady
+            ? 'Your forms look done. We’ll mark pin status Complete, then finish the job.'
+            : allFormless
+                ? 'No form is required for this pin. You can complete the job now.'
+                : 'Your job details and forms have been verified. You can now complete the job.';
+    final readyLabel = readyToComplete
+        ? 'Ready to complete'
+        : almostReady
+            ? 'Updating pin status…'
+            : incompleteWork == 1
+                ? '1 pin still needs work'
+                : '$incompleteWork pins still need work';
+
     return Scaffold(
       backgroundColor: AppColors.white,
       appBar: AppBar(
@@ -180,23 +250,26 @@ class _EmployeeJobConfirmationPageState
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(22, 22, 22, 28),
-              children: const [
-                SizedBox(height: 4),
-                _SuccessMark(),
-                SizedBox(height: 22),
-                _StatusPill(),
-                SizedBox(height: 18),
-                _SuccessCopy(),
-                SizedBox(height: 28),
-                _ReadyPill(),
-                SizedBox(height: 42),
-                _ConfirmationActivityCard(
+              children: [
+                const SizedBox(height: 4),
+                const _SuccessMark(),
+                const SizedBox(height: 22),
+                const _StatusPill(),
+                const SizedBox(height: 18),
+                _SuccessCopy(headline: headline, subtitle: subtitle),
+                const SizedBox(height: 28),
+                _ReadyPill(
+                  label: readyLabel,
+                  ready: readyToComplete || almostReady,
+                ),
+                const SizedBox(height: 42),
+                const _ConfirmationActivityCard(
                   icon: Icons.access_time_filled_rounded,
                   title: 'Timesheet updated',
                   subtitle: 'Hours logged automatically',
                 ),
-                SizedBox(height: 14),
-                _ConfirmationActivityCard(
+                const SizedBox(height: 14),
+                const _ConfirmationActivityCard(
                   icon: Icons.wallet_rounded,
                   title: 'Earning added',
                   subtitle: 'Updated in your Job Sheet',
@@ -206,7 +279,9 @@ class _EmployeeJobConfirmationPageState
           ),
           _CompleteJobBar(
             isLoading: _isCompleting,
-            onPressed: _isCompleting ? null : _completeJob,
+            onPressed: _isCompleting || incompleteWork > 0
+                ? null
+                : _completeJob,
           ),
         ],
       ),
@@ -270,14 +345,17 @@ class _StatusPill extends StatelessWidget {
 }
 
 class _SuccessCopy extends StatelessWidget {
-  const _SuccessCopy();
+  const _SuccessCopy({required this.headline, required this.subtitle});
+
+  final String headline;
+  final String subtitle;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         Text(
-          'Form submitted\nsuccessfully',
+          headline,
           textAlign: TextAlign.center,
           style: AppFonts.titleLarge(
             color: AppColors.inkStrong,
@@ -285,7 +363,7 @@ class _SuccessCopy extends StatelessWidget {
         ),
         const SizedBox(height: 17),
         Text(
-          'Your job details and forms have been\nverified. You can now complete the\njob.',
+          subtitle,
           textAlign: TextAlign.center,
           style: AppFonts.bodyMedium(
             color: AppColors.muted,
@@ -297,35 +375,40 @@ class _SuccessCopy extends StatelessWidget {
 }
 
 class _ReadyPill extends StatelessWidget {
-  const _ReadyPill();
+  const _ReadyPill({required this.label, required this.ready});
+
+  final String label;
+  final bool ready;
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: AppColors.surfaceHigh,
-          borderRadius: BorderRadius.circular(9),
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppColors.borderLight),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 7,
-              height: 7,
-              decoration: const BoxDecoration(
-                color: Color(0xFF4F46E5),
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: ready
+                    ? const Color(0xFF7C3AED)
+                    : const Color(0xFFF59E0B),
                 shape: BoxShape.circle,
               ),
             ),
             const SizedBox(width: 8),
             Text(
-              'Ready to complete',
-              style: AppFonts.labelMedium(
-                color: AppColors.inkStrong,
-              ).copyWith(fontWeight: FontWeight.w900),
+              label,
+              style: AppFonts.labelMedium(color: AppColors.inkStrong).copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ],
         ),
@@ -348,7 +431,7 @@ class _ConfirmationActivityCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(14),
@@ -356,15 +439,7 @@ class _ConfirmationActivityCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: AppColors.surfaceHigh,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(icon, color: AppColors.muted, size: 18),
-          ),
+          Icon(icon, color: AppColors.muted, size: 22),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -372,24 +447,20 @@ class _ConfirmationActivityCard extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: AppFonts.titleSmall(
-                    color: AppColors.inkStrong,
-                  ).copyWith(fontWeight: FontWeight.w900),
+                  style: AppFonts.titleSmall(color: AppColors.inkStrong)
+                      .copyWith(fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: AppFonts.bodySmall(
-                    color: AppColors.muted,
-                  ).copyWith(fontWeight: FontWeight.w500),
+                  style: AppFonts.bodySmall(color: AppColors.muted),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 10),
           Container(
-            width: 22,
-            height: 22,
+            width: 28,
+            height: 28,
             decoration: const BoxDecoration(
               color: AppColors.inkStrong,
               shape: BoxShape.circle,
@@ -397,7 +468,7 @@ class _ConfirmationActivityCard extends StatelessWidget {
             child: const Icon(
               Icons.check_rounded,
               color: AppColors.white,
-              size: 14,
+              size: 16,
             ),
           ),
         ],
@@ -407,52 +478,48 @@ class _ConfirmationActivityCard extends StatelessWidget {
 }
 
 class _CompleteJobBar extends StatelessWidget {
-  const _CompleteJobBar({required this.onPressed, this.isLoading = false});
+  const _CompleteJobBar({required this.isLoading, required this.onPressed});
 
-  final VoidCallback? onPressed;
   final bool isLoading;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottom),
       decoration: const BoxDecoration(
         color: AppColors.white,
         border: Border(top: BorderSide(color: AppColors.borderLight)),
       ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 16, 22, 16),
-          child: SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: FilledButton(
-              onPressed: onPressed,
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.inkStrong,
-                foregroundColor: AppColors.white,
-                disabledBackgroundColor: const Color(0xFFB8B8BE),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11),
-                ),
-              ),
-              child: isLoading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.white,
-                      ),
-                    )
-                  : Text(
-                      'Complete Job',
-                      style: AppFonts.titleSmall(
-                        color: AppColors.white,
-                      ).copyWith(fontWeight: FontWeight.w900),
-                    ),
+      child: SizedBox(
+        width: double.infinity,
+        height: 52,
+        child: FilledButton(
+          onPressed: onPressed,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.inkStrong,
+            foregroundColor: AppColors.white,
+            disabledBackgroundColor: AppColors.inkStrong.withValues(alpha: 0.35),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
+          child: isLoading
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.white,
+                  ),
+                )
+              : Text(
+                  'Complete Job',
+                  style: AppFonts.titleSmall(color: AppColors.white).copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
         ),
       ),
     );

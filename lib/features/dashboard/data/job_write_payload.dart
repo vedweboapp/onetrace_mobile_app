@@ -26,6 +26,8 @@ abstract final class JobWritePayload {
     List<int>? formIds,
     int? qrCode,
     String? jobSource,
+    String? jobCategory,
+    JobScheduleDetail? schedule,
     Map<String, dynamic>? jobMeta,
     Map<String, dynamic>? jobMetaOverride,
     Map<String, dynamic>? existingJobRaw,
@@ -38,6 +40,11 @@ abstract final class JobWritePayload {
           jobRaw: existingJobRaw,
           projectId: project,
         );
+    final resolvedSchedule = schedule ??
+        JobScheduleDetail.tryFromMap(existingJobRaw?['job_schedule_detail']);
+    final scheduleWrite = (resolvedSchedule ??
+            JobScheduleDetail(startAt: startDate, endAt: endDate))
+        .toWriteMap(startAtOverride: startDate, endAtOverride: endDate);
     return <String, dynamic>{
       'title': title.trim(),
       if (description != null && description.trim().isNotEmpty)
@@ -61,6 +68,9 @@ abstract final class JobWritePayload {
       if (qrCode != null) 'qr_code': qrCode,
       if (jobSource != null && jobSource.trim().isNotEmpty)
         'job_source': jobSource.trim(),
+      if (jobCategory != null && jobCategory.trim().isNotEmpty)
+        'job_category': jobCategory.trim(),
+      if (scheduleWrite != null) 'job_schedule_detail': scheduleWrite,
       'job_meta': meta,
     };
   }
@@ -92,11 +102,13 @@ abstract final class JobWritePayload {
       site: job.site,
       formIds: linkedFormIds,
       qrCode: qrCodeOverride ?? job.qrCode,
+      jobSource: job.jobSource,
+      jobCategory: job.jobCategory,
+      schedule: job.scheduleDetail,
       jobMeta: job.jobMeta,
       jobMetaOverride: jobMetaOverride,
       existingJobRaw: job.raw,
     );
-
     if (checklists != null) {
       payload['checklists'] = checklists;
     } else if (includeExistingChecklists &&
@@ -138,6 +150,23 @@ abstract final class JobWritePayload {
     required int jobStatusId,
   }) {
     return <String, dynamic>{'title': title.trim(), 'job_status': jobStatusId};
+  }
+
+  /// Operative job completion — only status + timestamp.
+  ///
+  /// Avoids re-sending `forms` / `job_meta` / FKs from a full job rebuild, which
+  /// can fail validation (e.g. forms as objects when the API expects ints) on
+  /// service jobs with no levels/pins.
+  static Map<String, dynamic> buildOperativeJobComplete({
+    required String title,
+    required DateTime completedAt,
+    int? completedJobStatusId,
+  }) {
+    return <String, dynamic>{
+      'title': title.trim(),
+      'completed_at': completedAt.toUtc().toIso8601String(),
+      if (completedJobStatusId != null) 'job_status': completedJobStatusId,
+    };
   }
 
   /// Picks `project_form_id` vs `dynamic_form_id` from existing job forms, or

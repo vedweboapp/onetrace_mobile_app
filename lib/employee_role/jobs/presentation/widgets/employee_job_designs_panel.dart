@@ -224,6 +224,9 @@ class _DesignLevelSection extends StatelessWidget {
             updatedLabel: _updatedLabel,
             drawingFileUrl: resolveEmployeeDrawingFileUrl(level.drawingFileUrl),
             cacheKey: 'job-$jobId-level-${level.id}',
+            pins: [
+              for (final plot in level.plots) ...plot.pins,
+            ],
             onTap: onOpenDrawing,
           )
         else
@@ -805,7 +808,6 @@ class _CollapsibleCard extends StatelessWidget {
     required this.onExpandedChanged,
     required this.child,
     this.nested = false,
-    this.headerAction,
     this.accentColor,
   });
 
@@ -815,7 +817,6 @@ class _CollapsibleCard extends StatelessWidget {
   final ValueChanged<bool> onExpandedChanged;
   final Widget child;
   final bool nested;
-  final Widget? headerAction;
   final Color? accentColor;
 
   @override
@@ -878,10 +879,6 @@ class _CollapsibleCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (headerAction != null) ...[
-                      headerAction!,
-                      const SizedBox(width: 4),
-                    ],
                     Text(
                       trailing,
                       style: AppFonts.bodySmall(color: AppColors.muted)

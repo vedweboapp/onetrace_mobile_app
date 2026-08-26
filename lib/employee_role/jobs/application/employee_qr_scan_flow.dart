@@ -32,11 +32,13 @@ Future<String?> runEmployeeQrScanFlow(
         content: Text(
           result.queuedOffline
               ? 'QR scan saved offline. It will sync when you are back online.'
-              : result.registeredWithJob
-                  ? pinScan
-                      ? 'QR ${result.qrCode} assigned to pin.'
-                      : 'QR ${result.qrCode} assigned to job.'
-                  : 'QR details loaded for ${result.details.title}.',
+              : result.message?.trim().isNotEmpty == true
+                  ? result.message!
+                  : result.registeredWithJob
+                      ? pinScan
+                          ? 'QR assigned to pin.'
+                          : 'QR assigned to job.'
+                      : 'QR details loaded for ${result.details.title}.',
         ),
         behavior: SnackBarBehavior.floating,
       ),

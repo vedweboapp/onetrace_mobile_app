@@ -81,6 +81,7 @@ final class EmployeeJobDrawingPin {
     this.projectFormSubmissionId,
     this.projectFormSubmissionStatus,
     this.qrCode,
+    this.qrCodeId,
     this.qrCodeFieldPresent = false,
     this.levelId,
     this.plotId,
@@ -109,6 +110,9 @@ final class EmployeeJobDrawingPin {
   final String? projectFormSubmissionStatus;
   final String? qrCode;
 
+  /// Display id from API `qr_code_id` (preferred on pin details).
+  final String? qrCodeId;
+
   /// True when the API payload includes a `qr_code` key (even if null/empty).
   final bool qrCodeFieldPresent;
   final int? levelId;
@@ -124,6 +128,15 @@ final class EmployeeJobDrawingPin {
     if (value.isEmpty) return false;
     if (value.toLowerCase() == 'null') return false;
     return true;
+  }
+
+  /// Prefer `qr_code_id` for display on pin details.
+  String? get displayQrCodeId {
+    final idValue = qrCodeId?.trim() ?? '';
+    if (idValue.isNotEmpty && idValue.toLowerCase() != 'null') {
+      return idValue;
+    }
+    return null;
   }
 
   bool get isFormSubmitted {
@@ -432,13 +445,35 @@ EmployeeJobDrawingPin? _parsePin(
     itemDetailAttachments: itemDetailMap?['attachments'],
   );
 
-  final hasQrField = map.containsKey('qr_code');
+  final hasQrField = map.containsKey('qr_code') ||
+      map.containsKey('qr_code_id');
   final rawQr = map['qr_code'];
   String? qrCode;
   if (rawQr != null) {
     final text = rawQr.toString().trim();
     if (text.isNotEmpty && text.toLowerCase() != 'null') {
       qrCode = text;
+    }
+  }
+
+  String? qrCodeId;
+  final rawQrId = map['qr_code_id'];
+  if (rawQrId != null) {
+    final text = rawQrId.toString().trim();
+    if (text.isNotEmpty && text.toLowerCase() != 'null') {
+      qrCodeId = text;
+    }
+  }
+  if (qrCodeId == null && rawQr is Map) {
+    final nested = Map<String, dynamic>.from(
+      rawQr.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    final nestedId = nested['qr_code_id'] ?? nested['code'] ?? nested['id'];
+    if (nestedId != null) {
+      final text = nestedId.toString().trim();
+      if (text.isNotEmpty && text.toLowerCase() != 'null') {
+        qrCodeId = text;
+      }
     }
   }
 
@@ -461,6 +496,7 @@ EmployeeJobDrawingPin? _parsePin(
     projectFormSubmissionId: projectFormSubmissionId,
     projectFormSubmissionStatus: projectFormSubmissionStatus,
     qrCode: qrCode,
+    qrCodeId: qrCodeId,
     qrCodeFieldPresent: hasQrField,
     levelId: levelId,
     plotId: plotId,

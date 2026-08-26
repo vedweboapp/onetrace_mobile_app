@@ -68,12 +68,11 @@ final class EmployeeJobDetail {
   /// True when the job payload includes a top-level `qr_code` key.
   final bool hasJobQrField;
 
-  bool get hasDrawingHierarchy =>
-      levels.any(
-        (level) =>
-            level.pinCount > 0 ||
-            (level.drawingFileUrl?.trim().isNotEmpty ?? false),
-      );
+  bool get hasDrawingHierarchy => levels.any(
+    (level) =>
+        level.pinCount > 0 ||
+        (level.drawingFileUrl?.trim().isNotEmpty ?? false),
+  );
 
   /// Project jobs use drawings/pins; service jobs use linked forms only.
   bool get usesDesignsWorkflow {
@@ -82,12 +81,11 @@ final class EmployeeJobDetail {
     return collectJobPinEntries(levels).isNotEmpty;
   }
 
-  String get siteLocationTitle =>
-      siteDetail?.name.trim().isNotEmpty == true
-          ? siteDetail!.name.trim()
-          : block.trim().isNotEmpty
-              ? block.trim()
-              : title;
+  String get siteLocationTitle => siteDetail?.name.trim().isNotEmpty == true
+      ? siteDetail!.name.trim()
+      : block.trim().isNotEmpty
+      ? block.trim()
+      : title;
 
   String get siteLocationAddress {
     final siteAddress = siteDetail?.address.trim() ?? '';
@@ -101,7 +99,10 @@ final class EmployeeJobDetail {
 
   List<int> get linkedFormIds {
     if (pinFormTasks.isNotEmpty) {
-      return pinFormTasks.map((task) => task.formId).toSet().toList(growable: false);
+      return pinFormTasks
+          .map((task) => task.formId)
+          .toSet()
+          .toList(growable: false);
     }
     if (jobForms.isNotEmpty) {
       return jobForms.map((form) => form.formId).toList(growable: false);

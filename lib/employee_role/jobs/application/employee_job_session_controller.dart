@@ -19,13 +19,19 @@ final employeeJobSessionProvider =
 final class EmployeeJobSessionState {
   const EmployeeJobSessionState({
     this.activeJobStarts = const {},
+    this.pausedElapsedMs = const {},
     this.tick = 0,
   });
 
   final Map<int, DateTime> activeJobStarts;
+  final Map<int, int> pausedElapsedMs;
   final int tick;
 
+  bool isTimerRunning(int jobId) => activeJobStarts.containsKey(jobId);
+
   Duration elapsedFor(int jobId) {
+    final pausedMs = pausedElapsedMs[jobId];
+    if (pausedMs != null) return Duration(milliseconds: pausedMs);
     final start = activeJobStarts[jobId];
     if (start == null) return Duration.zero;
     return DateTime.now().difference(start);
@@ -33,10 +39,12 @@ final class EmployeeJobSessionState {
 
   EmployeeJobSessionState copyWith({
     Map<int, DateTime>? activeJobStarts,
+    Map<int, int>? pausedElapsedMs,
     int? tick,
   }) {
     return EmployeeJobSessionState(
       activeJobStarts: activeJobStarts ?? this.activeJobStarts,
+      pausedElapsedMs: pausedElapsedMs ?? this.pausedElapsedMs,
       tick: tick ?? this.tick,
     );
   }
@@ -72,22 +80,27 @@ final class EmployeeJobSessionController
     }
   }
 
-  Map<String, int> _readStartTimes() {
-    final raw = _storage.getString(LocalStorageKeys.employeeJobTimerStarts);
+  Map<String, int> _readStartTimes() =>
+      _readIntMap(LocalStorageKeys.employeeJobTimerStarts);
+
+  Map<String, int> _readPausedElapsed() =>
+      _readIntMap(LocalStorageKeys.employeeJobTimerPaused);
+
+  Map<String, int> _readIntMap(String key) {
+    final raw = _storage.getString(key);
     if (raw == null || raw.trim().isEmpty) return {};
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return {};
       final out = <String, int>{};
-      decoded.forEach((key, value) {
-        final jobId = key.toString();
+      decoded.forEach((mapKey, value) {
         final millis = switch (value) {
           int v => v,
           num v => v.toInt(),
           String v => int.tryParse(v),
           _ => null,
         };
-        if (millis != null) out[jobId] = millis;
+        if (millis != null) out[mapKey.toString()] = millis;
       });
       return out;
     } catch (_) {
@@ -133,6 +146,17 @@ final class EmployeeJobSessionController
     );
   }
 
+  Future<void> _persistPausedElapsed() async {
+    final map = <String, int>{
+      for (final entry in state.pausedElapsedMs.entries)
+        entry.key.toString(): entry.value,
+    };
+    await _storage.setString(
+      LocalStorageKeys.employeeJobTimerPaused,
+      jsonEncode(map),
+    );
+  }
+
   Future<void> _persistCompleted(Set<int> completed) async {
     final map = <String, bool>{
       for (final jobId in completed) jobId.toString(): true,
@@ -146,35 +170,43 @@ final class EmployeeJobSessionController
   void _restoreFromStorage() {
     final completed = _readCompletedJobIds();
     final storedStarts = _readStartTimes();
+    final storedPaused = _readPausedElapsed();
     final active = <int, DateTime>{};
+    final paused = <int, int>{};
+
+    for (final entry in storedPaused.entries) {
+      final jobId = int.tryParse(entry.key);
+      if (jobId == null || completed.contains(jobId)) continue;
+      paused[jobId] = entry.value;
+    }
 
     for (final entry in storedStarts.entries) {
       final jobId = int.tryParse(entry.key);
       if (jobId == null || completed.contains(jobId)) continue;
+      if (paused.containsKey(jobId)) continue;
       active[jobId] = DateTime.fromMillisecondsSinceEpoch(entry.value);
     }
 
-    if (active.isNotEmpty) {
-      state = state.copyWith(activeJobStarts: active);
-      _ensureTicker();
-    }
+    if (active.isEmpty && paused.isEmpty) return;
+    state = state.copyWith(activeJobStarts: active, pausedElapsedMs: paused);
+    if (active.isNotEmpty) _ensureTicker();
   }
 
   bool isJobCompleted(int jobId) => _readCompletedJobIds().contains(jobId);
 
+  bool isTimerRunning(int jobId) => state.isTimerRunning(jobId);
+
+  bool isTimerPaused(int jobId) => state.pausedElapsedMs.containsKey(jobId);
+
   bool isJobStarted(int jobId) {
     if (isJobCompleted(jobId)) return false;
     if (state.activeJobStarts.containsKey(jobId)) return true;
+    if (state.pausedElapsedMs.containsKey(jobId)) return true;
     return _readVerifiedMap()[_dailyKey(jobId)] == true;
   }
 
-  int? get primaryActiveJobId {
-    if (state.activeJobStarts.isEmpty) return null;
-    return state.activeJobStarts.keys.first;
-  }
-
   void ensureJobSessionHydrated(int jobId) {
-    if (isJobCompleted(jobId)) return;
+    if (isJobCompleted(jobId) || isTimerPaused(jobId)) return;
     if (state.activeJobStarts.containsKey(jobId)) return;
 
     final storedStarts = _readStartTimes();
@@ -204,6 +236,10 @@ final class EmployeeJobSessionController
 
   Future<void> startJob(int jobId) async {
     if (isJobCompleted(jobId)) return;
+    if (isTimerPaused(jobId)) {
+      unawaited(_persistVerified(jobId));
+      return;
+    }
 
     if (!state.activeJobStarts.containsKey(jobId)) {
       final updated = Map<int, DateTime>.from(state.activeJobStarts)
@@ -211,9 +247,33 @@ final class EmployeeJobSessionController
       state = state.copyWith(activeJobStarts: updated);
       unawaited(_persistStartTimes());
       _ensureTicker();
+      unawaited(_syncTimerWithApi(jobId, action: 'start'));
     }
     unawaited(_persistVerified(jobId));
-    await _syncTimerWithApi(jobId, action: 'start');
+  }
+
+  Future<void> stopJobTimer(int jobId) async {
+    final start = state.activeJobStarts[jobId];
+    if (start == null) return;
+
+    final elapsedMs = DateTime.now().difference(start).inMilliseconds;
+    final updatedActive = Map<int, DateTime>.from(state.activeJobStarts)
+      ..remove(jobId);
+    final updatedPaused = Map<int, int>.from(state.pausedElapsedMs)
+      ..[jobId] = elapsedMs < 0 ? 0 : elapsedMs;
+    state = state.copyWith(
+      activeJobStarts: updatedActive,
+      pausedElapsedMs: updatedPaused,
+    );
+
+    unawaited(_persistStartTimes());
+    unawaited(_persistPausedElapsed());
+    unawaited(_syncTimerWithApi(jobId, action: 'stop'));
+
+    if (updatedActive.isEmpty) {
+      _ticker?.cancel();
+      _ticker = null;
+    }
   }
 
   Future<void> completeJob(int jobId) async {
@@ -223,11 +283,17 @@ final class EmployeeJobSessionController
 
     final updated = Map<int, DateTime>.from(state.activeJobStarts)
       ..remove(jobId);
-    state = state.copyWith(activeJobStarts: updated);
+    final updatedPaused = Map<int, int>.from(state.pausedElapsedMs)
+      ..remove(jobId);
+    state = state.copyWith(
+      activeJobStarts: updated,
+      pausedElapsedMs: updatedPaused,
+    );
 
     final completed = _readCompletedJobIds()..add(jobId);
     unawaited(_persistCompleted(completed));
     unawaited(_persistStartTimes());
+    unawaited(_persistPausedElapsed());
     unawaited(_syncTimerWithApi(jobId, action: 'stop'));
 
     if (updated.isEmpty) {
@@ -332,6 +398,16 @@ final class EmployeeJobSessionController
   }
 
   Timer? _ticker;
+
+  Future<void> clearForLogout() async {
+    _ticker?.cancel();
+    _ticker = null;
+    state = const EmployeeJobSessionState();
+    await _storage.remove(LocalStorageKeys.employeeJobTimerStarts);
+    await _storage.remove(LocalStorageKeys.employeeJobTimerPaused);
+    await _storage.remove(LocalStorageKeys.employeeJobTimerCompleted);
+    await _storage.remove(LocalStorageKeys.employeeJobSafetyVerified);
+  }
 
   @override
   void dispose() {

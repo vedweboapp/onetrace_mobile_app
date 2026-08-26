@@ -325,7 +325,6 @@ class _PinDetailBodyState extends State<_PinDetailBody> {
 
   String _coordPercent(double norm) => '${(norm * 100).toStringAsFixed(2)}%';
 
-  static const _sheetBg = AppColors.white;
   static const _sheetCard = AppColors.surfaceHigh;
   static const _sheetMuted = AppColors.muted;
   static const _sheetDivider = AppColors.borderLight;

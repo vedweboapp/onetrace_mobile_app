@@ -4,9 +4,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/di/injection.dart';
 import 'package:red5/core/network/api_urls.dart';
+import 'package:red5/core/network/slow_network_toast.dart';
 import 'package:red5/core/utils/qr_code_utils.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_models.dart';
+import 'package:red5/employee_role/jobs/data/qr_code_details_models.dart';
 
 final employeeJobFormsApiClientProvider = Provider<EmployeeJobFormsApiClient>(
   (ref) => sl<EmployeeJobFormsApiClient>(),
@@ -35,6 +37,10 @@ final class EmployeeJobFormsApiClient {
           _jobIdHeader: jobId.toString(),
           Headers.acceptHeader: Headers.jsonContentType,
           Headers.contentTypeHeader: Headers.formUrlEncodedContentType,
+        },
+        // Form uploads already show a dedicated "Submitting forms…" loader.
+        extra: const <String, Object?>{
+          SlowNetworkToast.skipExtraKey: true,
         },
       );
 
@@ -115,18 +121,22 @@ final class EmployeeJobFormsApiClient {
     return _parseSubmittedFormsList(response.data);
   }
 
-  /// `POST /jobs/{id}/scan-qr/` — body `{ "qr_code": "QR-10001" }` or with
-  /// `{ "job_pin_id": 14, "qr_code": "QR-10001" }` for level pins.
-  Future<void> scanJobQr({
+  /// `POST /jobs/{id}/scan-qr/` — body
+  /// `{ "public_uuid": "...", "job_pin_id": 157 }`.
+  Future<JobQrScanAssignment> scanJobQr({
     required int jobId,
     required String qrCode,
     int? jobPinId,
   }) async {
-    final normalized = QrCodeUtils.normalizeScannedValue(qrCode);
-    await _dio.post<dynamic>(
+    final publicUuid = QrCodeUtils.extractPublicUuid(qrCode) ??
+        QrCodeUtils.normalizeScannedValue(qrCode);
+    if (publicUuid.isEmpty) {
+      throw ArgumentError('QR public_uuid is empty');
+    }
+    final response = await _dio.post<dynamic>(
       AppApiUrls.jobScanQr(jobId),
       data: <String, dynamic>{
-        'qr_code': normalized,
+        'public_uuid': publicUuid,
         if (jobPinId != null && jobPinId > 0) 'job_pin_id': jobPinId,
       },
       options: Options(
@@ -136,6 +146,10 @@ final class EmployeeJobFormsApiClient {
           Headers.contentTypeHeader: Headers.jsonContentType,
         },
       ),
+    );
+    return JobQrScanAssignment.fromResponse(
+      response.data,
+      publicUuid: publicUuid,
     );
   }
 
@@ -290,7 +304,11 @@ final class EmployeeJobFormsApiClient {
       return _dio.request<dynamic>(
         url,
         data: formBody,
-        options: _jobFormSubmitOptions(jobId).copyWith(method: method),
+        options: _jobFormSubmitOptions(jobId).copyWith(
+          method: method,
+          sendTimeout: const Duration(minutes: 2),
+          receiveTimeout: const Duration(minutes: 2),
+        ),
       );
     }
 
@@ -305,9 +323,14 @@ final class EmployeeJobFormsApiClient {
       data: formData,
       options: Options(
         method: method,
+        sendTimeout: const Duration(minutes: 10),
+        receiveTimeout: const Duration(minutes: 10),
         headers: <String, String>{
           _jobIdHeader: jobId.toString(),
           Headers.acceptHeader: Headers.jsonContentType,
+        },
+        extra: const <String, Object?>{
+          SlowNetworkToast.skipExtraKey: true,
         },
       ),
     );
@@ -345,6 +368,9 @@ final class EmployeeJobFormsApiClient {
   static String _attachmentFieldType(JobFormFieldValue row) {
     final type = row.fieldType?.trim().toLowerCase();
     if (type != null && type.isNotEmpty) {
+      if (type == 'multi_image_upload') {
+        return 'multi_image_upload';
+      }
       if (type == 'image' || type == 'file' || type == 'file_upload') {
         return 'image_upload';
       }

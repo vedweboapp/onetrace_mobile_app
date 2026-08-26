@@ -15,13 +15,23 @@ int countIncompleteAssignedPins(List<EmployeeJobDrawingLevel> levels) {
       .length;
 }
 
+/// Whether QR must be scanned before this pin can be marked Complete.
+///
+/// Formless pins often include an empty `qr_code` key from the API. That must
+/// not block Complete Job when there is no form to collect the scan in.
+bool pinRequiresQrForCompletion(EmployeeJobDrawingPin pin) {
+  if (!pin.hasForm) return false;
+  return pin.qrCodeFieldPresent;
+}
+
 /// Pins whose form/QR work is done in-app but server status is not Complete yet.
 List<EmployeeJobDrawingPin> pinsReadyToMarkCompleteStatus({
   required List<EmployeeJobDrawingLevel> levels,
   Set<String> completedPinFormKeys = const {},
   Set<String> scannedPinQrKeys = const {},
   Set<String> locallySubmittedPinFormKeys = const {},
-  bool Function(EmployeeJobDrawingPin pin) requiresQr = _defaultRequiresQr,
+  bool Function(EmployeeJobDrawingPin pin) requiresQr =
+      pinRequiresQrForCompletion,
 }) {
   return collectJobPinEntries(levels)
       .map((entry) => entry.pin)
@@ -37,8 +47,6 @@ List<EmployeeJobDrawingPin> pinsReadyToMarkCompleteStatus({
       })
       .toList(growable: false);
 }
-
-bool _defaultRequiresQr(EmployeeJobDrawingPin pin) => pin.qrCodeFieldPresent;
 
 Set<String> pinFormKeysFromLocalSubmissions({
   required List<EmployeeJobDrawingLevel> levels,
@@ -93,4 +101,45 @@ bool pinHasLocalSubmittedForm(
   }
 
   return false;
+}
+
+/// True when the job payload includes drawing levels.
+bool jobHasDrawingLevels(List<EmployeeJobDrawingLevel> levels) {
+  return levels.isNotEmpty;
+}
+
+/// Pin id for `PATCH /jobs/{id}/` status updates.
+///
+/// - Job has levels → level pin `id`
+/// - Job has no levels → `job_pin_id`
+int? pinStatusUpdateId(
+  EmployeeJobDrawingPin pin, {
+  required bool jobHasLevels,
+}) {
+  if (jobHasLevels) {
+    if (pin.id > 0) return pin.id;
+    if (pin.jobPinId != null && pin.jobPinId! > 0) return pin.jobPinId;
+    return null;
+  }
+  if (pin.jobPinId != null && pin.jobPinId! > 0) return pin.jobPinId;
+  if (pin.id > 0) return pin.id;
+  return null;
+}
+
+/// Opposite id for a single retry after a "not linked" API error.
+int? pinStatusAlternateId(
+  EmployeeJobDrawingPin pin,
+  int primary, {
+  required bool jobHasLevels,
+}) {
+  if (jobHasLevels) {
+    if (pin.jobPinId != null &&
+        pin.jobPinId! > 0 &&
+        pin.jobPinId != primary) {
+      return pin.jobPinId;
+    }
+    return null;
+  }
+  if (pin.id > 0 && pin.id != primary) return pin.id;
+  return null;
 }

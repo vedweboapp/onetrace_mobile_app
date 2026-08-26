@@ -5,7 +5,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:red5/core/network/api_urls.dart';
 
@@ -25,15 +24,6 @@ Future<Uint8List?> renderSignaturePngBytes(
   canvas.drawRect(
     Rect.fromLTWH(0, 0, width, height),
     Paint()..color = const Color(0xFFFFFFFF),
-  );
-
-  final baselineY = height - 28;
-  canvas.drawLine(
-    Offset(16, baselineY),
-    Offset(width - 16, baselineY),
-    Paint()
-      ..color = const Color(0xFFE5E7EB)
-      ..strokeWidth = 1,
   );
 
   final strokePaint = Paint()

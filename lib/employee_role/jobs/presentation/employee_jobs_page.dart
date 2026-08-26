@@ -11,9 +11,9 @@ import 'package:red5/employee_role/jobs/application/employee_job_session_control
 import 'package:red5/employee_role/presentation/widgets/employee_site_menu.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_detail.dart';
 import 'package:red5/employee_role/jobs/application/employee_job_navigation.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_card_timer.dart';
 import 'package:red5/employee_role/employee_earnings/presentation/employee_earning_view.dart';
 import 'package:red5/employee_role/material_requests/presentation/employee_material_requests_page.dart';
-import 'package:red5/employee_role/jobs/presentation/employee_job_sheet_page.dart';
 import 'package:red5/employee_role/reports/presentation/employee_reports_page.dart';
 import 'package:red5/employee_role/presentation/employee_technician_settings_routes.dart';
 import 'package:red5/employee_role/employee_home/employee_home_page.dart';
@@ -656,6 +656,7 @@ class _EmployeeJobCard extends StatelessWidget {
                         height: 1.1,
                       ),
                 ),
+                EmployeeJobCardTimer(jobId: job.id, jobTitle: job.title),
                 const SizedBox(height: 12),
                 _MetaRow(
                   icon: Icons.location_on_outlined,

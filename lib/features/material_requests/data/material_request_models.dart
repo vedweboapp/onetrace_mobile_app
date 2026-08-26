@@ -399,7 +399,7 @@ final class MaterialRequestLineRead {
   }
 }
 
-/// Lightweight dispatch row from `GET /dispatch/?job=&worker=`.
+/// Lightweight dispatch row from `GET /dispatch/?worker=&material_request=`.
 @immutable
 final class MaterialDispatchRead {
   const MaterialDispatchRead({
@@ -407,10 +407,14 @@ final class MaterialDispatchRead {
     required this.code,
     this.jobId,
     this.workerId,
+    this.userOrgMapId,
+    this.jobWorkerId,
     this.statusName,
     this.dispatchTo,
     this.receivedBy,
     this.dispatchDate,
+    this.notes,
+    this.materialRequestId,
     this.materialRequestCode,
     this.items = const [],
     this.raw = const <String, dynamic>{},
@@ -420,27 +424,43 @@ final class MaterialDispatchRead {
   final String code;
   final int? jobId;
   final int? workerId;
+  final int? userOrgMapId;
+  final int? jobWorkerId;
   final String? statusName;
   final String? dispatchTo;
   final String? receivedBy;
   final DateTime? dispatchDate;
+  final String? notes;
+  final int? materialRequestId;
   final String? materialRequestCode;
   final List<MaterialDispatchItemRead> items;
   final Map<String, dynamic> raw;
 
+  int get totalQuantity =>
+      items.fold<int>(0, (sum, item) => sum + (item.quantity ?? 0));
+
   static MaterialDispatchRead? tryFromMap(Map<String, dynamic> map) {
     final id = _readInt(map['id']);
     if (id == null) return null;
-    final code = map['dispatch_number']?.toString().trim() ??
+    final code = map['dispatch_order_number']?.toString().trim() ??
+        map['dispatch_number']?.toString().trim() ??
         map['serial_number']?.toString().trim() ??
         map['code']?.toString().trim() ??
         'DISP$id';
-    final statusMap = _asMap(map['status']);
+    final statusRaw = map['status'];
+    final statusMap = _asMap(statusRaw);
+    final statusName = () {
+      if (statusRaw is String && statusRaw.trim().isNotEmpty) {
+        return statusRaw.trim();
+      }
+      return statusMap?['name']?.toString().trim() ??
+          map['status_name']?.toString().trim();
+    }();
     final items = <MaterialDispatchItemRead>[];
-    final itemsRaw = map['items'] ??
+    final itemsRaw = map['lines'] ??
+        map['items'] ??
         map['dispatch_line'] ??
-        map['dispatch_lines'] ??
-        map['lines'];
+        map['dispatch_lines'];
     if (itemsRaw is List) {
       for (final row in itemsRaw) {
         final parsed = MaterialDispatchItemRead.tryFrom(row);
@@ -448,25 +468,42 @@ final class MaterialDispatchRead {
       }
     }
 
+    final workerMap = _asMap(map['worker']) ?? _asMap(map['job_worker']);
+    final materialRequestMap = _asMap(map['material_request']);
+    final materialRequestId = _readInt(map['material_request']) ??
+        _readInt(map['material_request_id']) ??
+        _readInt(materialRequestMap?['id']);
+    final materialRequestCode =
+        map['material_request_number']?.toString().trim() ??
+            materialRequestMap?['request_number']?.toString().trim();
+    final notes = map['notes']?.toString().trim();
+
     return MaterialDispatchRead(
       id: id,
       code: code.isEmpty ? 'DISP$id' : code,
-      jobId: _readInt(map['job']) ?? _readInt(map['job_id']),
-      // Dispatch model uses `worker` / `worker_id` (not job_worker).
-      workerId: _readInt(_asMap(map['worker'])?['id']) ??
+      jobId: _readInt(map['job']) ??
+          _readInt(map['job_id']) ??
+          _readInt(_asMap(map['job'])?['id']),
+      // API worker object uses user_org_map_id / job_worker_id (no bare id).
+      workerId: _readInt(workerMap?['id']) ??
+          _readInt(workerMap?['user_org_map_id']) ??
           _readInt(map['worker']) ??
           _readInt(map['worker_id']),
-      statusName: statusMap?['name']?.toString() ??
-          map['status_name']?.toString(),
+      userOrgMapId: _readInt(workerMap?['user_org_map_id']),
+      jobWorkerId: _readInt(workerMap?['job_worker_id']) ??
+          _readInt(workerMap?['id']),
+      statusName: statusName,
       dispatchTo: map['dispatch_to']?.toString().trim() ??
           _personName(_asMap(map['dispatch_to'])) ??
-          _personName(_asMap(map['worker'])),
+          _personName(workerMap),
       receivedBy: map['received_by']?.toString().trim() ??
           _personName(_asMap(map['received_by'])),
       dispatchDate: _readDate(map['dispatch_date'] ?? map['created_at']),
-      materialRequestCode: map['material_request_number']?.toString().trim() ??
-          map['material_request']?.toString().trim() ??
-          _asMap(map['material_request'])?['request_number']?.toString().trim(),
+      notes: notes == null || notes.isEmpty ? null : notes,
+      materialRequestId: materialRequestId,
+      materialRequestCode: materialRequestCode?.isNotEmpty == true
+          ? materialRequestCode
+          : (materialRequestId != null ? '$materialRequestId' : null),
       items: items,
       raw: map,
     );
@@ -479,17 +516,38 @@ final class MaterialDispatchItemRead {
     required this.id,
     required this.itemName,
     required this.quantityLabel,
+    this.itemId,
+    this.sku,
+    this.quantity,
+    this.pendingQuantity,
+    this.returnedQuantity,
+    this.materialRequestLineId,
+    this.isExtra = false,
+    this.remarks,
   });
 
   final int id;
   final String itemName;
   final String quantityLabel;
+  final int? itemId;
+  final String? sku;
+  final int? quantity;
+  final int? pendingQuantity;
+  final int? returnedQuantity;
+  final int? materialRequestLineId;
+  final bool isExtra;
+  final String? remarks;
 
   static MaterialDispatchItemRead? tryFrom(dynamic raw) {
     final map = _asMap(raw);
     if (map == null) return null;
-    final id = _readInt(map['id']) ?? _readInt(map['item']) ?? 0;
+    final itemMap = _asMap(map['item']);
+    final id = _readInt(map['id']) ??
+        _readInt(itemMap?['id']) ??
+        _readInt(map['item']) ??
+        0;
     final name = map['item_name']?.toString().trim() ??
+        itemMap?['name']?.toString().trim() ??
         map['name']?.toString().trim() ??
         'Item';
     final qty = _readInt(map['quantity']) ??
@@ -499,10 +557,26 @@ final class MaterialDispatchItemRead {
     final quantityLabel = qty == null
         ? (map['quantity_label']?.toString().trim() ?? '—')
         : (unit == null || unit.isEmpty ? '$qty' : '$qty $unit');
+    final sku = map['item_sku']?.toString().trim() ??
+        itemMap?['sku']?.toString().trim() ??
+        map['sku']?.toString().trim();
+    final remarks = map['remarks']?.toString().trim();
+    final isExtraRaw = map['is_extra'];
+    final isExtra = isExtraRaw == true ||
+        isExtraRaw?.toString().trim().toLowerCase() == 'true';
     return MaterialDispatchItemRead(
       id: id,
       itemName: name.isEmpty ? 'Item' : name,
       quantityLabel: quantityLabel,
+      itemId: _readInt(map['item']) ?? _readInt(itemMap?['id']),
+      sku: sku == null || sku.isEmpty ? null : sku,
+      quantity: qty,
+      pendingQuantity: _readInt(map['pending_quantity']),
+      returnedQuantity: _readInt(map['returned_quantity']),
+      materialRequestLineId: _readInt(map['material_request_line']) ??
+          _readInt(map['material_request_line_id']),
+      isExtra: isExtra,
+      remarks: remarks == null || remarks.isEmpty ? null : remarks,
     );
   }
 }
@@ -515,8 +589,13 @@ final class MaterialReturnRequestRead {
     required this.code,
     this.jobId,
     this.workerId,
+    this.userOrgMapId,
+    this.jobWorkerId,
+    this.workerName,
+    this.materialRequestId,
     this.statusName,
     this.requestedDate,
+    this.completedAt,
     this.itemCount = 0,
     this.totalQuantity = 0,
     this.items = const [],
@@ -527,12 +606,33 @@ final class MaterialReturnRequestRead {
   final String code;
   final int? jobId;
   final int? workerId;
+  final int? userOrgMapId;
+  final int? jobWorkerId;
+  final String? workerName;
+  final int? materialRequestId;
   final String? statusName;
   final DateTime? requestedDate;
+  final DateTime? completedAt;
   final int itemCount;
   final int totalQuantity;
   final List<MaterialReturnItemRead> items;
   final Map<String, dynamic> raw;
+
+  String get displayStatusLabel {
+    final rawStatus = statusName?.trim() ?? '';
+    if (rawStatus.isEmpty) return 'Return request';
+    if (rawStatus == rawStatus.toUpperCase() ||
+        rawStatus == rawStatus.toLowerCase()) {
+      return rawStatus[0].toUpperCase() + rawStatus.substring(1).toLowerCase();
+    }
+    return rawStatus;
+  }
+
+  Set<int> get dispatchLineIds => {
+        for (final item in items)
+          if (item.dispatchLineId != null && item.dispatchLineId! > 0)
+            item.dispatchLineId!,
+      };
 
   static MaterialReturnRequestRead? tryFromMap(Map<String, dynamic> map) {
     final id = _readInt(map['id']);
@@ -541,7 +641,15 @@ final class MaterialReturnRequestRead {
         map['request_number']?.toString().trim() ??
         map['serial_number']?.toString().trim() ??
         'RS-${id.toString().padLeft(5, '0')}';
-    final statusMap = _asMap(map['status']);
+    final statusRaw = map['status'];
+    final statusMap = _asMap(statusRaw);
+    final statusName = () {
+      if (statusRaw is String && statusRaw.trim().isNotEmpty) {
+        return statusRaw.trim();
+      }
+      return statusMap?['name']?.toString().trim() ??
+          map['status_name']?.toString().trim();
+    }();
     final items = <MaterialReturnItemRead>[];
     final itemsRaw = map['items'] ??
         map['return_request_line'] ??
@@ -553,21 +661,35 @@ final class MaterialReturnRequestRead {
         if (parsed != null) items.add(parsed);
       }
     }
+    final workerMap = _asMap(map['worker']) ?? _asMap(map['job_worker']);
+    final materialRequestMap = _asMap(map['material_request']);
     final totalQty = items.fold<int>(0, (sum, item) => sum + item.quantity);
     return MaterialReturnRequestRead(
       id: id,
       code: code.isEmpty ? 'RS-${id.toString().padLeft(5, '0')}' : code,
-      jobId: _readInt(map['job']) ?? _readInt(map['job_id']),
-      // Return-request model uses `worker` / `worker_id` (not job_worker).
-      workerId: _readInt(_asMap(map['worker'])?['id']) ??
+      jobId: _readInt(map['job']) ??
+          _readInt(map['job_id']) ??
+          _readInt(_asMap(map['job'])?['id']),
+      // API worker object uses user_org_map_id / job_worker_id (no bare id).
+      workerId: _readInt(workerMap?['id']) ??
+          _readInt(workerMap?['user_org_map_id']) ??
           _readInt(map['worker']) ??
           _readInt(map['worker_id']),
-      statusName: statusMap?['name']?.toString() ??
-          map['status_name']?.toString() ??
-          'Return request',
+      userOrgMapId: _readInt(workerMap?['user_org_map_id']),
+      jobWorkerId: _readInt(workerMap?['job_worker_id']) ??
+          _readInt(workerMap?['id']),
+      workerName: _personName(workerMap),
+      materialRequestId: _readInt(map['material_request']) ??
+          _readInt(map['material_request_id']) ??
+          _readInt(materialRequestMap?['id']),
+      statusName: statusName?.isNotEmpty == true ? statusName : 'Return request',
       requestedDate: _readDate(
-        map['requested_date'] ?? map['return_date'] ?? map['created_at'],
+        map['requested_at'] ??
+            map['requested_date'] ??
+            map['return_date'] ??
+            map['created_at'],
       ),
+      completedAt: _readDate(map['completed_at']),
       itemCount: items.isNotEmpty
           ? items.length
           : (_readInt(map['item_count']) ?? 0),
@@ -587,34 +709,68 @@ final class MaterialReturnItemRead {
     required this.itemName,
     required this.quantity,
     this.quantityLabel,
+    this.dispatchLineId,
+    this.returnType,
+    this.reason,
+    this.sku,
+    this.dispatchQuantity,
   });
 
   final int id;
   final String itemName;
   final int quantity;
   final String? quantityLabel;
+  final int? dispatchLineId;
+  final String? returnType;
+  final String? reason;
+  final String? sku;
+  final int? dispatchQuantity;
 
   String get displayQuantity =>
       quantityLabel?.trim().isNotEmpty == true
           ? quantityLabel!.trim()
           : 'Qty: $quantity units';
 
+  String? get displayReturnType {
+    final raw = returnType?.trim() ?? '';
+    if (raw.isEmpty) return null;
+    if (raw == raw.toUpperCase() || raw == raw.toLowerCase()) {
+      return raw[0].toUpperCase() + raw.substring(1).toLowerCase();
+    }
+    return raw;
+  }
+
   static MaterialReturnItemRead? tryFrom(dynamic raw) {
     final map = _asMap(raw);
     if (map == null) return null;
-    final id = _readInt(map['id']) ?? _readInt(map['item']) ?? 0;
+    final itemMap = _asMap(map['item']);
+    final id = _readInt(map['id']) ??
+        _readInt(itemMap?['id']) ??
+        _readInt(map['item']) ??
+        0;
     final name = map['item_name']?.toString().trim() ??
+        itemMap?['name']?.toString().trim() ??
         map['name']?.toString().trim() ??
         'Item';
     final qty = _readInt(map['quantity']) ??
         _readInt(map['returned_quantity']) ??
         _readInt(map['qty']) ??
         0;
+    final sku = itemMap?['sku']?.toString().trim() ??
+        map['item_sku']?.toString().trim() ??
+        map['sku']?.toString().trim();
     return MaterialReturnItemRead(
       id: id,
       itemName: name.isEmpty ? 'Item' : name,
       quantity: qty,
       quantityLabel: map['quantity_label']?.toString().trim(),
+      dispatchLineId: _readInt(map['dispatch_line']) ??
+          _readInt(map['dispatch_line_id']) ??
+          _readInt(_asMap(map['dispatch_line'])?['id']),
+      returnType: map['return_type']?.toString().trim(),
+      reason: map['reason']?.toString().trim(),
+      sku: sku == null || sku.isEmpty ? null : sku,
+      dispatchQuantity: _readInt(map['dispatch_quantity']),
     );
   }
 }

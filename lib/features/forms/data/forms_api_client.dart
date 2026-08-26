@@ -255,15 +255,6 @@ final class FormsApiClient {
     if (results is List) return results;
     return const [];
   }
-
-  static bool _hasNextPage(Map<String, dynamic> root, List<dynamic> rows) {
-    if (rows.isEmpty) return false;
-    final next = root['next'];
-    if (next != null && next.toString().trim().isNotEmpty) return true;
-    final pagination = _coerceMap(root['pagination']);
-    final pagNext = pagination['next'];
-    return pagNext != null && pagNext.toString().trim().isNotEmpty;
-  }
 }
 
 final formsApiClientProvider = Provider<FormsApiClient>(

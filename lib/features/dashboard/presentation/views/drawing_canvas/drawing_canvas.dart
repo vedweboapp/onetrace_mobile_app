@@ -1,0 +1,46 @@
+library;
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:pdfx/pdfx.dart';
+import 'package:red5/core/constants/app_image_string.dart';
+import 'package:red5/core/network/api_int_parsing.dart';
+import 'package:red5/core/navigation/safe_overlay_pop.dart';
+import 'package:red5/core/utils/text_controller_lifecycle.dart';
+import 'package:red5/core/pdf_coordinates/pdf_coordinates.dart';
+import 'package:red5/core/network/api_response_message.dart';
+import 'package:red5/core/theme/app_colors.dart';
+import 'package:red5/core/theme/app_fonts.dart';
+import 'package:red5/core/widgets/app_text_field.dart';
+import 'package:red5/core/widgets/top_snackbar.dart';
+import 'package:red5/features/dashboard/presentation/views/drawing_canvas_feature_flags.dart';
+import 'package:red5/features/dashboard/presentation/views/settings/metadata_color_utils.dart';
+import 'package:red5/features/dashboard/presentation/widgets/pin_status_delete_dialog.dart';
+import 'package:red5/features/dashboard/presentation/widgets/pin_status_form_sheet.dart';
+import 'package:red5/features/forms/data/form_models.dart';
+import 'package:red5/features/forms/data/form_picker_utils.dart';
+import 'package:red5/features/forms/data/forms_api_client.dart';
+import 'package:red5/features/quote/data/quote_project_api_client.dart';
+import 'package:red5/employee_role/jobs/application/employee_job_detail_controller.dart';
+import 'package:red5/employee_role/jobs/application/operative_canvas_bridge.dart';
+import 'package:red5/employee_role/jobs/data/employee_job_drawing_models.dart';
+import 'package:red5/employee_role/jobs/presentation/employee_checklist_pdf_page.dart';
+
+part 'drawing_canvas_args.dart';
+part 'drawing_canvas_page.dart';
+part 'models/canvas_models.dart';
+part 'helpers/pin_payload_parsers.dart';
+part 'widgets/pin_view.dart';
+part 'widgets/pin_detail_bottom_sheet.dart';
+part 'widgets/plot_name_bottom_sheet.dart';

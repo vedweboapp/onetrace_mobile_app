@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -22,6 +24,7 @@ import 'package:red5/employee_role/jobs/application/employee_qr_scan_flow.dart';
 import 'package:red5/employee_role/jobs/application/job_form_submission_sync_listener.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/operative_job_form_sync_result_sheet.dart';
 import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_timer_banner.dart';
+import 'package:red5/employee_role/jobs/presentation/widgets/employee_job_card_timer.dart';
 
 class EmployeeJobDetailsPage extends ConsumerStatefulWidget {
   const EmployeeJobDetailsPage({
@@ -241,28 +244,25 @@ class _EmployeeJobDetailsPageState
     if (jobPinId == null || jobPinId <= 0) return;
 
     final controller = ref.read(employeeJobDetailControllerProvider.notifier);
-    await controller.refreshAttachedForms();
-    if (!mounted) return;
-
     final state = ref.read(employeeJobDetailControllerProvider);
-    final job = state.job;
-    final activeJobId = job?.id ?? widget.jobId;
-
+    final activeJobId = state.job?.id ?? widget.jobId;
     final submissionId = pin.projectFormSubmissionId;
+
     final submitted = await context.push<bool>(
       EmployeeJobFormPage.path,
       extra: <String, Object?>{
         'formId': formId,
         'jobId': activeJobId,
         'jobPinId': jobPinId,
-        if (submissionId != null && submissionId > 0) 'submissionId': submissionId,
+        if (submissionId != null && submissionId > 0)
+          'submissionId': submissionId,
         'pinId': pin.id,
         'requiresPinQr': pin.qrCodeFieldPresent,
       },
     );
     if (!mounted || submitted != true) return;
     controller.markFormComplete(formId, pinId: pin.id);
-    await controller.refreshCompletedForms();
+    unawaited(controller.refreshCompletedForms());
   }
 
   @override
@@ -364,8 +364,15 @@ class _EmployeeJobDetailsPageState
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                     children: [
-                        if (sessionController.isJobStarted(job.id)) ...[
-                        EmployeeJobTimerBanner(elapsed: timerElapsed),
+                        if (sessionController.isTimerRunning(job.id)) ...[
+                        EmployeeJobTimerBanner(
+                          elapsed: timerElapsed,
+                          onTap: () => showEmployeeJobTimerStopCard(
+                            context: context,
+                            jobId: job.id,
+                            jobTitle: job.title,
+                          ),
+                        ),
                         const SizedBox(height: 16),
                       ],
                       EmployeeJobStatusCard(
@@ -413,6 +420,7 @@ class _EmployeeJobDetailsPageState
                               return;
                             }
                             setState(() => _isSubmittingForms = true);
+                            var showedSubmitDialog = false;
                             try {
                               final isOnline = ref
                                   .read(connectivityServiceProvider)
@@ -421,12 +429,48 @@ class _EmployeeJobDetailsPageState
                                 JobCompletionDebugLog.banner(
                                   'Submit Form — POST submit-form from SQLite | jobId=${job.id}',
                                 );
-                                final syncResult = await ref
-                                    .read(jobFormSubmissionRepositoryProvider)
-                                    .syncPendingSubmissionsForJob(
-                                      jobId: job.id,
-                                      assignments: job.formAssignments,
-                                    );
+                                if (context.mounted) {
+                                  showedSubmitDialog = true;
+                                  showDialog<void>(
+                                    context: context,
+                                    barrierDismissible: false,
+                                    builder: (ctx) => const PopScope(
+                                      canPop: false,
+                                      child: Center(
+                                        child: Card(
+                                          child: Padding(
+                                            padding: EdgeInsets.all(24),
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                CircularProgressIndicator(),
+                                                SizedBox(height: 16),
+                                                Text('Submitting forms…'),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                late final JobFormBulkSyncResult syncResult;
+                                try {
+                                  syncResult = await ref
+                                      .read(jobFormSubmissionRepositoryProvider)
+                                      .syncPendingSubmissionsForJob(
+                                        jobId: job.id,
+                                        assignments: job.formAssignments,
+                                      );
+                                } finally {
+                                  if (showedSubmitDialog && context.mounted) {
+                                    Navigator.of(
+                                      context,
+                                      rootNavigator: true,
+                                    ).pop();
+                                    showedSubmitDialog = false;
+                                  }
+                                }
                                 await controller.refreshAttachedForms();
                                 await controller.load(jobId: job.id);
                                 if (!context.mounted) return;
@@ -459,6 +503,12 @@ class _EmployeeJobDetailsPageState
                                 },
                               );
                             } catch (error) {
+                              if (showedSubmitDialog && context.mounted) {
+                                Navigator.of(
+                                  context,
+                                  rootNavigator: true,
+                                ).pop();
+                              }
                               if (!context.mounted) return;
                               context.showTopSnackBar(
                                 SnackBar(

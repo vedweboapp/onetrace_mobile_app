@@ -56,7 +56,7 @@ Future<FormImagePickSource?> showFormImageSourceSheet(
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
                 child: Text(
-                  'Choose how you want to add your image.',
+                  'Choose how you want to add photos. Gallery and files support multiple images.',
                   style: AppFonts.bodySmall(color: AppColors.muted),
                 ),
               ),
@@ -71,14 +71,14 @@ Future<FormImagePickSource?> showFormImageSourceSheet(
               _ImageSourceTile(
                 icon: Icons.photo_library_outlined,
                 title: 'Choose from gallery',
-                subtitle: 'Pick an existing photo',
+                subtitle: 'Pick one or more photos',
                 onTap: () => Navigator.pop(ctx, FormImagePickSource.gallery),
               ),
               const Divider(height: 1, indent: 72, color: Color(0xFFF0F0F2)),
               _ImageSourceTile(
                 icon: Icons.folder_open_outlined,
                 title: 'Browse files',
-                subtitle: 'Select an image file',
+                subtitle: 'Select one or more image files',
                 onTap: () => Navigator.pop(ctx, FormImagePickSource.file),
               ),
               const SizedBox(height: 8),

@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:red5/core/database/technician_form_database.dart';
 import 'package:red5/core/di/injection.dart';
+import 'package:red5/core/network/api_response_message.dart';
 import 'package:red5/core/network/connectivity_service.dart';
+import 'package:red5/core/network/slow_network_toast.dart';
 import 'package:red5/employee_role/jobs/data/employee_job_forms_api_client.dart';
 import 'package:red5/employee_role/jobs/data/job_completion_debug_log.dart';
 import 'package:red5/employee_role/jobs/data/job_form_attachment_storage.dart';
@@ -49,8 +51,8 @@ final class JobFormBulkSyncEntry {
   final String? error;
 
   String get label => jobPinId != null && jobPinId! > 0
-      ? 'Pin form (job_pin_id: $jobPinId)'
-      : 'Form $formId';
+      ? 'Pin form'
+      : 'Form';
 }
 
 final class JobFormBulkSyncResult {
@@ -391,7 +393,7 @@ final class JobFormSubmissionRepository {
   }) async {
     final isPinForm = jobPinId != null && jobPinId > 0;
     if (isPinForm) {
-      if (jobPinId! <= 0) {
+      if (jobPinId <= 0) {
         throw StateError(
           'Could not resolve job_pin_id for form $formTemplateId.',
         );
@@ -460,9 +462,11 @@ final class JobFormSubmissionRepository {
         remarks: remarks,
         values: values,
       );
-      final server = await _api.submitJobForm(
-        jobId: jobId,
-        payload: payload,
+      final server = await SlowNetworkToast.suppressWhile(
+        () => _api.submitJobForm(
+          jobId: jobId,
+          payload: payload,
+        ),
       );
       final serverSubmissionId =
           server.resolvedSubmissionId ?? (server.id == 0 ? null : server.id);
@@ -593,7 +597,7 @@ final class JobFormSubmissionRepository {
     final resolvedRemarks = remarks?.trim().isNotEmpty == true
         ? remarks!.trim()
         : existing?.remarks;
-    final resolvedJobPinId = isPinForm ? jobPinId! : null;
+    final resolvedJobPinId = isPinForm ? jobPinId : null;
     var resolvedJobFormId = 0;
     if (!isPinForm) {
       resolvedJobFormId = await _resolveStoredJobFormId(
@@ -690,7 +694,7 @@ final class JobFormSubmissionRepository {
       formId: formTemplateId,
       jobPinId: jobPinId,
     );
-    final resolvedJobPinId = isPinForm ? jobPinId! : null;
+    final resolvedJobPinId = isPinForm ? jobPinId : null;
     var resolvedJobFormId = 0;
     if (!isPinForm) {
       resolvedJobFormId = await _resolveStoredJobFormId(
@@ -942,6 +946,15 @@ final class JobFormSubmissionRepository {
           jobId: jobId,
           submissionId: resolvedSubmissionId,
         );
+        // Never overwrite a non-empty local draft/submission with an empty
+        // remote payload — that is what made reopened forms look blank.
+        final preferLocal = remote.values.isEmpty &&
+            local != null &&
+            local.values.isNotEmpty;
+        if (preferLocal) {
+          return (values: local.values, remarks: local.remarks ?? remote.remarks);
+        }
+
         final jobFormId = jobPinId != null && jobPinId > 0
             ? 0
             : await _resolveStoredJobFormId(
@@ -964,15 +977,25 @@ final class JobFormSubmissionRepository {
             jobFormId: jobFormId,
             jobPinId: jobPinId,
             status: remote.status,
-            remarks: remote.remarks,
-            values: remote.values,
+            remarks: remote.remarks?.trim().isNotEmpty == true
+                ? remote.remarks
+                : local?.remarks,
+            values: remote.values.isNotEmpty
+                ? remote.values
+                : (local?.values ?? remote.values),
             syncStatus: JobFormSubmissionSyncStatus.synced,
             serverSubmissionId: resolvedSubmissionId,
             updatedAt: DateTime.now(),
             createdAt: local?.createdAt ?? DateTime.now(),
           ),
         );
-        return (values: remote.values, remarks: remote.remarks);
+        final values = remote.values.isNotEmpty
+            ? remote.values
+            : (local?.values ?? remote.values);
+        final remarks = remote.remarks?.trim().isNotEmpty == true
+            ? remote.remarks
+            : local?.remarks;
+        return (values: values, remarks: remarks);
       } on DioException catch (error) {
         if (!_isNetworkError(error) && !_isMissingSubmission(error)) rethrow;
       }
@@ -1070,6 +1093,18 @@ final class JobFormSubmissionRepository {
   Future<JobFormBulkSyncResult> syncPendingSubmissionsForJob({
     required int jobId,
     List<JobFormAssignment> assignments = const [],
+  }) {
+    return SlowNetworkToast.suppressWhile(
+      () => _syncPendingSubmissionsForJob(
+        jobId: jobId,
+        assignments: assignments,
+      ),
+    );
+  }
+
+  Future<JobFormBulkSyncResult> _syncPendingSubmissionsForJob({
+    required int jobId,
+    List<JobFormAssignment> assignments = const [],
   }) async {
     if (!_connectivity.isOnline) {
       throw StateError(
@@ -1137,7 +1172,11 @@ final class JobFormSubmissionRepository {
       } catch (error) {
         final message = error is StateError
             ? error.message
-            : error.toString();
+            : ApiResponseMessage.fromAnyError(
+                error,
+                genericFallback:
+                    'Could not submit the form. Check your connection and try again.',
+              );
         entries.add(
           JobFormBulkSyncEntry(
             formId: row.formId,

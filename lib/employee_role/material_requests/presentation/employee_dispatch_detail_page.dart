@@ -193,12 +193,8 @@ class _EmployeeDispatchDetailPageState
                                     ? detail.dispatchTo!.trim()
                                     : '—',
                               ),
-                              _infoRow(
-                                'Status',
-                                detail.statusName?.trim().isNotEmpty == true
-                                    ? detail.statusName!.trim()
-                                    : '—',
-                              ),
+                              if (detail.statusName?.trim().isNotEmpty == true)
+                                _infoRow('Status', detail.statusName!.trim()),
                               _infoRow(
                                 'Dispatch Date',
                                 detail.dispatchDate == null
@@ -206,12 +202,14 @@ class _EmployeeDispatchDetailPageState
                                     : _dateFormat.format(detail.dispatchDate!),
                               ),
                               _infoRow(
-                                'Material Request ID',
+                                'Material Request',
                                 detail.materialRequestCode?.trim().isNotEmpty ==
                                         true
                                     ? detail.materialRequestCode!.trim()
                                     : '—',
                               ),
+                              if (detail.notes?.trim().isNotEmpty == true)
+                                _infoRow('Notes', detail.notes!.trim()),
                             ],
                           ),
                         ),
@@ -254,15 +252,46 @@ class _EmployeeDispatchDetailPageState
                                       border: Border.all(color: _border),
                                     ),
                                     child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Expanded(
-                                          child: Text(
-                                            item.itemName,
-                                            style: AppFonts.bodyMedium(
-                                              color: AppColors.inkStrong,
-                                            ).copyWith(
-                                              fontWeight: FontWeight.w700,
-                                            ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item.itemName,
+                                                style: AppFonts.bodyMedium(
+                                                  color: AppColors.inkStrong,
+                                                ).copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              if (item.sku != null) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  item.sku!,
+                                                  style: AppFonts.bodySmall(
+                                                    color: _muted,
+                                                  ),
+                                                ),
+                                              ],
+                                              if (item.isExtra) ...[
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  'Extra item',
+                                                  style: AppFonts.labelMedium(
+                                                    color: const Color(
+                                                      0xFFC2410C,
+                                                    ),
+                                                  ).copyWith(
+                                                    fontWeight: FontWeight.w700,
+                                                    fontSize: 10,
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
                                           ),
                                         ),
                                         Text(

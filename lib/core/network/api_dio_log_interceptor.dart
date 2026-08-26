@@ -177,11 +177,17 @@ String _describeRequestPayload(Object? data) {
     return '<empty>';
   }
   if (data is FormData) {
-    final fieldKeys = data.fields.map((e) => e.key).join(', ');
+    final fieldParts = data.fields
+        .map((e) {
+          final v = e.value;
+          final preview = v.length > 120 ? '${v.substring(0, 120)}…' : v;
+          return '${e.key}=$preview';
+        })
+        .join(', ');
     final fileParts = data.files
         .map((e) => '${e.key}(${e.value.filename ?? 'file'})')
         .join(', ');
-    return 'FormData(fields: [$fieldKeys], files: [$fileParts])';
+    return 'FormData(fields: [$fieldParts], files: [$fileParts])';
   }
   return _prettyJson(_redactForLog(data));
 }

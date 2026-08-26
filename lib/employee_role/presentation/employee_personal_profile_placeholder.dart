@@ -69,9 +69,25 @@ abstract final class EmployeePersonalProfilePlaceholder {
       state: 'TX',
       country: 'United States',
       postalCode: '78701',
+      emails: const [
+        UserEmailModel(
+          id: 'local-email-1',
+          email: 'alex.rivera@example.com',
+          isPrimary: true,
+        ),
+      ],
+      phones: const [
+        UserPhoneModel(
+          id: 'local-phone-1',
+          phone: '+1 555 010 2244',
+          isPrimary: true,
+        ),
+      ],
       communications: const [
         UserCommunicationModel(
           id: 'local-comm-1',
+          emailId: 'local-email-1',
+          phoneId: 'local-phone-1',
           phone: '+1 555 010 2244',
           email: 'alex.rivera@example.com',
           isPrimary: true,

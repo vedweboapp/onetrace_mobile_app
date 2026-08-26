@@ -154,4 +154,21 @@ void main() {
 
     expect(payload.containsKey('salesperson'), isFalse);
   });
+
+  test('JobWritePayload.buildOperativeJobComplete sends status only', () {
+    final completedAt = DateTime.utc(2026, 8, 4, 12, 0, 0);
+    final payload = JobWritePayload.buildOperativeJobComplete(
+      title: 'Service job',
+      completedAt: completedAt,
+      completedJobStatusId: 9,
+    );
+
+    expect(payload, {
+      'title': 'Service job',
+      'completed_at': '2026-08-04T12:00:00.000Z',
+      'job_status': 9,
+    });
+    expect(payload.containsKey('forms'), isFalse);
+    expect(payload.containsKey('job_meta'), isFalse);
+  });
 }

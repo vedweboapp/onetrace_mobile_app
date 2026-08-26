@@ -37,6 +37,9 @@ abstract final class LocalStorageKeys {
   /// JSON: `"jobId"` -> start timestamp (ms since epoch) for running job timers.
   static const employeeJobTimerStarts = 'employee_job_timer_starts_v1';
 
+  /// JSON: `"jobId"` -> elapsed ms when the operative stopped that job's timer.
+  static const employeeJobTimerPaused = 'employee_job_timer_paused_v1';
+
   /// JSON: `"jobId"` -> true when the operative completed the job.
   static const employeeJobTimerCompleted = 'employee_job_timer_completed_v1';
 
